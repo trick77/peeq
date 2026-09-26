@@ -8,8 +8,8 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - One feature branch per phase (`feat/phase-N-...`). Conventional commits.
 - TDD: failing test first, then the minimal implementation.
 - Keep files focused — one clear responsibility each.
-- Phase 3 needs chat + embeddings endpoints (`LLMWIRE_ZAI_*`, `LLMWIRE_OPENAI_*`); tests fake them
-  with httptest — never call a real LLM/embeddings endpoint or the real yt-dlp binary.
+- Phase 3 needs chat + embeddings models (`BACKEND_*_MODEL` + `LLMWIRE_<PROVIDER>_API_KEY`); tests
+  fake them (`llmwiretest`, httptest) — never call a real LLM/embeddings endpoint or the real yt-dlp binary.
 - Flows needing a real cookie/AI endpoints aren't automated — run `docs/manual-verification.md` by hand.
 
 ## Logging
@@ -38,56 +38,54 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   deviates from loom's distroless-static runtime.
 
 ## Models
-- **Both model ids are constants of the build, never env vars.** Chat: `glm-5.3-flash` in
-  `internal/llm/client.go`. Embeddings: `rag.EmbedModel`, with the vector width read from its
-  llmwire profile via `rag.EmbedDim()` — never stated in this repo. Prompts, token caps and the
-  `vec_chunks` width are all built to these models, so a swap is a code change and, for embeddings,
-  a database rebuild. There used to be a `BACKEND_EMBED_DIM` that had to agree with the model; the
-  only signal when it did not was a boot warning over an already-stale vector table.
+- **Models are config, never code.** `BACKEND_CHAT_MODEL` (required), `BACKEND_GATE_MODEL` (short
+  gates; empty = chat model), `BACKEND_EMBED_MODEL` (required). No model id default anywhere. Boot
+  validates with llmwire `Registry.Require` (`llm.ChatNeeds`/`GateNeeds`) and `LookupEmbedding`;
+  the error names the var and the valid choices. Swap = config + the provider's key.
+- **Every model fact is llmwire's profile's**: host, key var, reasoning knob and level names,
+  output limit, vector width, sampling, rates, quirks. Never restate one in code, comments, docs or
+  tests; a wrong fact is fixed upstream.
+- `vec_chunks` width is a migration literal; `vec_model` records which model wrote the vectors.
+  Boot refuses an embed model of another width (`rag.CheckVecWidth`) or another id at the same width
+  (`rag.Store.CheckEmbedModel`: same width, different vector space). An empty library switches
+  freely. Switching with vectors = new migration rebuilding `vec_chunks`, clearing `vec_model` and
+  setting `embed_rev = 0` (else nothing re-embeds). No auto re-index.
 
 ## Chat model
-- The host is llmwire's (`profiles.yaml` `providers:`), never configured here: Z.ai's GENERAL
-  endpoint. Only `LLMWIRE_ZAI_API_KEY` is peeq's to set; a Coding Plan key does not work, that plan
-  is restricted to Z.ai's own tools and forbids peeq.
 - **The wire protocol is `github.com/trick77/llmwire`.** What that library owns, and what therefore
   must NOT be reimplemented here: the SSE parsing, the header/idle/call bounds and the text naming
-  which one fired, the request body (no `ExtraBody`, ever), the usage decoding, and the opencode
-  identity (the User-Agent, the session header pair and the id), switched on by the provider
-  entry in llmwire's `profiles.yaml`, never by a peeq setting. This package owns pacing, the heartbeat, the
+  which one fired, the request body (no `ExtraBody`, ever), the usage decoding, reasoning and cap
+  rendering, and the opencode identity. This package owns pacing, the heartbeat, the
   `CallInfo`/`Totals` accounting and the context knobs. One `llmwire.Client` per `llm.Client`,
   never one per call: the session id lives on it.
-- **Thinking can't be switched off.** `thinking:{"type":"disabled"}` → 400 code 1210. Only
-  `low`/`high`/`max` effort accepted; `none`/`minimal`/`medium`/`xhigh` rejected. This lives in
-  llmwire's profile for the model, which is where a fix belongs if Z.ai ever changes it. peeq sends
-  NO `thinking` object: measured, `reasoning_effort` alone drives depth (5 vs 43 reasoning tokens).
-- Default effort `max` (Z.ai's own default + recommendation). `temperature: 1` / `top_p: 0.95` come
-  from the profile's recommended values — omitting them gives LOWER values, not "the defaults", so
-  llmwire sends them when the caller expresses no preference. Do not set them here.
-- **Keepalives do not hold the idle bound off.** A `: ping` proves the socket is alive and says
-  nothing about progress, so only `data:` frames re-arm it — reasoning deltas included, which is why
-  a long silent think is still safe. Measured: the longest comment-only gap this endpoint produced
-  was 1.4s against a 90s bound.
-- Rates live in llmwire's profile, with the vendor URL and the date they were read. A rate from a
-  published catalogue is not a source: check the vendor's own page.
-- `llm.Shallow(ctx)` (→`low`) is a LATENCY lever, not cost. One caller: the Ask understand gate,
-  hard 10s timeout. Tokens barely differ per level; time does (keypoints 12.8s high → 69.9s max).
-  Use only with a latency reason, written down. Classification is NOT such a reason: measured, `low`
-  is unstable on ambiguous videos (2 answers in 3 runs) and a wrong category persists forever.
-- Lookup no reader sees (an id, a label) → also `llm.ShortGate(ctx)`. Same deployment today, changes
-  nothing on the wire; it records the decision for a future split. Never on reader-facing text
-  (summary, map, reduce, keypoints, Ask). `Shallow` and `ShortGate` are separate; don't couple them.
-- Cap every new call (`llm.WithMaxTokens`) with GENEROUS headroom: the cap counts reasoning, which is
-  never zero now, and a call that spends its budget thinking returns empty with NO error. Reasoning
-  is stochastic — one classify prompt measured 120, 254 and 646 tokens. Size for the worst. This
-  already bit classify (256 cap → empty reply → permanent 'uncategorized').
+- **Reasoning is an intent** (`llm.WithReasoning`), resolved per model by llmwire:
+  - Default (nothing sent, the model's own default): offline prose and persisted decisions —
+    summary, map/reduce, key points, classify.
+  - `ReasoningBalanced`: prose a person waits on — the Ask answer (depth is paid in
+    time-to-first-token).
+  - `ReasoningMinimal` (may be thinking OFF): only a true gate under a latency bound whose failure
+    degrades harmlessly — the Ask understand step. Never on prose, never on a persisted decision:
+    measured, the shallowest setting classified ambiguous videos unstably, and a wrong category
+    persists forever. Write the latency reason down at the call site.
+- **Caps are on the answer**: `llm.WithMaxAnswerTokens` sized for the answer alone; llmwire adds
+  the profile's reasoning allowance and clamps to the output limit. Still a GENEROUS backstop: a
+  call that out-thinks the allowance ends "length" with empty content and NO error. This bit
+  classify once (empty reply → permanent 'uncategorized').
+- **Keepalives do not hold the idle bound off.** Only `data:` frames re-arm it — reasoning deltas
+  included, which is why a long silent think is still safe.
+- Lookup no reader sees (an id, a label) → `llm.ShortGate(ctx)`: routes to the gate model. Never on
+  reader-facing text (summary, map, reduce, keypoints, Ask). Independent of the reasoning intent.
 - Need JSON → `llm.AsJSONObject(ctx)`. A prompt saying "as JSON" does NOT work: 0/8 raw replies
   strictly parseable without it, 8/8 with it.
 - New summarizer call site → feed it `forSummary`, never `parsed` (summarize/worker.go). `parsed` is
   the raw transcript and still carries sponsor reads; `forSummary` has them stripped so no chapter,
   key point or summary sentence can be drawn from one. See `summarize/sponsor.go`. Embedding
   deliberately keeps `parsed` — search is not narrowed.
-- Asserting a model id in a test → `llm.ModelFor` / `llm.EffortFor` / `llm.ShortGateFrom`, never a
-  literal: gate and default ids are equal today, so literals pass for the wrong reason.
+- Tests assert intent on `llmwiretest` synthetic models: `llm.ReasoningFor`/`ShortGateFrom` on a
+  fake completer's ctx, `srv.Last().Reasoning()` vs `llmwiretest.MinimalSent`/`BalancedSent`,
+  `MaxTokens()` vs answer cap + overhead. Never a real model id, wire spelling, level name or rate.
+- After changing `BACKEND_CHAT_MODEL`, re-run `httpapi/ask_latency_probe_test.go`
+  (`PEEQ_ASK_SWEEP=1`) before trusting the chosen intents on the new model.
 
 ## Config
 - All runtime config comes from `BACKEND_*` env vars — see `.env.example`.

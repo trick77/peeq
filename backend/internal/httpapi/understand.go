@@ -47,17 +47,12 @@ import (
 // answer.
 const understandTimeout = 10 * time.Second
 
-// understandMaxTokens bounds the reply. It is a topic phrase, a one-word label
-// and a small filter object; anything longer is a model that has started
-// explaining itself, and the parse will reject it anyway. Raised from 200 when
-// the filters were added — a reply carrying two channel names and a date range
-// is a few dozen tokens longer than one carrying a topic alone.
-//
-// The cap now has to cover reasoning too, which cannot be switched off. This is
-// the tightest cap in the codebase against the reasoning it must hold: ~53
-// tokens at the low effort Shallow pins above, but 345 at the package default.
-// The margin exists only because this call asks for low — see understandQuery.
-const understandMaxTokens = 350
+// understandMaxAnswerTokens bounds the reply. It is a topic phrase, a one-word
+// label and a small filter object; anything longer is a model that has started
+// explaining itself, and the parse will reject it anyway. Sized to hold two
+// channel names and a date range with room to spare. The reasoning allowance
+// on top is the model profile's (llm.WithMaxAnswerTokens).
+const understandMaxAnswerTokens = 300
 
 // understandMaxChannels caps how many channel names one question may name.
 // Beyond a handful the reader is not comparing channels, the model is
@@ -266,27 +261,20 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 
 	cctx, cancel := context.WithTimeout(ctx, understandTimeout)
 	defer cancel()
-	// ShortGate and Shallow say different things and both are needed: the first
-	// marks this as a gate (it reaches the same deployment as everything else
-	// today — see llm.ShortGate), the second asks for the least reasoning the
-	// model allows, because this is a labelling job sitting in front of the first
-	// byte of an answer.
-	//
-	// Shallow is the ONLY lever here, and it is both a latency and a headroom
-	// lever. Reasoning cannot be switched off at all now: low and high cost about
-	// the same (53 and 54 tokens), but the package default, max, spends 345 —
-	// which is 2.5s become 7.4s against understandTimeout's 10s AND 345 reasoning
-	// tokens against understandMaxTokens' 350, leaving nothing for the reply.
-	// Dropping Shallow here does not make this call deeper, it makes it empty.
-	// See llm/calloptions.go.
-	cctx = llm.Shallow(llm.ShortGate(cctx))
-	cctx = llm.WithMaxTokens(cctx, understandMaxTokens)
+	// ShortGate and the minimal reasoning intent say different things and both
+	// are needed: the first marks this as a gate (it reaches the gate model),
+	// the second asks for the shallowest thinking the model allows, which on
+	// some models is none. This is the one call that qualifies: a labelling job
+	// nobody reads as prose, sitting in front of the first byte of an answer
+	// under understandTimeout, whose every failure degrades to the raw question.
+	cctx = llm.WithReasoning(llm.ShortGate(cctx), llm.ReasoningMinimal)
+	cctx = llm.WithMaxAnswerTokens(cctx, understandMaxAnswerTokens)
 	cctx = llm.WithCall(cctx, llm.CallInfo{Step: "understand"})
 	// Read back off the context that was just configured, so this can only ever
 	// name the deployment the call actually reaches. Captured before the call
 	// rather than after, because every failure path below reports it too — a
 	// timeout that cannot say which model timed out is half a diagnostic.
-	model := llm.ModelFor(cctx)
+	model := s.understand.ModelFor(cctx)
 
 	started := time.Now()
 	// Today's date rides on the USER message, not the system one: it changes

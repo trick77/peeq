@@ -23,6 +23,14 @@ services:
       dockerfile: backend/Containerfile
     network_mode: host
     user: "1000:1000"
+    # Every variable in .env reaches the container: the model ids and whichever
+    # LLMWIRE_<PROVIDER>_API_KEY the models need — see .env.example. Optional
+    # so the file still parses without one; peeq refuses to boot without the
+    # models and keys, naming what is missing.
+    env_file:
+      - path: .env
+        required: false
+    # The dev stack's own values. These win over .env.
     environment:
       HOME: /tmp
       TMPDIR: /tmp
@@ -33,12 +41,6 @@ services:
       BACKEND_DB_PATH: /data/peeq.db
       BACKEND_MEDIA_DIR: /data/media
       BACKEND_YTDLP_DIR: /data/bin
-      # AI keys. Unlike the rest of this file these can't be hardcoded, so
-      # the dev stack needs a populated .env. The hosts are llmwire's.
-      LLMWIRE_ZAI_API_KEY: "${LLMWIRE_ZAI_API_KEY}"
-      LLMWIRE_OPENAI_API_KEY: "${LLMWIRE_OPENAI_API_KEY}"
-      LLMWIRE_EMULATE_OPENCODE: "${LLMWIRE_EMULATE_OPENCODE:-}"
-      BACKEND_DEFAULT_SUB_LANG: "${BACKEND_DEFAULT_SUB_LANG:-en}"
       BACKEND_LOG_LEVEL: "${BACKEND_LOG_LEVEL:-debug}"
     volumes:
       - ./data:/data

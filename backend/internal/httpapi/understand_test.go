@@ -16,17 +16,23 @@ import (
 // fakeUnderstander is a stub Completer for the query-understanding call. It
 // records what it was asked and replies with whatever the test set.
 type fakeUnderstander struct {
-	mu     sync.Mutex
-	called bool
-	prompt string
-	reply  string
-	err    error
+	mu        sync.Mutex
+	called    bool
+	prompt    string
+	reply     string
+	err       error
+	reasoning llm.Reasoning
+	gate      bool
 }
 
-func (f *fakeUnderstander) Complete(_ context.Context, msgs []llm.Message) (string, error) {
+func (f *fakeUnderstander) ModelFor(ctx context.Context) string { return fakeModelFor(ctx) }
+
+func (f *fakeUnderstander) Complete(ctx context.Context, msgs []llm.Message) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.called = true
+	f.reasoning = llm.ReasoningFor(ctx)
+	f.gate = llm.ShortGateFrom(ctx)
 	for _, m := range msgs {
 		if m.Role == "user" {
 			f.prompt = m.Content
@@ -579,6 +585,28 @@ func TestUnattributedDiagIsNotZero(t *testing.T) {
 
 // Understanding is optional in the same way chat is: without it the endpoint
 // behaves exactly as it did before the step existed.
+// The understand step is a true gate: a label and a filter object nobody reads
+// as prose, under a hard timeout in front of the first byte of the answer, and
+// it degrades to the raw question on any failure. So: the gate model, and the
+// shallowest reasoning the model allows.
+func TestUnderstandIsAMinimalReasoningGate(t *testing.T) {
+	deps, _ := answerDeps(t)
+	u := &fakeUnderstander{reply: `{"topic":"cramp","counting":false,"filters":{}}`}
+	deps.Understand = u
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+	if !u.called {
+		t.Fatal("understand was never called")
+	}
+	if !u.gate {
+		t.Error("understand did not run as a short gate")
+	}
+	if u.reasoning != llm.ReasoningMinimal {
+		t.Errorf("understand reasoning = %q, want %q", u.reasoning, llm.ReasoningMinimal)
+	}
+}
+
 func TestAnswerWithoutAnUnderstanderStillAnswers(t *testing.T) {
 	deps, ask := answerDeps(t)
 	deps.Understand = nil

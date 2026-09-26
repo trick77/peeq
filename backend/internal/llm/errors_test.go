@@ -11,32 +11,6 @@ import (
 	"github.com/trick77/llmwire"
 )
 
-// The effort consts are strings this package chose, and the endpoint accepts
-// exactly three. llmwire's profile is where that set is measured and kept; this
-// pins the consts to it so a profile change (a new tier, a renamed default)
-// fails here rather than as a code 1210 on the first summary after a deploy.
-func TestReasoningEffortConstsMatchTheProfile(t *testing.T) {
-	r := chatProfile.Reasoning
-	for _, e := range []string{lowReasoningEffort, highReasoningEffort, maxReasoningEffort} {
-		if !r.Accepts(e) {
-			t.Errorf("reasoning effort %q is not in %s's profile (%v)", e, model, r.EffortValues)
-		}
-	}
-	if reasoningEffort != r.DefaultEffort {
-		t.Errorf("default effort = %q, profile's default is %q", reasoningEffort, r.DefaultEffort)
-	}
-	if shortGateModel != model {
-		// Both ids go through chatRequestFor; if they ever split again the gate
-		// deployment needs a profile of its own.
-		if _, err := llmwire.Default().Lookup(shortGateModel); err != nil {
-			t.Errorf("shortGateModel: %v", err)
-		}
-	}
-	if MaxOutputTokens() <= 0 {
-		t.Errorf("MaxOutputTokens() = %d, profile carries no output limit", MaxOutputTokens())
-	}
-}
-
 // The rephrased error keeps the runbook's text AND llmwire's chain: a caller
 // can still ask errors.Is for the rate-limit class and errors.As for the
 // Retry-After. A plain fmt.Errorf without %w used to cut that, silently.
@@ -68,7 +42,7 @@ func TestComplete_statusErrorsKeepLlmwiresChain(t *testing.T) {
 	}
 }
 
-// A context-window cut is as deterministic as a max_tokens cut: the same prompt
+// A context-window cut is as deterministic as a cut at our own cap: the same prompt
 // hits the same wall on every attempt, so FailOnEarlyFinish must not turn it
 // into a retry. A filter or refusal still is one.
 func TestComplete_failOnEarlyFinishToleratesAContextWindowCut(t *testing.T) {

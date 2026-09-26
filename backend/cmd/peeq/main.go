@@ -204,22 +204,22 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Boot dim-guard: if this build's embedding model produces a different width
-	// than the vec_chunks table was built to, the whole vector table is invalid.
-	// The width is no longer configurable, so a mismatch now means exactly one
-	// thing: the database predates a change of rag.EmbedModel. This only warns —
-	// it does not rebuild anything.
-	//
-	// The remedy is a NEW MIGRATION, not a fresh database: the DDL that creates
-	// vec_chunks carries its width as a literal, so recreating the database
-	// would rebuild the table at the old width and this warning would fire on
-	// every boot forever.
-	if builtDim, err := ragStore.BuiltDim(ctx); err == nil && builtDim != rag.EmbedDim() {
-		slog.Warn("embedding dimension mismatch; vector table is stale",
-			"built", builtDim, "model", rag.EmbedModel, "model_dim", rag.EmbedDim(),
-			"action", "this build's embedding model changed width; ship a migration that rebuilds vec_chunks at model_dim and re-embed")
-	} else if err != nil {
-		slog.Warn("dim-guard: could not read vec_chunks dimension", "err", err)
+	// Boot width check: vec_chunks is built at one width (a literal in its
+	// migration), and the configured embedding model must return exactly that.
+	// A mismatch refuses boot: it is not degraded search but every insert
+	// failing. Switching to a model of another width is a re-index — a migration
+	// that rebuilds vec_chunks, then every video re-embedded — which this does
+	// not do on its own.
+	if builtDim, err := ragStore.BuiltDim(ctx); err != nil {
+		slog.Warn("vector width check: could not read vec_chunks dimension", "err", err)
+	} else if err := rag.CheckVecWidth(builtDim, embedClient.Model(), embedClient.Dim()); err != nil {
+		return err
+	}
+	// Same width is not the same model: two models of one width embed into
+	// different spaces, so the model that wrote the stored vectors must be the
+	// configured one too.
+	if err := ragStore.CheckEmbedModel(ctx, embedClient.Model()); err != nil {
+		return err
 	}
 
 	// The throttle floor is read once at boot; the Runner clamps whatever is
@@ -336,7 +336,7 @@ func run() error {
 	summarizeWorker := summarize.NewWorker(summarize.WorkerDeps{
 		Jobs: summaryJobsStore, Videos: videosStore, Rag: ragStore,
 		Summarizer: summarizer, Embedder: embedClient,
-		EmbedModel: rag.EmbedModel, EmbedDim: rag.EmbedDim(),
+		EmbedModel: embedClient.Model(), EmbedDim: embedClient.Dim(),
 		VideoDelay: cfg.SummarizeVideoDelay,
 		Activity:   activityStore,
 		OnPhase: func(videoID, status, phase string) {
@@ -769,9 +769,10 @@ func serve(ctx context.Context, srv *http.Server, hub *sse.Hub) error {
 	return srv.Shutdown(shutdownCtx)
 }
 
-// newModelClients builds the embedding client and the two chat clients.
-// Endpoints and keys come from the env vars each model's llmwire profile
-// names; a missing one is the error here, named, before anything listens.
+// newModelClients builds the embedding client and the two chat clients on the
+// configured models. Endpoints and keys come from the env vars each model's
+// llmwire profile names; a missing key, or a model that is unset, unknown or
+// cannot do its job, is the error here, named, before anything listens.
 //
 // There are TWO chat clients on purpose. The first serializes every call
 // through a pacing mutex sized for a background summarize queue, so sharing
@@ -780,11 +781,12 @@ func serve(ctx context.Context, srv *http.Server, hub *sse.Hub) error {
 // waiting for it, and an answer that has not started arriving in a minute or
 // so is better abandoned than waited out.
 func newModelClients(cfg config.Config) (*rag.EmbedClient, *llm.Client, *llm.Client, error) {
-	embedClient, err := rag.NewEmbedClient(rag.EmbedConfig{Logger: slog.Default()}, nil)
+	embedClient, err := rag.NewEmbedClient(rag.EmbedConfig{Model: cfg.EmbedModel, Logger: slog.Default()}, nil)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	chatClient, err := llm.NewClient(llm.Config{
+		Model: cfg.ChatModel, GateModel: cfg.GateModel,
 		RequestInterval: cfg.SummarizeRequestDelay, Logger: slog.Default(),
 		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.ChatCallTimeout,
 	}, nil)
@@ -792,6 +794,7 @@ func newModelClients(cfg config.Config) (*rag.EmbedClient, *llm.Client, *llm.Cli
 		return nil, nil, nil, err
 	}
 	askClient, err := llm.NewClient(llm.Config{
+		Model: cfg.ChatModel, GateModel: cfg.GateModel,
 		RequestInterval: 0, Logger: slog.Default(),
 		StreamIdleTimeout: cfg.ChatStreamIdleTimeout, CallTimeout: cfg.AskCallTimeout,
 	}, nil)

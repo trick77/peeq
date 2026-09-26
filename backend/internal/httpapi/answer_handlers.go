@@ -26,18 +26,25 @@ import (
 // the INTERFACE.
 type StreamCompleter interface {
 	CompleteStream(ctx context.Context, messages []llm.Message, onDelta func(string)) (string, error)
+	modelNamer
+}
+
+// modelNamer names the model a call made with ctx reaches, so the trace can
+// say what actually ran rather than a name written out here.
+type modelNamer interface {
+	ModelFor(ctx context.Context) string
 }
 
 // Completer is the non-streaming slice of llm.Client, used by the
 // query-understanding step: one short reply read in full, not relayed. Declared
 // separately from StreamCompleter rather than widened onto it so a deployment
-// can wire the answer without the pre-step, and so every existing fake that
-// implements only CompleteStream keeps compiling.
+// can wire the answer without the pre-step.
 //
 // Optional in the same way: a nil one skips understanding and Ask searches the
 // raw question, exactly as it did before the step existed.
 type Completer interface {
 	Complete(ctx context.Context, messages []llm.Message) (string, error)
+	modelNamer
 }
 
 // answerSource is one cited passage, in the shape the UI needs to render a
@@ -97,10 +104,11 @@ type answerVideo struct {
 type traceStage struct {
 	Key string `json:"key"`
 	Ms  int64  `json:"ms"`
-	// Tool is the model deployment or storage engine that ran this step —
-	// "glm-5.3-flash", "sqlite-vec". Read from the thing that actually ran (see
-	// llm.ModelFor and SearchEmbedder.Model) rather than written out here, so a
-	// redeployment cannot leave the panel naming a model nobody is using.
+	// Tool is the model or storage engine that ran this step — a model id,
+	// "sqlite-vec". Read from the thing that actually ran (see
+	// llm.Client.ModelFor and SearchEmbedder.Model) rather than written out
+	// here, so a model swap cannot leave the panel naming a model nobody is
+	// using.
 	Tool string `json:"tool,omitempty"`
 	// Kind is how to read Tool: "model" for a call that left this machine,
 	// "local" for a query against the library, "code" for neither.
@@ -252,18 +260,13 @@ const (
 	// the model needs the gist, not every word, and 12 untruncated chunks would
 	// dominate the request.
 	answerExcerptRunes = 1200
-	// answerMaxTokens bounds what the answer can cost. It is a ceiling, not a
-	// target: the prompt asks for at most six sentences, which is a couple of
-	// hundred tokens.
-	//
-	// It has to be MUCH larger than that anyway, because the cap counts
-	// reasoning tokens (see llm.WithMaxTokens) and this call reasons — thinking
-	// is on by default. Sized too tightly, the model spends the whole budget
-	// thinking, the endpoint ends the stream with finish_reason "length" and no
-	// content, and the caller sees an empty answer with NO error to report:
-	// sources, a spinner, then a blank panel. 8000 is what summarize gives its
-	// one other thinking-on call; this one is far shorter, so half of that.
-	answerMaxTokens = 4000
+	// answerMaxAnswerTokens bounds what the answer can cost. It is a ceiling,
+	// not a target: the prompt asks for at most six sentences, which is a couple
+	// of hundred tokens. The reasoning allowance on top is the model profile's
+	// (llm.WithMaxAnswerTokens). A budget spent thinking still ends the stream
+	// with finish_reason "length" and no content, which the caller reports as an
+	// empty answer rather than a blank panel.
+	answerMaxAnswerTokens = 1500
 )
 
 // handleAnswer answers GET /api/search/answer?q=: it runs the same retrieval
@@ -621,26 +624,20 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// The one call in peeq a person waits on: it writes cited prose from a dozen
 	// excerpts while a spinner is on screen.
 	//
-	// Explicitly BELOW the package default (max), which is the only place that is
-	// true, and it is a latency decision rather than a quality or cost one. The
-	// stream cannot start until reasoning ends, so effort is paid entirely in
-	// time-to-first-token. Measured on this prompt, 8 repeats
-	// (ask_latency_probe_test.go), ttft median / reasoning median:
+	// Balanced reasoning, not the model's default: the only place peeq asks for
+	// less than the default on prose, and it is a latency decision. The stream
+	// cannot start until reasoning ends, so depth is paid entirely in
+	// time-to-first-token while a reader watches a blank panel — and this is
+	// grounded extraction from excerpts retrieval already chose; the hard part
+	// happened in embedding and ranking. Balanced keeps the reasoning that makes
+	// citation placement stable.
 	//
-	//	max   4950ms / 278      high  1270ms / 19      low  934ms / 0
-	//
-	// max costs 3.7s of blank panel before the first word, on an answer that is
-	// grounded extraction from excerpts retrieval already chose — the hard part
-	// happened in embedding and ranking, not here. high keeps the reasoning that
-	// makes citation placement stable while starting to stream in about a second.
-	//
-	// Do NOT drop this to Shallow to save the remaining 336ms: measured earlier
-	// against a shallower setting, the answers stay grounded and still refuse a
-	// question the excerpts cannot answer, but they run thinner and drift on
-	// citation placement, landing the marker before the full stop rather than
-	// after it.
-	ctx := llm.WithReasoningEffort(askCtx, llm.HighReasoningEffort)
-	ctx = llm.WithMaxTokens(ctx, answerMaxTokens)
+	// Do NOT drop this to minimal: measured against a shallower setting, the
+	// answers stayed grounded and still refused a question the excerpts could
+	// not answer, but ran thinner and drifted on citation placement, landing the
+	// marker before the full stop rather than after it.
+	ctx := llm.WithReasoning(askCtx, llm.ReasoningBalanced)
+	ctx = llm.WithMaxAnswerTokens(ctx, answerMaxAnswerTokens)
 	ctx = llm.WithCall(ctx, llm.CallInfo{Step: "answer"})
 	// THE RAW QUESTION, and never the extracted topic. The two exist for
 	// different consumers and must not be confused: the topic is a retrieval
@@ -676,7 +673,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	if err != nil || strings.TrimSpace(answer) == "" {
 		answerKey = "answer_failed"
 	}
-	tr.add(answerKey, llm.ModelFor(ctx), traceKindModel, time.Since(answerStart).Milliseconds())
+	tr.add(answerKey, s.ask.ModelFor(ctx), traceKindModel, time.Since(answerStart).Milliseconds())
 	switch {
 	case err != nil:
 		slog.Warn("answer: chat failed", "err", err)

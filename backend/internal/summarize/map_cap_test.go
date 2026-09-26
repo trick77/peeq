@@ -5,28 +5,28 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trick77/llmwire"
 	"github.com/trick77/peeq/internal/llm"
 )
 
-// TestSummarizeText_mapCallsAreCapped: every chat call carries a max_tokens
-// cap (AGENTS.md), and the coarse map used to be the one that did not. The cap
-// counts reasoning, which is never zero at the default effort, so it is the
-// summary's generous 8000 — measured worst case on this path is 524 tokens.
+// TestSummarizeText_mapCallsAreCapped: every chat call carries an answer cap
+// (AGENTS.md), and the coarse map used to be the one that did not. It is the
+// summary's; the reasoning allowance on top is the model profile's.
 func TestSummarizeText_mapCallsAreCapped(t *testing.T) {
-	client, stub := newStubChat(t, "section")
+	client, srv := newStubChat(t, "section")
 	s := New(client, WithSummaryChunkTokens(300))
 	if _, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000)); err != nil {
 		t.Fatal(err)
 	}
 	var maps int
-	for i, body := range stub.requests() {
-		if !strings.HasPrefix(systemPrompt(body), coarseSectionSystemPrompt[:40]) {
+	for i, req := range srv.Requests() {
+		if !strings.HasPrefix(systemPrompt(req.Body), coarseSectionSystemPrompt[:40]) {
 			continue
 		}
 		maps++
-		got, ok := body["max_tokens"].(float64)
-		if !ok || int(got) != summaryMaxTokens {
-			t.Fatalf("map call %d max_tokens = %v, want %d", i, body["max_tokens"], summaryMaxTokens)
+		want := summaryMaxAnswerTokens + llmwire.DefaultReasoningOverhead
+		if got, ok := req.MaxTokens(); !ok || got != want {
+			t.Fatalf("map call %d cap = %d (sent %v), want the answer cap %d plus the default allowance", i, got, ok, want)
 		}
 	}
 	if maps < 2 {

@@ -1,53 +1,32 @@
 package summarize
 
 import (
-	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"sync"
 	"testing"
 
+	"github.com/trick77/llmwire/llmwiretest"
 	"github.com/trick77/peeq/internal/llm"
 )
 
-// stubChat is a fake chat endpoint that answers every call with one word and
-// records each request body, for the tests that assert what goes on the
-// wire (model, max_tokens) — a fake completer sees a context, not a request.
-type stubChat struct {
-	mu     sync.Mutex
-	bodies []map[string]any
-}
+// stubGateModel is the gate model the stub client is built with: a different
+// id from the chat model, so a test can see which one a call reached.
+const stubGateModel = llmwiretest.BudgetModel
 
-// newStubChat starts the endpoint and returns a real client pointed at it.
-func newStubChat(t *testing.T, reply string) (*llm.Client, *stubChat) {
+// newStubChat starts an llmwiretest fake that answers every call with reply
+// and records each request, and returns a real client pointed at it — for the
+// tests that assert what goes on the wire (model, answer cap), since a fake
+// completer sees a context, not a request.
+func newStubChat(t *testing.T, reply string) (*llm.Client, *llmwiretest.Server) {
 	t.Helper()
-	st := &stubChat{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		b, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(b, &body)
-		st.mu.Lock()
-		st.bodies = append(st.bodies, body)
-		st.mu.Unlock()
-		io.WriteString(w, "data: "+
-			`{"choices":[{"delta":{"content":"`+reply+`","role":"assistant"},"finish_reason":null,"index":0}]}`+"\n\n"+
-			"data: "+`{"choices":[{"delta":{"content":null},"finish_reason":"stop","index":0}],"usage":null}`+"\n\n"+
-			"data: [DONE]\n\n")
-	}))
-	t.Cleanup(srv.Close)
-	client, err := llm.NewClient(llm.Config{BaseURL: srv.URL}, srv.Client())
+	srv := llmwiretest.NewServer(t)
+	srv.SetReply(reply)
+	client, err := llm.NewClient(llm.Config{
+		Model: llmwiretest.ChatModel, GateModel: stubGateModel, Registry: llmwiretest.Registry(),
+		BaseURL: srv.URL, APIKey: "k",
+	}, srv.Server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return client, st
-}
-
-// requests returns the captured bodies so far.
-func (st *stubChat) requests() []map[string]any {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	return append([]map[string]any(nil), st.bodies...)
+	return client, srv
 }
 
 // systemPrompt returns the system message of a captured request, or "".

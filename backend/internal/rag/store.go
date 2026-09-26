@@ -114,6 +114,11 @@ func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID string, meta Ind
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if len(rows) > 0 {
+		if err := recordEmbedModelTx(ctx, tx, meta.Model); err != nil {
+			return err
+		}
+	}
 	if err := deleteVideoTx(ctx, tx, videoID); err != nil {
 		return err
 	}

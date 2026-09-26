@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/trick77/llmwire"
@@ -16,60 +17,53 @@ import (
 	"github.com/trick77/peeq/internal/sched"
 )
 
-// EmbedModel is the deployment every vector in this database was produced by.
-//
-// A constant, not configuration, for the same reason the chat model is: the
-// width of every vector column, the similarity index and every stored chunk are
-// all built to THIS model's output, so it is a property of the build. It used
-// to be BACKEND_EMBED_MODEL, with the width in a second variable that had to
-// agree with it — and when the two disagreed the only signal was a warning at
-// boot while the vector table was already stale. Pinning the model lets the
-// width come from its profile instead, so there is one fact and nothing to
-// keep in step with it.
-//
-// Changing this is a corpus rebuild, and NOT by recreating the database: the
-// vec_chunks DDL in store/migrations/0001_init.sql carries the width as a
-// literal, as a migration that has run must, so a fresh database would come back
-// at the old width. A model change needs a new migration that rebuilds the table
-// at EmbedDim(). store's TestVecChunksWidthMatchesTheEmbeddingModel is what
-// keeps the literal and the profile equal, and the dim-guard in cmd/peeq says
-// so at boot when a stored table predates the change.
-const EmbedModel = "text-embedding-3-small"
+// The embedding model is configuration (BACKEND_EMBED_MODEL); its vector width
+// is its llmwire profile's. Every stored vector and the vec_chunks table are
+// built to one width, and the migration DDL carries it as a literal, so a model
+// of a different width is refused at boot (CheckVecWidth) rather than mixed
+// into a table built for another. Switching to one is a re-index: a migration
+// that rebuilds vec_chunks at the new width, then every video re-embedded.
 
-// embedProfile is the registry's description of EmbedModel. Resolved once, at
-// init, and a failure is a panic on purpose: the id above is compiled in, so if
-// llmwire has no profile for it that is a build error in everything but name,
-// and the first test to import this package says so.
-var embedProfile = mustEmbedProfile()
-
-func mustEmbedProfile() *llmwire.Profile {
-	p, err := llmwire.Default().Lookup(EmbedModel)
-	if err != nil {
-		panic("rag: EmbedModel has no llmwire profile: " + err.Error())
+// embeddingModels lists the registry's embeddings models, for the "valid
+// choices" of a configuration error.
+func embeddingModels(reg *llmwire.Registry) []string {
+	var out []string
+	for _, id := range reg.Models() {
+		if _, err := reg.LookupEmbedding(id); err == nil {
+			out = append(out, id)
+		}
 	}
-	if p.Endpoint != llmwire.EndpointEmbeddings {
-		panic("rag: EmbedModel is not an embeddings model: " + EmbedModel)
-	}
-	return p
+	return out
 }
 
-// EmbedDim is the width of every vector EmbedModel returns, and therefore what
-// the vec_chunks table must be built to. Read from the model's profile; the one
-// other place it appears is the migration DDL, and a test holds the two equal.
-func EmbedDim() int { return embedProfile.Embedding.DefaultDimensions }
+// CheckVecWidth refuses a vector table built at a width other than the one the
+// configured embedding model returns. Mixing widths is not a degraded search,
+// it is every insert failing, so boot stops here with the remedy.
+func CheckVecWidth(built int, model string, dim int) error {
+	if built == dim {
+		return nil
+	}
+	return fmt.Errorf("vec_chunks is built for %d-wide vectors, but BACKEND_EMBED_MODEL=%s returns %d; "+
+		"either set BACKEND_EMBED_MODEL back to a %d-wide model, or re-index: ship a migration that "+
+		"rebuilds vec_chunks at %d, clears vec_model and sets embed_rev = 0 on every video, so each is "+
+		"re-embedded", built, model, dim, built, dim)
+}
 
 // defaultEmbedTimeout bounds one embeddings call end to end. Embeddings are
 // not streamed, so unlike the chat client there is no answer to cut off
 // mid-way, and one cap on the whole call is the honest bound.
 const defaultEmbedTimeout = 1 * time.Minute
 
-// EmbedConfig configures the embedding client. BaseURL and APIKey override
-// EmbedModel's profile: left empty, llmwire uses the host its profile ships
-// and reads LLMWIRE_OPENAI_API_KEY itself, and a test points BaseURL at its
-// fake. Logger is optional and defaults to
+// EmbedConfig configures the embedding client. Model is the embedding model
+// id (BACKEND_EMBED_MODEL), looked up in Registry (llmwire's default when nil).
+// BaseURL and APIKey override the model's profile: left empty, llmwire uses the
+// host its profile ships and reads the provider's key variable itself, and a
+// test points BaseURL at its fake. Logger is optional and defaults to
 // slog.Default(). HeartbeatInterval is how often an in-flight request logs
 // that it is still waiting (0 uses llm.DefaultHeartbeat; negative disables it).
 type EmbedConfig struct {
+	Model             string
+	Registry          *llmwire.Registry
 	BaseURL           string
 	APIKey            string
 	Logger            *slog.Logger
@@ -79,20 +73,36 @@ type EmbedConfig struct {
 // EmbedClient generates embeddings via an OpenAI-compatible /embeddings endpoint.
 type EmbedClient struct {
 	wire      *llmwire.Client
+	model     string
+	dim       int
 	log       *slog.Logger
 	heartbeat time.Duration
 }
 
-// NewEmbedClient builds an EmbedClient. hc is optional. The error is a missing
-// LLMWIRE_OPENAI_API_KEY, named.
+// NewEmbedClient builds an EmbedClient. hc is optional. The error names what
+// is wrong: a model missing, unknown or not an embeddings model (with the valid
+// choices), or the provider key variable llmwire could not read.
 func NewEmbedClient(cfg EmbedConfig, hc *http.Client) (*EmbedClient, error) {
+	if cfg.Registry == nil {
+		cfg.Registry = llmwire.Default()
+	}
+	if cfg.Model == "" {
+		return nil, fmt.Errorf("BACKEND_EMBED_MODEL is required; valid choices are %s",
+			strings.Join(embeddingModels(cfg.Registry), ", "))
+	}
+	profile, err := cfg.Registry.LookupEmbedding(cfg.Model)
+	if err != nil {
+		return nil, fmt.Errorf("BACKEND_EMBED_MODEL: %w; valid choices are %s",
+			err, strings.Join(embeddingModels(cfg.Registry), ", "))
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
 	if cfg.HeartbeatInterval == 0 {
 		cfg.HeartbeatInterval = llm.DefaultHeartbeat
 	}
-	wire, err := llmwire.FromEnv(EmbedModel, llmwire.Config{
+	wire, err := llmwire.FromEnv(cfg.Model, llmwire.Config{
+		Registry:   cfg.Registry,
 		BaseURL:    cfg.BaseURL,
 		APIKey:     cfg.APIKey,
 		HTTPClient: hc,
@@ -106,14 +116,20 @@ func NewEmbedClient(cfg EmbedConfig, hc *http.Client) (*EmbedClient, error) {
 	}
 	return &EmbedClient{
 		wire:      wire,
+		model:     cfg.Model,
+		dim:       profile.Embedding.DefaultDimensions,
 		log:       cfg.Logger,
 		heartbeat: cfg.HeartbeatInterval,
 	}, nil
 }
 
-// Model names the deployment this client embeds against. The answer trace has
-// to say which model turned the question into a vector.
-func (c *EmbedClient) Model() string { return EmbedModel }
+// Model names the model this client embeds against. The answer trace has to
+// say which model turned the question into a vector.
+func (c *EmbedClient) Model() string { return c.model }
+
+// Dim is the width of every vector Model returns, from its profile, and
+// therefore what vec_chunks must be built to.
+func (c *EmbedClient) Dim() int { return c.dim }
 
 // Embed returns one vector per input, aligned to input order. Empty input yields
 // no vectors and no request.
@@ -141,7 +157,7 @@ func (c *EmbedClient) Embed(ctx context.Context, inputs []string) ([][]float32, 
 	stop := llm.StartHeartbeat(ctx, c.log, c.heartbeat, "embed: still waiting for response", ident...)
 	defer stop()
 
-	resp, warnings, err := c.wire.Embed(ctx, llmwire.EmbedRequest{Model: EmbedModel, Inputs: inputs})
+	resp, warnings, err := c.wire.Embed(ctx, llmwire.EmbedRequest{Model: c.model, Inputs: inputs})
 	if err != nil {
 		return fail(embedError(err))
 	}

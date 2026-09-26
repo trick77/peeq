@@ -9,35 +9,73 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/trick77/llmwire"
 	"github.com/trick77/peeq/internal/config"
+	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/sse"
 )
 
 // The hosts are llmwire's profiles' and the keys are llmwire's to read from
-// the environment; what main owns is refusing to boot, with the variable
-// named, when a key is missing.
+// the environment; what main owns is handing each client its configured model
+// and refusing to boot, with the variable named, when a key is missing.
+//
+// The models are real registry ids only because main builds its clients on
+// llmwire's default registry; the test asserts nothing about them beyond
+// "the key variable their providers name". Any chat model that can fill the
+// chat role and any embeddings model would do.
 func TestNewModelClients_namesTheMissingVariable(t *testing.T) {
-	vars := []string{"LLMWIRE_OPENAI_API_KEY", "LLMWIRE_ZAI_API_KEY"}
+	reg := llmwire.Default()
+	chat := reg.ChatModels(llm.ChatNeeds)
+	if len(chat) == 0 {
+		t.Fatal("llmwire ships no chat model that can fill the chat role")
+	}
+	var embed string
+	for _, id := range reg.Models() {
+		if _, err := reg.LookupEmbedding(id); err == nil {
+			embed = id
+			break
+		}
+	}
+	if embed == "" {
+		t.Fatal("llmwire ships no embeddings model")
+	}
+	cfg := config.Config{ChatModel: chat[0], EmbedModel: embed}
+	chatProfile, _ := reg.Lookup(cfg.ChatModel)
+	embedProfile, _ := reg.Lookup(cfg.EmbedModel)
+	vars := []string{keyVar(chatProfile.Provider), keyVar(embedProfile.Provider)}
 	for _, v := range vars {
 		t.Setenv(v, "x")
 	}
-	if _, _, _, err := newModelClients(config.Config{}); err != nil {
+	if _, _, _, err := newModelClients(cfg); err != nil {
 		t.Fatalf("both keys set: %v", err)
 	}
 	for _, v := range vars {
 		t.Run(v, func(t *testing.T) {
 			t.Setenv(v, "")
-			_, _, _, err := newModelClients(config.Config{})
+			_, _, _, err := newModelClients(cfg)
 			var me *llmwire.MissingEnvError
-			if !errors.As(err, &me) || me.Var != v {
+			if !errors.As(err, &me) || !strings.Contains(err.Error(), v) {
 				t.Fatalf("got %v, want a MissingEnvError naming %s", err, v)
 			}
 		})
 	}
+}
+
+// An unset model refuses boot naming its variable, never falls back to one
+// picked in code.
+func TestNewModelClients_refusesAnUnsetModel(t *testing.T) {
+	_, _, _, err := newModelClients(config.Config{})
+	if err == nil || !strings.Contains(err.Error(), "BACKEND_EMBED_MODEL") {
+		t.Fatalf("got %v, want the unset embedding model named", err)
+	}
+}
+
+func keyVar(provider string) string {
+	return "LLMWIRE_" + strings.ToUpper(provider) + "_API_KEY"
 }
 
 // TestResolveYtdlpBin_picksUpNewlyAppearedBinary proves the resolver used on

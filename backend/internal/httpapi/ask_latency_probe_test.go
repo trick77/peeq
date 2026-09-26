@@ -14,31 +14,9 @@ import (
 
 // Manual measurement harnesses, not tests of anything. They answer the question
 // a unit test cannot: what actually makes Ask — peeq's only user-blocking model
-// call — slow, and which knob moves it.
-//
-// WHAT THEY ESTABLISHED UNDER MIMO (2026-08-04, superseded — kept because the
-// conclusion inverted and someone will otherwise re-derive the old one):
-//
-//	reasoning_effort=high    ttft 4858ms   reasoning [25 26 26 26 26 157 221 266]
-//	reasoning_effort=low     ttft 6200ms   reasoning [26 26 26 28 28 307 333 383]
-//	thinking disabled        ttft 1084ms   reasoning [0 0 0 0 0 0 0 0]
-//
-// Against MiMo, reasoning_effort was inert and thinking:disabled was the only
-// lever. NEITHER HOLDS ON Z.AI. Thinking cannot be disabled at all there (HTTP
-// 400, code 1210), and reasoning_effort is the only control that exists.
-//
-// WHAT HOLDS NOW (2026-08-29, api.z.ai, glm-5.3-flash, single calls per cell —
-// reasoning tokens / wall clock, measured outside this harness):
-//
-//	                     low          high          max
-//	classify             0 / 1.0s     15 / 1.3s     107 / 3.5s
-//	understand           53 / 2.5s    54 / 2.5s     345 / 7.4s
-//	keypoints (12.5k)    18 / 7.9s    192 / 12.8s   3183 / 69.9s
-//	ask answer           —            80 / 4.4s     355 / 9.6s
-//
-// Effort now buys real depth and costs real time. Tokens barely separate the
-// levels; wall clock separates them a lot. Re-run TestAskEffortTiers with more
-// repeats before changing the Ask tier — the numbers above are single samples.
+// call — slow, and what each reasoning intent costs and buys on the configured
+// chat model. Re-run them after changing BACKEND_CHAT_MODEL before trusting the
+// intents chosen in answer_handlers.go and understand.go on the new model.
 //
 // Skipped unless PEEQ_ASK_SWEEP=1: they call the real endpoint and cost real
 // tokens. Run from the repo root with the environment loaded:
@@ -49,17 +27,31 @@ import (
 // Retrieval is deliberately not involved: it is identical at every setting, and
 // wiring it in would make the corpus depend on whatever the local library holds.
 // The excerpts below are fixed and sized like real ones.
+
+// probeIntents are the reasoning intents a sweep compares.
+var probeIntents = []llm.Reasoning{llm.ReasoningDefault, llm.ReasoningBalanced, llm.ReasoningMinimal}
+
+// probeClient is the real chat client, on the configured model.
+func probeClient(t *testing.T) *llm.Client {
+	t.Helper()
+	client, err := llm.NewClient(llm.Config{
+		Model: os.Getenv("BACKEND_CHAT_MODEL"), GateModel: os.Getenv("BACKEND_GATE_MODEL"),
+		CallTimeout: 5 * time.Minute,
+	}, nil)
+	if err != nil {
+		t.Fatalf("%v — load .env first", err)
+	}
+	return client
+}
+
 func TestAskEffortSweep(t *testing.T) {
 	if os.Getenv("PEEQ_ASK_SWEEP") != "1" {
 		t.Skip("manual: set PEEQ_ASK_SWEEP=1 (calls the real chat endpoint)")
 	}
-	client, err := llm.NewClient(llm.Config{CallTimeout: 5 * time.Minute}, nil)
-	if err != nil {
-		t.Fatalf("%v — load .env first", err)
-	}
+	client := probeClient(t)
 
 	type run struct {
-		effort   string
+		effort   llm.Reasoning
 		question string
 		ttft     time.Duration
 		total    time.Duration
@@ -74,11 +66,11 @@ func TestAskEffortSweep(t *testing.T) {
 	// the endpoint spreads across all three levels instead of landing on one and
 	// being read as a property of that level.
 	for _, q := range sweepQuestions {
-		for _, effort := range []string{"high", "medium", "low"} {
+		for _, effort := range probeIntents {
 			totals := &llm.Totals{}
 			ctx := llm.WithTotals(llm.WithCall(context.Background(), llm.CallInfo{Step: "answer-sweep"}), totals)
-			ctx = llm.WithMaxTokens(ctx, answerMaxTokens)
-			ctx = llm.WithReasoningEffort(ctx, effort)
+			ctx = llm.WithMaxAnswerTokens(ctx, answerMaxAnswerTokens)
+			ctx = llm.WithReasoning(ctx, effort)
 
 			start := time.Now()
 			var ttft time.Duration
@@ -102,12 +94,12 @@ func TestAskEffortSweep(t *testing.T) {
 	// wait moves it by seconds and says nothing about the typical answer.
 	t.Log("\n=== per-run ===")
 	for _, r := range runs {
-		t.Logf("%-6s ttft=%5dms total=%5dms reasoning=%4d out=%4d q=%.40q",
+		t.Logf("%-8s ttft=%5dms total=%5dms reasoning=%4d out=%4d q=%.40q",
 			r.effort, r.ttft.Milliseconds(), r.total.Milliseconds(), r.reason, r.out, r.question)
 	}
 
 	t.Log("\n=== medians ===")
-	for _, effort := range []string{"high", "medium", "low"} {
+	for _, effort := range probeIntents {
 		var ttfts, totals, reasons []int64
 		for _, r := range runs {
 			if r.effort == effort && r.err == nil {
@@ -116,7 +108,7 @@ func TestAskEffortSweep(t *testing.T) {
 				reasons = append(reasons, r.reason)
 			}
 		}
-		t.Logf("%-6s n=%d  ttft=%dms  total=%dms  reasoning=%d tokens",
+		t.Logf("%-8s n=%d  ttft=%dms  total=%dms  reasoning=%d tokens",
 			effort, len(ttfts), median(ttfts), median(totals), median(reasons))
 	}
 
@@ -184,41 +176,23 @@ var sweepExcerpts = func() []string {
 	return out
 }()
 
-// The sweep above showed reasoning-token counts that did not track the effort
-// level — high returning 28 tokens on one question while low returned 312 on
-// another, which under MiMo read as the parameter being inert. This separates a
-// real gap from that variance: ONE question, many repeats, three settings, on
-// the Ask prompt specifically. If effort works, the distributions separate.
-//
-// All three levels are compared because all three are reachable: low is what
-// llm.Shallow sends, max is the package default, and high sits between them.
-// thinking:disabled is NOT in the comparison — the endpoint rejects it.
+// One question, many repeats, every intent, on the Ask prompt specifically:
+// separates a real gap between intents from per-call variance, which a
+// single-sample sweep cannot.
 func TestAskEffortTiers(t *testing.T) {
 	if os.Getenv("PEEQ_ASK_SWEEP") != "1" {
 		t.Skip("manual: set PEEQ_ASK_SWEEP=1 (calls the real chat endpoint)")
 	}
-	client, err := llm.NewClient(llm.Config{CallTimeout: 5 * time.Minute}, nil)
-	if err != nil {
-		t.Fatalf("%v — load .env first", err)
-	}
+	client := probeClient(t)
 
 	const q = "Why do endurance athletes cramp late in a race?"
 	const repeats = 8
-	settings := []struct {
-		name     string
-		decorate func(context.Context) context.Context
-	}{
-		{"max", func(c context.Context) context.Context { return llm.WithReasoningEffort(c, "max") }},
-		{"high", func(c context.Context) context.Context { return llm.WithReasoningEffort(c, "high") }},
-		{"low", func(c context.Context) context.Context { return llm.WithReasoningEffort(c, "low") }},
-	}
-
-	for _, s := range settings {
+	for _, intent := range probeIntents {
 		var ttfts, reasons []int64
 		for i := 0; i < repeats; i++ {
 			totals := &llm.Totals{}
 			ctx := llm.WithTotals(llm.WithCall(context.Background(), llm.CallInfo{Step: "inert-probe"}), totals)
-			ctx = s.decorate(llm.WithMaxTokens(ctx, answerMaxTokens))
+			ctx = llm.WithReasoning(llm.WithMaxAnswerTokens(ctx, answerMaxAnswerTokens), intent)
 			start := time.Now()
 			var ttft time.Duration
 			if _, err := client.CompleteStream(ctx, answerMessages(q, sweepExcerpts, nil, nil, nil), func(string) {
@@ -226,7 +200,7 @@ func TestAskEffortTiers(t *testing.T) {
 					ttft = time.Since(start)
 				}
 			}); err != nil {
-				t.Logf("ERROR %s #%d: %v", s.name, i, err)
+				t.Logf("ERROR %s #%d: %v", intent, i, err)
 				continue
 			}
 			u := totals.Snapshot()
@@ -235,12 +209,12 @@ func TestAskEffortTiers(t *testing.T) {
 		}
 		sort.Slice(reasons, func(i, j int) bool { return reasons[i] < reasons[j] })
 		t.Logf("%-9s n=%d ttft_median=%5dms reasoning_median=%4d reasoning_all=%v",
-			s.name, len(ttfts), median(ttfts), median(reasons), reasons)
+			intent, len(ttfts), median(ttfts), median(reasons), reasons)
 	}
 }
 
-// Effort is the only lever, so the question is what Ask loses at the shallow end.
-// This prints the max and shallow answers to every sweep question side by side so
+// What Ask loses at the shallow end. This prints the default and minimal
+// answers to every sweep question side by side so
 // the citation behaviour, the refusal on a question the corpus cannot answer, and
 // the six-sentence limit can be read rather than assumed. Timing is reported too,
 // but the decision here is quality.
@@ -248,18 +222,12 @@ func TestAskEffortQuality(t *testing.T) {
 	if os.Getenv("PEEQ_ASK_SWEEP") != "1" {
 		t.Skip("manual: set PEEQ_ASK_SWEEP=1 (calls the real chat endpoint)")
 	}
-	client, err := llm.NewClient(llm.Config{CallTimeout: 5 * time.Minute}, nil)
-	if err != nil {
-		t.Fatalf("%v — load .env first", err)
-	}
+	client := probeClient(t)
 
 	for _, q := range sweepQuestions {
 		t.Logf("\n──────── %s", q)
-		for _, mode := range []string{"max", "shallow"} {
-			ctx := llm.WithMaxTokens(context.Background(), answerMaxTokens)
-			if mode == "shallow" {
-				ctx = llm.Shallow(ctx)
-			}
+		for _, mode := range []llm.Reasoning{llm.ReasoningDefault, llm.ReasoningMinimal} {
+			ctx := llm.WithReasoning(llm.WithMaxAnswerTokens(context.Background(), answerMaxAnswerTokens), mode)
 			start := time.Now()
 			var ttft time.Duration
 			answer, err := client.CompleteStream(ctx, answerMessages(q, sweepExcerpts, nil, nil, nil), func(string) {
