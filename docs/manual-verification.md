@@ -33,11 +33,9 @@ Run after any change to channels, scanning, or the download pipeline.
 
 Run after any change to captions, embeddings, summaries, chapters, or global search.
 
-1. Boot with a real YouTube cookie, a **chat key** (`LLMWIRE_ZAI_API_KEY` for Z.ai's general
-   endpoint, the host is llmwire's, see AGENTS.md), and an **embeddings key**
-   (`LLMWIRE_OPENAI_API_KEY`; the model itself is a constant, `rag.EmbedModel`). peeq will
-   refuse to start without the two keys.
-   The two are separate providers: the chat swap to GLM does not touch embeddings.
+1. Boot with a real YouTube cookie, `BACKEND_CHAT_MODEL` and `BACKEND_EMBED_MODEL` set, and
+   the `LLMWIRE_<PROVIDER>_API_KEY` each model's provider needs (hosts are llmwire's, see
+   AGENTS.md). peeq refuses to start on a missing key or an unset/unsuitable model, naming it.
 2. Download a real video and confirm its captions are present:
    - Check that VTT captions are extracted (if the video has YouTube-hosted captions or subtitles).
    - Confirm CC (closed captions) file(s) are generated and stored alongside the video.
