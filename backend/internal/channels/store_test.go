@@ -1,9 +1,12 @@
 package channels
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/trick77/peeq/internal/rag"
@@ -916,6 +919,57 @@ func TestList_ordersByTheDisplayedName(t *testing.T) {
 	for i := range want {
 		if i >= len(got) || got[i] != want[i] {
 			t.Fatalf("order = %v, want %v", got, want)
+		}
+	}
+}
+
+// A channel delete purges its videos' vectors, and vec0 keeps their storage:
+// the delete reports the bloat it leaves, naming the channel.
+func TestDeleteCascade_warnsOfTheVectorBloatItLeaves(t *testing.T) {
+	st := newTestStore(t)
+	db := st.DB()
+	const dim = 1536
+	vec := func(m float32) []float32 {
+		v := make([]float32, dim)
+		for i := range v {
+			v[i] = m
+		}
+		return v
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 10001; i <= 13000; i++ {
+		if _, err := tx.Exec(`INSERT INTO vec_chunks (rowid, embedding) VALUES (?, ?)`, i, store.VecLiteral(vec(float32(i)))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM vec_chunks WHERE rowid <= 12900`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	st.Upsert(Channel{ID: "UC1", Name: "One"})
+	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status) VALUES ('v1','u','UC1','downloaded')`)
+	if err := rag.NewStore(db).ReplaceVideoChunks(context.Background(), "v1",
+		rag.IndexMeta{Model: "e5", Dim: dim, Rev: rag.ChunkRecipeRev},
+		[]rag.ChunkRow{{Text: "titanium frame"}}, [][]float32{vec(1)}); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&out, nil)))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	if err := st.DeleteCascade("UC1"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{"level=WARN", `msg="vector index bloated, compacted at next boot"`, "channel_id=UC1"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("log = %q, want %q", out.String(), want)
 		}
 	}
 }

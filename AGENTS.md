@@ -98,6 +98,7 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   version, so the edit silently never applies. Safe only before it ships; else write the next number.
 - Migration touching DATA (not just shape) → test on a populated DB stood up at the previous migration
   (`applyThrough`). Fresh-DB test runs it over zero rows and passes whatever it says.
+- **vec0 never frees a deleted vector** — the storage chunk stays, inserts only append, every KNN reads every chunk. Each re-embed adds dead chunks; rongo hit 46k vectors in 380 chunks and minutes per search, surfacing as `chunks iter error` (sqlite-vec's word for an interrupt). `rag.CompactVectors` rebuilds past 2× AT BOOT ONLY: it holds the write lock for minutes (rongo production: 8m33s for 46k vectors), far past `busy_timeout`. Writes that delete vectors warn.
 - Ad-hoc query against a containerised DB → sqlite base image, never `alpine` + `apk add sqlite`:
   `docker run --rm -v "$PWD/data:/data" keinos/sqlite3 sqlite3 -readonly -box /data/peeq.db "<sql>"`.
   Mount rw, not `:ro` — WAL needs the `-shm` sidecar even to read; `-readonly` is what protects a live DB.
