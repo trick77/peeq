@@ -336,6 +336,22 @@ func TestClassify_isAShortGateAtDefaultReasoning(t *testing.T) {
 	}
 }
 
+// The key-points call runs at the model's default reasoning, which can think
+// well past a default allowance, and a cut there truncates the JSON and drops
+// every point. Its wire cap must not fall below the 16000-token total it had
+// when the cap still counted reasoning by hand.
+func TestKeyPoints_wireCapKeepsTheOldTotalHeadroom(t *testing.T) {
+	client, srv := newStubChat(t, `{"key_points":[{"ts":0,"text":"intro"}]}`)
+	s := New(client)
+	cues := []subtitles.Cue{{StartSeconds: 0, Text: "intro"}}
+	if _, _, err := s.KeyPoints(context.Background(), "A summary.", cues, []Chapter{{TS: 0, Title: "Intro", Source: "yt-dlp"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := srv.Last().MaxTokens(); !ok || got < 16000 {
+		t.Fatalf("key-points wire cap = %d (sent %v), want at least the old 16000 total", got, ok)
+	}
+}
+
 // Key points must NOT be routed as a short gate, whatever its reasoning:
 // chapter titles and key-point text are what a reader sees in the Player.
 func TestKeyPoints_isNotAShortGate(t *testing.T) {
