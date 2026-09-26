@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/trick77/peeq/internal/store"
 )
@@ -151,7 +153,12 @@ func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID string, meta Ind
 		meta.Model, meta.Dim, meta.Rev, videoID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// A re-embed left the old vectors' storage behind (CompactVectors).
+	WarnVectorBloat(ctx, s.db, slog.Default(), "video_id", videoID)
+	return nil
 }
 
 // DeleteVideoChunks removes a video's chunks + embeddings (used on full delete).
@@ -164,7 +171,11 @@ func (s *Store) DeleteVideoChunks(ctx context.Context, videoID string) error {
 	if err := deleteVideoTx(ctx, tx, videoID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	WarnVectorBloat(ctx, s.db, slog.Default(), "video_id", videoID)
+	return nil
 }
 
 // HasChunks reports whether this video is indexed at all.
@@ -292,9 +303,33 @@ func (s *Store) RetrieveWithinFiltered(ctx context.Context, queryEmbedding []flo
 		WHERE ? <= 0 OR distance < ?
 		ORDER BY distance`
 	args = append(args, maxDistance, maxDistance)
+	start := time.Now()
+	out, err := s.scanVector(ctx, q, args)
+	elapsed := time.Since(start).Round(time.Millisecond)
+	if err != nil {
+		// sqlite-vec reports an interrupt as "SQL logic error: chunks iter
+		// error", which reads as corruption. Name the cancel and how long the
+		// search had run before it.
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("retrieve: vector search interrupted after %s (%w): %w", elapsed, context.Cause(ctx), err)
+		}
+		return nil, fmt.Errorf("retrieve: %w", err)
+	}
+	if elapsed >= slowVectorSearch {
+		slog.Warn("slow vector search", "k", k, "filtered", !f.Empty(), "hits", len(out), "took", elapsed.String())
+	}
+	return out, nil
+}
+
+// slowVectorSearch is the duration past which a vector search is logged. A
+// healthy one takes milliseconds; one reading a bloated vec_chunks takes
+// minutes (CompactVectors).
+var slowVectorSearch = 2 * time.Second
+
+func (s *Store) scanVector(ctx context.Context, q string, args []any) ([]Hit, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("retrieve: %w", err)
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	var out []Hit

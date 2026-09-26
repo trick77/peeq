@@ -221,6 +221,11 @@ func run() error {
 	if err := ragStore.CheckEmbedModel(ctx, embedClient.Model()); err != nil {
 		return err
 	}
+	// vec0 never frees a deleted vector's storage, and every search reads all
+	// of it (rag.CompactVectors). Compacted here, before any worker or request
+	// can write, and vacuumed only then: the rewrite blocks writers, which at
+	// this point is nobody.
+	rag.LogVectorIndexAtBoot(ctx, db, slog.Default())
 
 	// The throttle floor is read once at boot; the Runner clamps whatever is
 	// configured up to its own hard 20s minimum regardless.
@@ -628,7 +633,7 @@ func runYtdlpVersionCheckTicker(
 		got := status.Get()
 		if boot {
 			slog.Info("yt-dlp version checked",
-				"version", installed, "latest", latest, "interval", interval)
+				"version", installed, "latest", latest, "interval", interval.String())
 		}
 		if !got.UpdateAvailable() {
 			return

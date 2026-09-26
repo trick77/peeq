@@ -14,6 +14,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
+
+	"github.com/trick77/peeq/internal/rag"
 )
 
 // Channel mirrors one row of the channels table. A Channel may exist purely
@@ -235,7 +238,14 @@ WHERE v.channel_id = ?`, channelID)
 	if _, err := tx.Exec(`DELETE FROM channels WHERE id = ?`, channelID); err != nil {
 		return fmt.Errorf("delete channel: %w", err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// The purged vectors' storage stays in vec_chunks (rag.CompactVectors).
+	if len(chunkIDs) > 0 {
+		rag.WarnVectorBloat(context.Background(), s.db, slog.Default(), "channel_id", channelID)
+	}
+	return nil
 }
 
 // Upsert caches a channel's identity, inserting it if new or refreshing the

@@ -676,7 +676,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	tr.add(answerKey, s.ask.ModelFor(ctx), traceKindModel, time.Since(answerStart).Milliseconds())
 	switch {
 	case err != nil:
-		slog.Warn("answer: chat failed", "err", err)
+		logAnswerFailed(ctx, err, time.Since(answerStart))
 		send("error", map[string]string{"error": "answer unavailable"})
 	case strings.TrimSpace(answer) == "":
 		// A clean stream that carried no content is still a failure, and the

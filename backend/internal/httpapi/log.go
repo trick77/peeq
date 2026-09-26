@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/trick77/peeq/internal/logx"
 )
@@ -13,6 +15,20 @@ import (
 // silent. Only r.URL.Path is logged — never the query string, which on the
 // OIDC callback carries a live auth code.
 func serverError(w http.ResponseWriter, r *http.Request, err error, clientMessage string) {
+	// A request whose client went away fails on whatever it was waiting on,
+	// and that error hides the cancel: sqlite-vec reports an interrupt as "SQL
+	// logic error: chunks iter error", which reads as a corrupt database. The
+	// cause says what happened; context.Canceled is the connection closing.
+	if ctx := r.Context(); ctx.Err() != nil {
+		slog.Warn("request cancelled",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"cause", context.Cause(ctx).Error(),
+			"err", logx.RedactErr(err),
+		)
+		writeJSONError(w, http.StatusInternalServerError, clientMessage)
+		return
+	}
 	slog.Error("request failed",
 		"method", r.Method,
 		"path", r.URL.Path,
@@ -20,6 +36,20 @@ func serverError(w http.ResponseWriter, r *http.Request, err error, clientMessag
 		"err", logx.RedactErr(err),
 	)
 	writeJSONError(w, http.StatusInternalServerError, clientMessage)
+}
+
+// logAnswerFailed reports an Ask answer stream that ended in an error, and
+// separates the one whose reader went away from the one that failed: the
+// cancelled stream's error names the stream, not the closed tab behind it.
+// took is how long the call ran — ninety seconds before a failure is the
+// finding.
+func logAnswerFailed(ctx context.Context, err error, took time.Duration) {
+	d := took.Round(time.Millisecond).String()
+	if ctx.Err() != nil {
+		slog.Warn("answer cancelled", "cause", context.Cause(ctx).Error(), "err", err, "step", "answer", "took", d)
+		return
+	}
+	slog.Warn("answer: chat failed", "err", err, "took", d)
 }
 
 // upstreamError answers a 502 for a failure of something peeq called on the
