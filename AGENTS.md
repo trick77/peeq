@@ -45,9 +45,10 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - **Every model fact is llmwire's profile's**: host, key var, reasoning knob and level names,
   output limit, vector width, sampling, rates, quirks. Never restate one in code, comments, docs or
   tests; a wrong fact is fixed upstream.
-- `vec_chunks` width is a migration literal. Boot refuses an embed model of another width
-  (`rag.CheckVecWidth`); switching = new migration rebuilding `vec_chunks` + re-embed every video.
-  No auto re-index. A same-width swap passes the check but mixes vector spaces: re-embed too.
+- `vec_chunks` width is a migration literal; `vec_model` records which model wrote the vectors.
+  Boot refuses an embed model of another width (`rag.CheckVecWidth`) or another id at the same width
+  (`rag.Store.CheckEmbedModel`: same width, different vector space). Switching = new migration
+  rebuilding `vec_chunks` + clearing `vec_model`, then re-embed every video. No auto re-index.
 
 ## Chat model
 - **The wire protocol is `github.com/trick77/llmwire`.** What that library owns, and what therefore

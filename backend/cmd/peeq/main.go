@@ -215,6 +215,12 @@ func run() error {
 	} else if err := rag.CheckVecWidth(builtDim, embedClient.Model(), embedClient.Dim()); err != nil {
 		return err
 	}
+	// Same width is not the same model: two models of one width embed into
+	// different spaces, so the model that wrote the stored vectors must be the
+	// configured one too.
+	if err := ragStore.CheckEmbedModel(ctx, embedClient.Model()); err != nil {
+		return err
+	}
 
 	// The throttle floor is read once at boot; the Runner clamps whatever is
 	// configured up to its own hard 20s minimum regardless.
