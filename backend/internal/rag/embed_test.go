@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/trick77/llmwire"
+	"github.com/trick77/llmwire/llmwiretest"
 )
 
 func TestEmbedReturnsVectorsInInputOrder(t *testing.T) {
@@ -142,51 +143,68 @@ func TestEmbedBatchedFailsWholeCallOnBatchError(t *testing.T) {
 	}
 }
 
-// The pinned model is what every vector in the database was built to, and its
-// width is what vec_chunks is built to. Both are read off the llmwire profile,
-// so this is the contract the boot dim-guard and the worker's IndexMeta rest on:
-// the model exists upstream, it is an embeddings model, and its width is the
-// one this repo's schema was created at.
-func TestEmbedModel_isPinnedAndProfiled(t *testing.T) {
-	if EmbedModel != "text-embedding-3-small" {
-		t.Fatalf("EmbedModel = %q; changing it is a corpus rebuild, and this test is where "+
-			"that decision is made deliberately", EmbedModel)
-	}
-	if got := EmbedDim(); got != 1536 {
-		t.Fatalf("EmbedDim() = %d, want 1536: vec_chunks was created at that width", got)
-	}
+// The model is configuration; its width is its llmwire profile's. Both are
+// what the worker's IndexMeta and the boot width check read.
+func TestEmbedClient_modelAndWidthComeFromConfigAndProfile(t *testing.T) {
 	c := mustEmbedClient(t, EmbedConfig{BaseURL: "http://example.invalid"}, nil)
-	if c.Model() != EmbedModel {
-		t.Errorf("Model() = %q, want the pinned constant", c.Model())
+	if c.Model() != llmwiretest.EmbedModel {
+		t.Errorf("Model() = %q, want the configured %q", c.Model(), llmwiretest.EmbedModel)
 	}
-	// The width is read from the profile every time, never cached in a second
-	// place this package could drift from.
-	if c.Model() != EmbedModel || EmbedDim() != 1536 {
-		t.Error("model and width disagree with the profile")
+	if c.Dim() != llmwiretest.EmbedDimensions {
+		t.Errorf("Dim() = %d, want the profile's %d", c.Dim(), llmwiretest.EmbedDimensions)
 	}
 }
 
-// The request goes out under the pinned model id, whatever the caller thinks.
-func TestEmbed_sendsThePinnedModel(t *testing.T) {
-	var gotModel string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Model string `json:"model"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		gotModel = body.Model
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": []map[string]any{{"index": 0, "embedding": []float32{0.1}}},
+// A missing, unknown or non-embeddings model is refused at construction, named
+// by its env var, with the choices that would work.
+func TestNewEmbedClient_refusesAModelThatIsNotAnEmbeddingModel(t *testing.T) {
+	for _, tc := range []struct {
+		name, model string
+		want        []string
+	}{
+		{"missing", "", []string{"BACKEND_EMBED_MODEL", "required", llmwiretest.EmbedModel}},
+		{"unknown", "no-such-model", []string{"BACKEND_EMBED_MODEL", "no-such-model"}},
+		{"chat model", llmwiretest.ChatModel, []string{"BACKEND_EMBED_MODEL", "not embeddings", llmwiretest.EmbedModel}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewEmbedClient(EmbedConfig{Model: tc.model, Registry: llmwiretest.Registry(),
+				BaseURL: "http://example.invalid"}, nil)
+			if err == nil {
+				t.Fatal("NewEmbedClient accepted it")
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("err = %q, want it to mention %q", err, w)
+				}
+			}
 		})
-	}))
-	defer srv.Close()
+	}
+}
 
-	c := mustEmbedClient(t, EmbedConfig{BaseURL: srv.URL}, srv.Client())
+// The request goes out under the configured model id.
+func TestEmbed_sendsTheConfiguredModel(t *testing.T) {
+	srv := llmwiretest.NewServer(t)
+	c := mustEmbedClient(t, EmbedConfig{BaseURL: srv.URL}, srv.Server.Client())
 	if _, err := c.Embed(context.Background(), []string{"a"}); err != nil {
 		t.Fatal(err)
 	}
-	if gotModel != EmbedModel {
-		t.Errorf("model on the wire = %q, want %q", gotModel, EmbedModel)
+	if got := srv.Last().Model(); got != llmwiretest.EmbedModel {
+		t.Errorf("model on the wire = %q, want %q", got, llmwiretest.EmbedModel)
+	}
+}
+
+func TestCheckVecWidth(t *testing.T) {
+	if err := CheckVecWidth(8, "m", 8); err != nil {
+		t.Fatalf("matching widths refused: %v", err)
+	}
+	err := CheckVecWidth(1536, "m", 8)
+	if err == nil {
+		t.Fatal("a width mismatch must refuse boot")
+	}
+	for _, w := range []string{"1536", "8", "m", "BACKEND_EMBED_MODEL", "re-index"} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("err = %q, want it to mention %q", err, w)
+		}
 	}
 }
 
@@ -194,6 +212,12 @@ func TestEmbed_sendsThePinnedModel(t *testing.T) {
 // fake server, so the only way it can fail is a bug in the constructor.
 func mustEmbedClient(t testing.TB, cfg EmbedConfig, hc *http.Client) *EmbedClient {
 	t.Helper()
+	if cfg.Model == "" {
+		cfg.Model = llmwiretest.EmbedModel
+	}
+	if cfg.Registry == nil {
+		cfg.Registry = llmwiretest.Registry()
+	}
 	c, err := NewEmbedClient(cfg, hc)
 	if err != nil {
 		t.Fatalf("NewEmbedClient: %v", err)
@@ -205,10 +229,11 @@ func mustEmbedClient(t testing.TB, cfg EmbedConfig, hc *http.Client) *EmbedClien
 // llmwire for the key variable; a missing one comes back named rather than as
 // a client that dials "".
 func TestNewEmbedClient_withoutBaseURLNamesTheMissingVariable(t *testing.T) {
-	t.Setenv("LLMWIRE_OPENAI_API_KEY", "")
-	_, err := NewEmbedClient(EmbedConfig{}, nil)
+	t.Setenv("LLMWIRE_LLMWIRETEST_BASE_URL", "http://127.0.0.1:1")
+	t.Setenv("LLMWIRE_LLMWIRETEST_API_KEY", "")
+	_, err := NewEmbedClient(EmbedConfig{Model: llmwiretest.EmbedModel, Registry: llmwiretest.Registry()}, nil)
 	var me *llmwire.MissingEnvError
-	if !errors.As(err, &me) || me.Var != "LLMWIRE_OPENAI_API_KEY" {
+	if !errors.As(err, &me) || !strings.Contains(err.Error(), "LLMWIRE_LLMWIRETEST_API_KEY") {
 		t.Fatalf("got %v", err)
 	}
 }

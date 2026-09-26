@@ -62,23 +62,18 @@ type wireResult struct {
 // chatRequestFor maps peeq's context knobs onto an llmwire request.
 //
 // Everything the model needs is a field llmwire models; nothing rides in
-// ExtraBody. The thinking:{"type":"enabled"} object peeq used to send by hand
-// is gone: measured against api.z.ai, reasoning_effort alone drives depth (5
-// reasoning tokens at low, 43 at max on the same prompt) and the model thinks
-// whether or not the object is present, exactly as llmwire's profile records.
-//
-// temperature and top_p are deliberately NOT set here. llmwire sends the
-// profile's recommended values (1.0 and 0.95) when the caller expresses no
-// preference, which is exactly what this package has always sent and why:
-// omitting them on Z.ai gives lower values, not "the defaults".
-func chatRequestFor(ctx context.Context, messages []Message) llmwire.ChatRequest {
+// ExtraBody. Sampling (temperature, top_p) is deliberately NOT set: llmwire
+// sends the profile's recommended values when the caller expresses no
+// preference, and an endpoint's own fallback is not necessarily the model's
+// tuned point.
+func (c *Client) chatRequestFor(ctx context.Context, messages []Message) llmwire.ChatRequest {
 	req := llmwire.ChatRequest{
-		Model:     modelFrom(ctx),
+		Model:     c.ModelFor(ctx),
 		Messages:  toWireMessages(messages),
-		Reasoning: llmwire.ReasoningEffort(reasoningEffortFrom(ctx)),
+		Reasoning: ReasoningFor(ctx).wire(),
 	}
-	if n := maxTokensFrom(ctx); n > 0 {
-		req.MaxTokens = &n
+	if n := maxAnswerTokensFrom(ctx); n > 0 {
+		req.MaxAnswerTokens = &n
 	}
 	if wantsJSONObject(ctx) {
 		req.ResponseFormat = llmwire.ResponseFormat{Kind: llmwire.FormatJSONObject}

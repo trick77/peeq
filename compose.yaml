@@ -40,11 +40,20 @@ services:
       BACKEND_DB_PATH: /data/peeq.db
       BACKEND_MEDIA_DIR: /data/media
       BACKEND_YTDLP_DIR: /data/bin
-      # AI keys. Values come from .env — see .env.example. Compose reads
-      # .env for ${} interpolation only, so anything not listed here never
-      # reaches the container.
-      LLMWIRE_ZAI_API_KEY: "${LLMWIRE_ZAI_API_KEY}"
-      LLMWIRE_OPENAI_API_KEY: "${LLMWIRE_OPENAI_API_KEY}"
+      # Models and keys. Values come from .env — see .env.example. Compose
+      # reads .env for ${} interpolation only, so anything not listed here
+      # never reaches the container. The model ids are required.
+      BACKEND_CHAT_MODEL: "${BACKEND_CHAT_MODEL}"
+      BACKEND_GATE_MODEL: "${BACKEND_GATE_MODEL:-}"
+      BACKEND_EMBED_MODEL: "${BACKEND_EMBED_MODEL}"
+      # Every llmwire provider's key; set in .env the one(s) your models'
+      # providers need (see .env.example). Unset ones forward empty.
+      LLMWIRE_ZAI_API_KEY: "${LLMWIRE_ZAI_API_KEY:-}"
+      LLMWIRE_MIMO_API_KEY: "${LLMWIRE_MIMO_API_KEY:-}"
+      LLMWIRE_OPENAI_API_KEY: "${LLMWIRE_OPENAI_API_KEY:-}"
+      LLMWIRE_LITELLM_BASE_URL: "${LLMWIRE_LITELLM_BASE_URL:-}"
+      LLMWIRE_LITELLM_API_KEY: "${LLMWIRE_LITELLM_API_KEY:-}"
+      LLMWIRE_LITELLM_MODELS: "${LLMWIRE_LITELLM_MODELS:-}"
       # Read by llmwire itself, never by peeq: forwarded so it reaches it.
       LLMWIRE_EMULATE_OPENCODE: "${LLMWIRE_EMULATE_OPENCODE:-}"
       # How far a semantic hit may sit from the question before it counts as

@@ -105,38 +105,28 @@ func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowe
 		"Reply with a single category id from that list and nothing else — no punctuation, " +
 		"no explanation. Always choose the closest match even when the fit is imperfect. " +
 		"Never invent an id and never refuse to choose."
-	// Default effort, NOT Shallow, and that is deliberate — "it only picks one id
-	// from a list, it cannot need to think" is the obvious call and it is wrong on
-	// the cases that matter. Measured against api.z.ai on the real prompt and
-	// category list, 3 runs per tier:
+	// The model's default reasoning, NOT ReasoningMinimal, and that is
+	// deliberate — "it only picks one id from a list, it cannot need to think"
+	// is the obvious call and it is wrong on the cases that matter. Measured on
+	// the real prompt and category list, clear-cut videos land in the same
+	// category at every depth, but the ambiguous ones the Hints exist for (a
+	// gearbox rebuild: automotive or engineering?) came back UNSTABLE at the
+	// shallowest setting — the same video classified twice landed in two
+	// categories. That is the failure this step must not have:
+	// SetCategoryIfUnset persists the answer and the backlog sweep never offers
+	// the video again, so an unstable classifier writes permanent wrong data on
+	// exactly the videos hardest to categorize.
 	//
-	//	a software talk       low: software x3               max: software x3
-	//	a UFO/physics history low: science x3                max: science x3
-	//	an office renovation  low: business x3               max: business x3
-	//	an ML weather model   low: ai x3                     max: ai x3
-	//	a gearbox rebuild     low: automotive x2, engineering x1   max: automotive x3
+	// Nothing waits on this call (the sweep runs it in bulk, offline), so the
+	// reasoning the hard case costs buys stability for free. Re-run that
+	// comparison on the configured model before ever lowering it.
 	//
-	// Four of five agree exactly and reasoning buys nothing. The fifth is the
-	// ambiguous one the Hints exist for, and there low is UNSTABLE: the same video
-	// classified twice lands in two different categories. That is the failure this
-	// step must not have — SetCategoryIfUnset persists the answer and the backlog
-	// sweep never offers the video again, so an unstable classifier writes
-	// permanent wrong data on exactly the videos hardest to categorize.
+	// And a short gate, which is a separate point: the category ids never reach
+	// a reader as prose — they land in the Library filter after
+	// NormalizeCategory — so this is a gate by the bar ShortGate sets.
 	//
-	// Nothing waits on this call (the sweep runs it in bulk, offline), so the ~600
-	// reasoning tokens the hard case costs buy stability for free. Reach for
-	// Shallow here only if the sweep's throughput becomes a real problem, and
-	// re-run the comparison above before doing it.
-	//
-	// And a short gate, which is a separate point: the category ids never reach a
-	// reader as prose — they land in the Library filter after NormalizeCategory —
-	// so this is a gate by the bar ShortGate sets. It resolves to the same
-	// deployment today; see llm.ShortGate for why it is marked anyway.
-	//
-	// The cap is a runaway backstop, not a length target, and it now has to cover
-	// reasoning as well as output — see classifyMaxTokens, which was raised
-	// because of exactly that.
-	ctx = llm.WithMaxTokens(llm.ShortGate(ctx), classifyMaxTokens)
+	// The cap is on the answer; see classifyMaxAnswerTokens.
+	ctx = llm.WithMaxAnswerTokens(llm.ShortGate(ctx), classifyMaxAnswerTokens)
 	return s.c.Complete(ctx, []llm.Message{
 		{Role: "system", Content: sys},
 		{Role: "user", Content: "TITLE: " + title + "\n\nSUMMARY:\n" + summary},
@@ -145,79 +135,56 @@ func (s *Summarizer) Classify(ctx context.Context, title, summary string, allowe
 
 const (
 	// defaultSummaryChunkTokens sizes the coarse summary chunk to ~3.5h of
-	// transcript. The chat model's context window is ~1M tokens, so the whole
-	// transcript is a single chunk (hence a single call) for all but multi-hour
-	// videos; keeping each call's input near this size also holds time-to-first-
-	// byte under the client's header timeout instead of prefilling for minutes.
+	// transcript, so the whole transcript is a single chunk (hence a single
+	// call) for all but multi-hour videos; keeping each call's input near this
+	// size also holds time-to-first-byte under the client's header timeout
+	// instead of prefilling for minutes. It must fit the chat model's context
+	// window with room for the prompt and the answer:
+	// BACKEND_SUMMARIZE_SUMMARY_TOKENS lowers it for a smaller-window model.
 	defaultSummaryChunkTokens = 48000
 
-	// summaryMaxTokens bounds the three summary calls: the single pass, and
-	// the coarse map and reduce a long transcript takes instead. All run at
-	// the default max reasoning effort (this is the summary a person reads),
-	// so the cap must fit reasoning plus a ~190-word answer — generous, but far
-	// below a runaway (a keypoints call once spent 44k). It is a spiral
-	// backstop, not a length target. Measured at max: the single pass on a
-	// 6.7k-token transcript, 144 reasoning tokens, 364 completion; one map
-	// section on a full 48k chunk (46621 prompt tokens), 185 reasoning, 339
-	// completion. Lowering it tightens the map too.
-	summaryMaxTokens = 8000
+	// The caps below are on the ANSWER (llm.WithMaxAnswerTokens); the reasoning
+	// allowance on top is the model profile's, added by llmwire. Each is a
+	// runaway backstop sized well above the longest legitimate answer, never a
+	// length target: a call that hits it ends "length", which on a summary is a
+	// partial answer and on the key-points JSON is a parse failure that drops
+	// every point.
 
-	// keypointsMaxTokens bounds the keypoints JSON. Every cap here now has to
-	// cover reasoning too — it can no longer be switched off — so this bounds a
-	// spiral in reasoning as well as in output. Set well clear of any real video's
-	// chapters + points (hundreds of them) so it never truncates legitimate JSON,
-	// which would parse as empty and silently drop every point. Measured on a
-	// 12.5k-token prompt at the default (max) effort: 3183 reasoning, 3807
-	// completion — the closest any call comes to its cap, and still a fifth of it.
-	keypointsMaxTokens = 16000
+	// summaryMaxAnswerTokens bounds the three summary calls: the single pass,
+	// and the coarse map and reduce a long transcript takes instead. The prompts
+	// ask for at most ~190 words (~120 per map section), a few hundred tokens,
+	// so this is several times that. Lowering it tightens the map too.
+	summaryMaxAnswerTokens = 2048
 
-	// classifyMaxTokens bounds the category call, which answers with a single id.
-	// It went without a cap until now (the coarse map in
-	// SummarizeText is the one that still does), so an endpoint that ignored the
-	// prompt and started explaining itself had nothing to stop it but its own
-	// default.
+	// keypointsMaxAnswerTokens bounds the key-points JSON: chapters plus points,
+	// which on a long video run to hundreds of entries. Set well clear of that
+	// so it never truncates legitimate JSON, which would parse as empty and
+	// silently drop every point.
+	keypointsMaxAnswerTokens = 12000
+
+	// classifyMaxAnswerTokens bounds the category call, which answers with a
+	// single id.
 	//
-	// It is deliberately far above what an obedient answer needs — the longest id
-	// is one word ('entertainment') — because a cut here is silent and NOT always
-	// silent in the harmless direction. A truncated id is junk and falls through
-	// to 'uncategorized', which stays retryable. Truncated *prose* is worse: it
-	// keeps whatever ids it already contains, so NormalizeCategory's
+	// It is deliberately far above what an obedient answer needs — the longest
+	// id is one word ('entertainment') — because a cut here is silent and NOT
+	// always silent in the harmless direction. A truncated id is junk and falls
+	// through to 'uncategorized', which stays retryable. Truncated *prose* is
+	// worse: it keeps whatever ids it already contains, so NormalizeCategory's
 	// last-valid-id scan picks one of the echoed options instead of the verdict
 	// the cut removed ("choosing from ai, tech, science: history" cut to its
 	// preamble answers 'science'). That is a valid but wrong category, which
 	// SetCategoryIfUnset persists and the backlog sweep never offers again.
 	//
 	// So the cap is sized for the failure it must not cause rather than the one
-	// it exists to stop. A tight 32 fits the answer and truncates every padded
-	// reply, turning a rare disobedience into permanent wrong data. loom runs its
-	// own classifier at 32 against a different endpoint, but its replies land in a
-	// different normalizer, so that is not a licence to match it here.
-	//
-	// RAISED FROM 256, which reasoning made unusable. The cap counts reasoning
-	// tokens and reasoning can no longer be switched off, so the budget is now
-	// shared with a chain of thought whose length tracks how hard the call is —
-	// and the hard calls are exactly the ambiguous videos this step exists for.
-	// Measured against api.z.ai on the real prompt and the real category list:
-	//
-	//	a plain software talk        49 reasoning
-	//	a UFO/physics history       135
-	//	an office-renovation cost   194
-	//	a workshop gearbox rebuild  254  <- hit the old 256 cap, returned ""
-	//
-	// The last is not a runaway; it is the model working a genuinely ambiguous
-	// case (automotive or engineering — what the Hints exist for) and being cut
-	// off mid-thought. It answered with an empty string, which falls through to
-	// 'uncategorized' and would do so again on every retry.
-	//
-	// 4096 is still a runaway backstop, far below the endpoint's own default, and
-	// a ceiling rather than a target: an obedient reply is one word. It bounds the
-	// answer instead of the reasoning.
-	classifyMaxTokens = 4096
+	// it exists to stop: a reply that explains itself for a paragraph still
+	// reaches its verdict. loom runs its own classifier far tighter, but its
+	// replies land in a different normalizer, so that is not a licence to match
+	// it here.
+	classifyMaxAnswerTokens = 1024
 )
 
 // wholeVideoSystemPrompt drives the single-pass summary: the full transcript in,
-// one cohesive summary out. It is the synthesis the reader sees, so its call
-// keeps thinking on (unlike the coarse-section pass below).
+// one cohesive summary out. It is the synthesis the reader sees.
 const wholeVideoSystemPrompt = "You are given the full transcript of one video. Write a single cohesive summary of at most 2 paragraphs and at most 190 words total. " +
 	"Lead with what the video is about, then its main claims or moments. Be concrete and drop tangents; do not list every topic mentioned. " +
 	"Output only the summary prose, with no preamble, headings, or labels."
@@ -235,10 +202,10 @@ const reduceSystemPrompt = "Combine these section summaries of one video into a 
 	"Lead with what the video is about, then its main claims or moments. " +
 	"Be concrete and drop tangents; do not list every topic mentioned."
 
-// SummarizeText produces the prose summary. Because the chat model has a ~1M-
-// token context window, the whole transcript fits in a SINGLE call for all but
-// multi-hour videos — so this is single-pass in the common case and only falls
-// back to a coarse (few big sections) map-reduce for a marathon. It is the
+// SummarizeText produces the prose summary. The chunk budget fits a whole
+// transcript in a SINGLE call for all but multi-hour videos — so this is
+// single-pass in the common case and only falls back to a coarse (few big
+// sections) map-reduce for a marathon. It is the
 // resumable worker's first step, persisted on its own so a later failure never
 // discards it.
 func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (string, error) {
@@ -261,18 +228,17 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 		return "", fmt.Errorf("summarize: empty transcript")
 	}
 
-	// Single-pass: synthesize the whole video in one call, at the default (max)
-	// reasoning effort. This is the one output that IS the artifact a reader opens
-	// the page for, it runs offline with nobody waiting on it, and it costs one
-	// call per video — measured at 144 reasoning tokens and 11s on a 6.7k-token
-	// transcript. Nothing here should ever ask for less. Bounded by
-	// summaryMaxTokens so it
-	// can reason without spiralling. FailOnEarlyFinish makes a
-	// content_filter/refusal cut retry the job rather than persist half a summary
-	// of the whole video (a "length" cut is our own cap and is tolerated).
+	// Single-pass: synthesize the whole video in one call, at the model's
+	// default reasoning. This is the one output that IS the artifact a reader
+	// opens the page for, it runs offline with nobody waiting on it, and it
+	// costs one call per video. Nothing here should ever ask for less. Bounded
+	// by summaryMaxAnswerTokens so it cannot spiral. FailOnEarlyFinish makes a
+	// content_filter/refusal cut retry the job rather than persist half a
+	// summary of the whole video (a "length" cut is our own cap and is
+	// tolerated).
 	if len(chunks) == 1 {
 		summary, err := s.c.Complete(
-			llm.WithMaxTokens(llm.FailOnEarlyFinish(ctx), summaryMaxTokens),
+			llm.WithMaxAnswerTokens(llm.FailOnEarlyFinish(ctx), summaryMaxAnswerTokens),
 			[]llm.Message{
 				{Role: "system", Content: wholeVideoSystemPrompt},
 				{Role: "user", Content: chunks[0].Text},
@@ -293,26 +259,23 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 	// the page one step later. Only videos long enough to need chunking come here
 	// anyway, so there is little queue time to win.
 	//
-	// Left at the default effort rather than asking for less: nothing waits on
-	// this, and reasoning is cheap enough that trimming it would trade summary
-	// quality for tokens nobody is counting.
+	// Left at the model's default reasoning rather than asking for less:
+	// nothing waits on this, and trimming it would trade summary quality for
+	// tokens nobody is counting.
 	//
-	// Capped and guarded like the other two summary calls. This was the one
-	// call left uncapped, on a measurement (see summaryMaxTokens: a full chunk
-	// answers in a few hundred tokens, output tracks the "~120 words" asked
-	// for, not the input size). The cap catches nothing in the ordinary case;
-	// it is the backstop for a reasoning spiral, the failure mode a keypoints
-	// call once showed by spending 44k tokens, and 8000 is ~15x the measured
-	// worst here. FailOnEarlyFinish tolerates a cut at the cap (a section cut
-	// short still feeds the reduce) but rejects a filtered or refused section,
-	// which must not flow into the reader's summary any more than it may on
-	// the single pass. A section that comes back EMPTY — the cap spent on
-	// reasoning, or nothing said — is an error too: the reduce would otherwise
-	// write a summary with that stretch of the video silently missing, and
-	// the job would be marked done. The spiral is stochastic, so the retry
-	// usually clears it.
+	// Capped and guarded like the other two summary calls. The cap catches
+	// nothing in the ordinary case — output tracks the "~120 words" asked for,
+	// not the input size — it is the backstop for a spiral, the failure mode a
+	// key-points call once showed by spending 44k tokens. FailOnEarlyFinish
+	// tolerates a cut at the cap (a section cut short still feeds the reduce)
+	// but rejects a filtered or refused section, which must not flow into the
+	// reader's summary any more than it may on the single pass. A section that
+	// comes back EMPTY — the budget spent on reasoning, or nothing said — is an
+	// error too: the reduce would otherwise write a summary with that stretch
+	// of the video silently missing, and the job would be marked done. A spiral
+	// is stochastic, so the retry usually clears it.
 	sections := make([]string, 0, len(chunks))
-	mapCtx := llm.WithMaxTokens(llm.FailOnEarlyFinish(ctx), summaryMaxTokens)
+	mapCtx := llm.WithMaxAnswerTokens(llm.FailOnEarlyFinish(ctx), summaryMaxAnswerTokens)
 	for i, ch := range chunks {
 		out, err := s.c.Complete(mapCtx, []llm.Message{
 			{Role: "system", Content: coarseSectionSystemPrompt},
@@ -328,11 +291,11 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 		sections = append(sections, section)
 	}
 	// The reduce is the reader-facing summary too, so it carries the same guards
-	// as the single-pass call: full reasoning effort (see there), FailOnEarlyFinish
+	// as the single-pass call: the model's default reasoning (see there), FailOnEarlyFinish
 	// (don't persist a filtered/cut final summary) and the empty-result rejection
 	// below.
 	summary, err := s.c.Complete(
-		llm.WithMaxTokens(llm.FailOnEarlyFinish(ctx), summaryMaxTokens),
+		llm.WithMaxAnswerTokens(llm.FailOnEarlyFinish(ctx), summaryMaxAnswerTokens),
 		[]llm.Message{
 			{Role: "system", Content: reduceSystemPrompt},
 			{Role: "user", Content: strings.Join(sections, "\n\n")},
@@ -401,30 +364,20 @@ func (s *Summarizer) KeyPoints(ctx context.Context, summary string, cues []subti
 		kpPrompt = "From the summary and cue index below, produce a timestamped chapter list AND key points as JSON " +
 			`{"chapters":[{"ts":<seconds>,"title":"..."}],"key_points":[{"ts":<seconds>,"text":"..."}]}`
 	}
-	// Default effort, and a max-tokens backstop: this is an extractive JSON step,
-	// and it is the call that once spiralled to 44k reasoning tokens and returned
-	// nothing. Reasoning can no longer be switched off, which is what used to
-	// guarantee output here, so the backstop is now the only guard — and
-	// max_tokens counts reasoning, so a cap that fills with thinking still hands
-	// back empty.
+	// The model's default reasoning, and an answer-cap backstop: this is an
+	// extractive JSON step, and it is the call that once spiralled to 44k
+	// reasoning tokens and returned nothing. A call that spends its budget
+	// thinking still hands back empty, so the cap is sized for the JSON and the
+	// reasoning allowance is the model profile's.
 	//
-	// The spiral does not reproduce on this endpoint. Measured on the real shape
-	// (a 12.5k-token prompt: summary plus 750 cues), reasoning tokens / wall
-	// clock, all three finishing "stop" with parseable JSON:
+	// It is the most expensive call in the pipeline in wall clock, and deeper
+	// reasoning returned more chapters, so it is the first place to look if
+	// summarization ever feels slow — and a quality question that wants a
+	// before/after over real videos before any change.
 	//
-	//	low   18 / 7.9s     high  192 / 12.8s     max  3183 / 69.9s
-	//
-	// This call takes the default, so max: 3183 tokens is a fifth of
-	// keypointsMaxTokens and 70s is nothing against the summarize client's 15m
-	// cap, and it returned more chapters than the shallower runs. It is by far
-	// the most expensive call in the pipeline in wall clock, so it is the first
-	// place to look if summarization ever feels slow — Shallow takes it to 7.9s.
-	//
-	// NOT llm.ShortGate, whatever the effort. Chapter titles and key-point text
-	// are what a reader sees in the Player. Moving it is a quality question that
-	// wants a before/after over real videos, which is exactly the mistake
-	// ShortGate's doc warns against.
-	kpCtx := llm.AsJSONObject(llm.WithMaxTokens(ctx, keypointsMaxTokens))
+	// NOT llm.ShortGate. Chapter titles and key-point text are what a reader
+	// sees in the Player, which is exactly what ShortGate's doc rules out.
+	kpCtx := llm.AsJSONObject(llm.WithMaxAnswerTokens(ctx, keypointsMaxAnswerTokens))
 	raw, err := s.c.Complete(kpCtx, []llm.Message{
 		{Role: "system", Content: kpPrompt + keyPointRules},
 		{Role: "user", Content: "SUMMARY:\n" + summary + "\n\nCUE INDEX (seconds: text):\n" + cueIndex},

@@ -128,7 +128,7 @@ func TestComplete_logsUsageAndCallIdentity(t *testing.T) {
 }
 
 func TestComplete_logsAReportedZeroRatherThanDroppingIt(t *testing.T) {
-	// MiMo-shaped reply: the details objects are there, the numbers in them are
+	// A reply whose details objects are there, the numbers in them are
 	// zero. That zero is the answer and must reach the log.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, sseStream("ok", `{"prompt_tokens":900,"completion_tokens":100,"total_tokens":1000,`+

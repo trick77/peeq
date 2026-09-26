@@ -1,147 +1,98 @@
 package llm
 
-import "context"
+import (
+	"context"
 
-// Per-call knobs carried on the context, same pattern as Shallow below and
-// CallInfo: they keep the Completer interface one method wide so every fake that
-// implements it keeps compiling, while letting each summarize stage tune the
-// request independently instead of sharing one hardcoded shape.
+	"github.com/trick77/llmwire"
+)
 
-// --- reasoning effort ---------------------------------------------------------
-
-type reasoningEffortKey struct{}
-
-// WithReasoningEffort overrides the reasoning_effort sent for calls made with
-// ctx. Absent an override the package default (reasoningEffort, "max") is used,
-// so callers that never opt in are unchanged.
+// Per-call knobs carried on the context, same pattern as CallInfo: they keep
+// the Completer interface one method wide so every fake that implements it
+// keeps compiling, while letting each step tune the request independently
+// instead of sharing one hardcoded shape.
 //
-// This is the ONLY depth control the endpoint offers — thinking itself cannot be
-// switched off (llmwire's profile records the refusal), and only low/high/max
-// are accepted. It was
-// inert under MiMo, where high and low returned the same reasoning-token
-// distribution and the same latency; that is no longer true, and the comment
-// that used to say so has been removed rather than kept, because acting on it
-// against Z.ai would be wrong.
-//
-// Effort is chosen by what is waiting on the call, not by token cost. The
-// default is max — Z.ai's own default and their recommendation for this model —
-// and only Shallow opts out, for the one gate under a hard timeout (see
-// Shallow below).
-//
-// Tokens barely separate the levels (the whole summary of a 40-minute video
-// reasons for ~144 tokens at max), so nothing should be tuned downward to save
-// money. Time does separate them, sometimes by a lot: the keypoints prompt costs
-// 12.8s at high and 69.9s at max. Reach for this only with a latency reason, and
-// write the reason down.
-func WithReasoningEffort(ctx context.Context, effort string) context.Context {
-	return context.WithValue(ctx, reasoningEffortKey{}, effort)
-}
+// Every knob here is an INTENT. What an intent becomes for the configured model
+// (a level, a budget, off) is that model's llmwire profile's to say, so a model
+// swap is a config change and no call site changes with it.
 
-// HighReasoningEffort is the tier between Shallow and the max default, exported
-// for the one call that must pin it: the streamed Ask answer, where max is paid
-// in time-to-first-token while a reader watches (see httpapi/answer_handlers.go).
-// Prefer the default everywhere else.
-const HighReasoningEffort = highReasoningEffort
+// --- reasoning ----------------------------------------------------------------
 
-// EffortFor names the reasoning depth a call made with ctx will ask for, for a
-// caller that has to REPORT or assert which tier a step ran at rather than
-// choose one. Same reasoning as ModelFor below: the wire values are unexported
-// consts chosen inside this package, so without it a caller could only hardcode
-// a second copy of them.
-func EffortFor(ctx context.Context) string { return reasoningEffortFrom(ctx) }
+// Reasoning is how much thinking a call asks for.
+type Reasoning string
 
-func reasoningEffortFrom(ctx context.Context) string {
-	if e, ok := ctx.Value(reasoningEffortKey{}).(string); ok && e != "" {
-		return e
+const (
+	// ReasoningDefault sends no reasoning knob: the model runs at its own
+	// default, the setting its vendor tuned it for. Every call that writes
+	// something a reader keeps, and that nobody waits on, takes this.
+	ReasoningDefault Reasoning = "default"
+	// ReasoningBalanced is the model's fast-but-not-shallow level. For prose a
+	// reader keeps where a person IS waiting (the streamed Ask answer): it
+	// trades depth for time-to-first-token without dropping to the floor.
+	ReasoningBalanced Reasoning = "balanced"
+	// ReasoningMinimal is the shallowest setting the model allows, which on
+	// some models is thinking OFF. Only for a true gate whose output nobody
+	// reads as prose and whose error costs little, under a latency bound: today
+	// the Ask understand step. Never for prose, and never for a decision that
+	// is persisted (see Summarizer.Classify).
+	ReasoningMinimal Reasoning = "minimal"
+)
+
+// wire is the llmwire request for r; nil sends nothing.
+func (r Reasoning) wire() llmwire.ReasoningRequest {
+	switch r {
+	case ReasoningBalanced:
+		return llmwire.ReasoningBalanced()
+	case ReasoningMinimal:
+		return llmwire.ReasoningMinimal()
 	}
-	if ShallowFrom(ctx) {
-		return lowReasoningEffort
+	return nil
+}
+
+type reasoningKey struct{}
+
+// WithReasoning sets the reasoning intent for calls made with ctx. Absent one,
+// calls take ReasoningDefault.
+func WithReasoning(ctx context.Context, r Reasoning) context.Context {
+	return context.WithValue(ctx, reasoningKey{}, r)
+}
+
+// ReasoningFor names the intent a call made with ctx asks for, for a caller
+// that has to report or assert it rather than choose it.
+func ReasoningFor(ctx context.Context) Reasoning {
+	if r, ok := ctx.Value(reasoningKey{}).(Reasoning); ok && r != "" {
+		return r
 	}
-	return reasoningEffort
-}
-
-// --- shallow ------------------------------------------------------------------
-
-type shallowKey struct{}
-
-// Shallow returns a context whose LLM calls ask for the least reasoning the
-// model allows (lowReasoningEffort). It is for a step that is a lookup rather
-// than a deduction AND that something is waiting on — today only the Ask
-// understand gate, which sits in front of the first byte of an answer under a
-// 10s timeout.
-//
-// It is not a cost lever. Reasoning at low is nearly free on this model
-// (measured: 0 tokens on a classification, 53 on the understand gate) but so is
-// reasoning at high, so saving tokens is never the reason to reach for this.
-// Latency is: low answers the understand gate in 2.5s where max takes 7.4s.
-//
-// A step with no one waiting on it should NOT use this. The default is max, and
-// the offline summary calls take it as-is — see WithReasoningEffort.
-func Shallow(ctx context.Context) context.Context {
-	return context.WithValue(ctx, shallowKey{}, true)
-}
-
-// ShallowFrom reports whether the calls made with ctx want the shallowest
-// reasoning. Absent a value the answer is no, so a caller that never opts in is
-// unchanged.
-func ShallowFrom(ctx context.Context) bool {
-	shallow, ok := ctx.Value(shallowKey{}).(bool)
-	return ok && shallow
+	return ReasoningDefault
 }
 
 // --- model --------------------------------------------------------------------
 
 type shortGateKey struct{}
 
-// ShortGate routes the calls made with ctx to shortGateModel. It is for the
-// short gates: a step whose answer is one id from a list the prompt already
-// spells out.
+// ShortGate routes the calls made with ctx to the gate model (Config.GateModel,
+// the chat model when unset). It is for the short gates: a step whose answer
+// is one id or label from a list the prompt already spells out.
 //
-// It currently changes NOTHING on the wire — Z.ai serves the gates from the same
-// model as everything else, so shortGateModel and model are the same id (see
-// client.go). It is kept at its call sites because it records which steps are
-// gates, which is what a future split would need to know; under MiMo it picked
-// the deployment that queued less. Do not remove it on the grounds that it is
-// currently a no-op, and do not add a call site expecting it to do something.
+// Keep it at its call sites even while the gate model equals the chat model:
+// it records which steps are gates, which is what pointing them at a separate
+// model needs to know.
 //
-// Pair it with Shallow — the two say different things. Shallow asks for the
-// least reasoning the model allows; this asks for the gate deployment.
-//
-// Deliberately NOT for anything that writes text a reader sees. The bar is what
-// the call produces — an id or a label that lands in a filter. The summary, the
-// coarse section map, the reduce, the keypoints and chapters, and the Ask answer
-// are all off-limits.
+// It is separate from the reasoning intent: ShortGate picks the model, the
+// intent picks the depth. Deliberately NOT for anything that writes text a
+// reader sees. The bar is what the call produces — an id or a label that lands
+// in a filter. The summary, the coarse section map, the reduce, the keypoints
+// and chapters, and the Ask answer are all off-limits.
 func ShortGate(ctx context.Context) context.Context {
 	return context.WithValue(ctx, shortGateKey{}, true)
 }
 
-// ShortGateFrom reports whether ctx was marked as a short gate. It exists
-// because ModelFor cannot answer this any more: shortGateModel and model hold
-// the same id today, so comparing model names would report every call as a gate.
-// A caller that needs the DECISION rather than its current wire effect asks
-// here.
+// ShortGateFrom reports whether ctx was marked as a short gate. A caller that
+// needs the DECISION rather than which model it reaches asks here: the two
+// models may be the same id.
 func ShortGateFrom(ctx context.Context) bool {
 	gate, ok := ctx.Value(shortGateKey{}).(bool)
 	return ok && gate
 }
-
-func modelFrom(ctx context.Context) string {
-	if v, ok := ctx.Value(shortGateKey{}).(bool); ok && v {
-		return shortGateModel
-	}
-	return model
-}
-
-// ModelFor names the deployment a call made with ctx will reach, for a caller
-// that has to REPORT which model ran a step rather than choose one.
-//
-// It delegates to modelFrom rather than repeating the rule. That is the whole
-// point of it existing: the model ids are unexported consts chosen inside this
-// package, so a caller that wanted to label a call could only hardcode a second
-// copy of both names and the ShortGate test between them — three things that
-// drift silently, and whose drift shows up as a wrong model name on a panel
-// nobody would think to distrust.
-func ModelFor(ctx context.Context) string { return modelFrom(ctx) }
 
 // --- response format ----------------------------------------------------------
 
@@ -152,27 +103,10 @@ type jsonObjectKey struct{}
 // NOT be constrained: classify answers with a bare id and the summary and Ask
 // answers are prose.
 //
-// It is not belt-and-braces over a prompt that already says "as JSON" — the
-// prompt alone does not work on this model. Measured on the keypoints call, 8
-// runs each, whether the RAW reply parses with no cleanup at all:
-//
-//	prompt only                    0/8
-//	prompt + response_format       8/8
-//
-// Seven of the eight arrived fenced in ```json, and one opened with a sentence
-// of prose. summarize.extractJSON salvages both shapes by slicing from the first
-// brace to the last, so nothing was broken — but that heuristic is one prose
-// preamble containing a brace away from handing back garbage, and the caller
-// tolerates a parse failure by returning empty. This removes the guesswork
-// instead of widening the salvage.
-//
-// json_schema is NOT an upgrade from this, and the salvage stays. llmwire's
-// profile records Z.ai honouring json_schema with strict, so it was tried as a
-// way to retire extractJSON: measured on a keypoints-shaped prompt, 3 runs at
-// low effort, strict schema, the raw reply parsed 2/3 — the third came back
-// wrapped in a ```json fence despite the schema. Same failure shape as the
-// prompt-only case, so the fence is the model's habit and no response_format
-// switches it off.
+// It is not belt-and-braces over a prompt that already says "as JSON": a
+// prompt alone did not yield strictly parseable replies (fenced or prefaced
+// with prose), response_format did. summarize.extractJSON still salvages both
+// shapes, because a model may fence its reply whatever the format asks.
 func AsJSONObject(ctx context.Context) context.Context {
 	return context.WithValue(ctx, jsonObjectKey{}, true)
 }
@@ -182,23 +116,25 @@ func jsonObjectFrom(ctx context.Context) bool {
 	return ok && v
 }
 
-// --- max tokens ---------------------------------------------------------------
+// --- answer cap ---------------------------------------------------------------
 
-type maxTokensKey struct{}
+type maxAnswerTokensKey struct{}
 
-// WithMaxTokens caps the completion length (max_tokens) for calls made with ctx.
-// 0 — the default — omits the field, leaving the endpoint's own limit. Note the
-// cap counts reasoning tokens too, so it bounds a runaway but does not by itself
-// guarantee output on a deep call: one that spends the whole budget reasoning
-// still returns empty, with finish_reason "length" and no content. Reasoning can
-// no longer be switched off to avoid that, so leave headroom —
-// or, if something is waiting on the call, lower the effort with Shallow.
-func WithMaxTokens(ctx context.Context, n int) context.Context {
-	return context.WithValue(ctx, maxTokensKey{}, n)
+// WithMaxAnswerTokens caps the visible ANSWER of calls made with ctx at n
+// tokens. The reasoning the call's intent allows is added on top by llmwire,
+// from the model's profile, and the total is clamped to the model's output
+// limit — so size n for the answer alone. 0, the default, sends no cap and
+// leaves the endpoint's own limit.
+//
+// A reasoning allowance is an estimate, not a reservation: a call that thinks
+// past it still ends with finish_reason "length" and an empty answer, no
+// error. So n stays generous — it is a runaway backstop, not a length target.
+func WithMaxAnswerTokens(ctx context.Context, n int) context.Context {
+	return context.WithValue(ctx, maxAnswerTokensKey{}, n)
 }
 
-func maxTokensFrom(ctx context.Context) int {
-	if n, ok := ctx.Value(maxTokensKey{}).(int); ok && n > 0 {
+func maxAnswerTokensFrom(ctx context.Context) int {
+	if n, ok := ctx.Value(maxAnswerTokensKey{}).(int); ok && n > 0 {
 		return n
 	}
 	return 0
@@ -214,8 +150,8 @@ type failEarlyKey struct{}
 // partial content as success. It is for calls whose truncated output must not be
 // persisted — the single-pass summary, where a content_filter cut would silently
 // store half a summary of the whole video. A deterministic cut is deliberately
-// tolerated — "length" is our own max_tokens, "model_context_window_exceeded"
-// the prompt outgrowing the model — because retrying would just re-cut (see
+// tolerated — "length" is our own cap, a context-window finish the prompt
+// outgrowing the model — because retrying would just re-cut (see
 // deterministicCut in client.go).
 func FailOnEarlyFinish(ctx context.Context) context.Context {
 	return context.WithValue(ctx, failEarlyKey{}, true)

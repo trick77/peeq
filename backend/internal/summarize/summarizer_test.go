@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trick77/llmwire"
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/subtitles"
 	"github.com/trick77/peeq/internal/videos"
@@ -34,41 +35,40 @@ func (f *fakeCompleter) Complete(_ context.Context, m []llm.Message) (string, er
 	return f.replies[0], nil
 }
 
-// Classify is the one step routed to the gate deployment, and this test runs a
-// real client at a stub endpoint rather than a fake completer because the choice
-// only exists on the wire — a fake sees a context, not a model name.
+// Classify is the one step routed to the gate model, and this test runs a real
+// client at a fake endpoint rather than a fake completer because the choice only
+// exists on the wire — a fake sees a context, not a model name.
 //
 // The summary half is the guard that matters: it is the prose a reader sees, and
 // it never takes the gate. The bar for the swap is what the call produces — an
-// id or a label — and nothing else; "it reasons shallowly" is true of calls that
-// must not move.
-func TestClassifyRunsOnTheGateDeploymentAndTheSummaryDoesNot(t *testing.T) {
-	client, stub := newStubChat(t, "science")
+// id or a label — and nothing else.
+func TestClassifyRunsOnTheGateModelAndTheSummaryDoesNot(t *testing.T) {
+	client, srv := newStubChat(t, "science")
 	s := New(client)
 
 	if _, err := s.Classify(context.Background(), "A title", "A summary.",
 		[]videos.Category{{ID: "science", Label: "Science"}}); err != nil {
 		t.Fatal(err)
 	}
-	// Asserted against ModelFor rather than a literal id. The gate and default
-	// deployments hold the same id today, so a literal here would pass for the
-	// wrong reason and stop testing anything the moment they are split again.
-	reqs := stub.requests()
-	if want := llm.ModelFor(llm.ShortGate(context.Background())); reqs[0]["model"] != want {
-		t.Fatalf("classify ran on %q, want the gate deployment %q", reqs[0]["model"], want)
+	classify := srv.Last()
+	if classify.Model() != stubGateModel || classify.Model() != client.ModelFor(llm.ShortGate(context.Background())) {
+		t.Fatalf("classify ran on %q, want the gate model %q", classify.Model(), stubGateModel)
 	}
-	// The cap it went without until now: one id needs a couple of tokens, and an
-	// endpoint that starts explaining itself instead had nothing to stop it.
-	if got, ok := reqs[0]["max_tokens"].(float64); !ok || int(got) != classifyMaxTokens {
-		t.Fatalf("classify max_tokens = %v, want %d", reqs[0]["max_tokens"], classifyMaxTokens)
+	// The model's default reasoning (nothing sent) and an answer cap: one id
+	// needs a couple of tokens, and an endpoint that starts explaining itself
+	// instead must have something to stop it.
+	if got := classify.Reasoning(); got != "" {
+		t.Errorf("classify sent reasoning %q, want the model's default", got)
+	}
+	if got, ok := classify.MaxTokens(); !ok || got != classifyMaxAnswerTokens+llmwire.DefaultReasoningOverhead {
+		t.Fatalf("classify cap = %d (sent %v), want the answer cap %d plus the default allowance", got, ok, classifyMaxAnswerTokens)
 	}
 
 	if _, err := s.SummarizeText(context.Background(), "a short transcript"); err != nil {
 		t.Fatal(err)
 	}
-	reqs = stub.requests()
-	if want := llm.ModelFor(context.Background()); reqs[1]["model"] != want {
-		t.Fatalf("the summary ran on %q, want the default deployment %q", reqs[1]["model"], want)
+	if got := srv.Last().Model(); got != client.ModelFor(context.Background()) || got == stubGateModel {
+		t.Fatalf("the summary ran on %q, want the chat model", got)
 	}
 }
 
@@ -202,14 +202,14 @@ func TestSummarizeText_emptyTranscriptErrors(t *testing.T) {
 }
 
 // A transcript that fits the budget is summarized in a SINGLE call — the whole
-// point of the redesign — and that call reasons as deeply as the endpoint
-// allows, because it is the synthesis a person actually reads.
-func TestSummarizeText_singlePassIsOneCallAtFullEffort(t *testing.T) {
+// point of the redesign — and that call takes the model's default reasoning,
+// because it is the synthesis a person actually reads.
+func TestSummarizeText_singlePassIsOneCallAtDefaultReasoning(t *testing.T) {
 	var calls int
-	var efforts []string
+	var efforts []llm.Reasoning
 	s := New(completerFunc(func(ctx context.Context, _ []llm.Message) (string, error) {
 		calls++
-		efforts = append(efforts, llm.EffortFor(ctx))
+		efforts = append(efforts, llm.ReasoningFor(ctx))
 		return "Overall prose summary.", nil
 	}))
 	got, err := s.SummarizeText(context.Background(), strings.Repeat("word ", 2000))
@@ -222,8 +222,8 @@ func TestSummarizeText_singlePassIsOneCallAtFullEffort(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("single-pass made %d calls, want exactly 1", calls)
 	}
-	if len(efforts) != 1 || efforts[0] != llm.EffortFor(context.Background()) {
-		t.Fatalf("single-pass efforts = %v, want one call at the package default", efforts)
+	if len(efforts) != 1 || efforts[0] != llm.ReasoningDefault {
+		t.Fatalf("single-pass reasoning = %v, want one call at the model's default", efforts)
 	}
 }
 
@@ -265,14 +265,14 @@ func TestSummarizeText_emptyReduceErrors(t *testing.T) {
 // summary the reader sees. Neither stage asks for less reasoning — the map's
 // prose is what the reduce writes from, so trimming it would cost the reader's
 // summary one step later.
-func TestSummarizeText_coarseFallbackRunsBothStagesAtFullEffort(t *testing.T) {
-	var mapEfforts, reduceEfforts []string
+func TestSummarizeText_coarseFallbackRunsBothStagesAtDefaultReasoning(t *testing.T) {
+	var mapEfforts, reduceEfforts []llm.Reasoning
 	s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
 		if strings.Contains(m[0].Content, "cohesive summary") {
-			reduceEfforts = append(reduceEfforts, llm.EffortFor(ctx))
+			reduceEfforts = append(reduceEfforts, llm.ReasoningFor(ctx))
 			return "Overall prose summary.", nil
 		}
-		mapEfforts = append(mapEfforts, llm.EffortFor(ctx))
+		mapEfforts = append(mapEfforts, llm.ReasoningFor(ctx))
 		return "section summary", nil
 	}), WithSummaryChunkTokens(300))
 
@@ -282,9 +282,9 @@ func TestSummarizeText_coarseFallbackRunsBothStagesAtFullEffort(t *testing.T) {
 	if len(mapEfforts) < 2 {
 		t.Fatalf("coarse fallback made %d section calls, want >1 (else it wasn't the map path)", len(mapEfforts))
 	}
-	for i, e := range append(append([]string{}, mapEfforts...), reduceEfforts...) {
-		if e != llm.EffortFor(context.Background()) {
-			t.Errorf("call %d ran at effort %q, want the package default", i, e)
+	for i, e := range append(append([]llm.Reasoning{}, mapEfforts...), reduceEfforts...) {
+		if e != llm.ReasoningDefault {
+			t.Errorf("call %d ran at reasoning %q, want the model's default", i, e)
 		}
 	}
 	if len(reduceEfforts) != 1 {
@@ -314,15 +314,15 @@ func TestSummarizeText_coarseReduceErrorPropagates(t *testing.T) {
 }
 
 // Classify is a short gate: its answer is an id that lands in the Library
-// filter, never prose a reader sees. It does NOT ask for shallow reasoning —
-// nothing waits on it (the backlog sweep fires it in bulk), and reasoning stays
-// cheap on this endpoint even at the default.
-func TestClassify_isAShortGateAtDefaultEffort(t *testing.T) {
+// filter, never prose a reader sees. It does NOT ask for minimal reasoning —
+// nothing waits on it (the backlog sweep fires it in bulk), and its answer is
+// persisted for good, so it takes the model's default.
+func TestClassify_isAShortGateAtDefaultReasoning(t *testing.T) {
 	var gate bool
-	var effort string
+	var effort llm.Reasoning
 	s := New(completerFunc(func(ctx context.Context, _ []llm.Message) (string, error) {
 		gate = llm.ShortGateFrom(ctx)
-		effort = llm.EffortFor(ctx)
+		effort = llm.ReasoningFor(ctx)
 		return "science", nil
 	}))
 	if _, err := s.Classify(context.Background(), "Title", "A summary.", videos.ClassifiableCategories()); err != nil {
@@ -331,15 +331,13 @@ func TestClassify_isAShortGateAtDefaultEffort(t *testing.T) {
 	if !gate {
 		t.Error("classify did not route as a short gate")
 	}
-	if effort != llm.EffortFor(context.Background()) {
-		t.Errorf("classify ran at effort %q, want the package default", effort)
+	if effort != llm.ReasoningDefault {
+		t.Errorf("classify ran at reasoning %q, want the model's default", effort)
 	}
 }
 
-// Key points must NOT be routed as a short gate, whatever its effort: chapter
-// titles and key-point text are what a reader sees in the Player. Reasoning can
-// no longer be switched off here (it is what once let this call spiral to tens
-// of thousands of tokens), so keypointsMaxTokens is the only remaining guard.
+// Key points must NOT be routed as a short gate, whatever its reasoning:
+// chapter titles and key-point text are what a reader sees in the Player.
 func TestKeyPoints_isNotAShortGate(t *testing.T) {
 	var gate bool
 	s := New(completerFunc(func(ctx context.Context, _ []llm.Message) (string, error) {

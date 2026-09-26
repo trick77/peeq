@@ -17,17 +17,37 @@ import (
 	"github.com/trick77/peeq/internal/videos"
 )
 
-// fakeAsk is a StreamCompleter that emits fixed deltas, or fails.
-type fakeAsk struct {
-	deltas   []string
-	err      error
-	messages []llm.Message
-	called   bool
+// The model names the fakes report: one for a ShortGate call, one for any
+// other, so a trace can be checked against the role a call ran under.
+const (
+	fakeChatModel = "fake-chat-model"
+	fakeGateModel = "fake-gate-model"
+)
+
+func fakeModelFor(ctx context.Context) string {
+	if llm.ShortGateFrom(ctx) {
+		return fakeGateModel
+	}
+	return fakeChatModel
 }
 
-func (f *fakeAsk) CompleteStream(_ context.Context, m []llm.Message, onDelta func(string)) (string, error) {
+// fakeAsk is a StreamCompleter that emits fixed deltas, or fails.
+type fakeAsk struct {
+	deltas    []string
+	err       error
+	messages  []llm.Message
+	called    bool
+	reasoning llm.Reasoning
+	gate      bool
+}
+
+func (f *fakeAsk) ModelFor(ctx context.Context) string { return fakeModelFor(ctx) }
+
+func (f *fakeAsk) CompleteStream(ctx context.Context, m []llm.Message, onDelta func(string)) (string, error) {
 	f.called = true
 	f.messages = m
+	f.reasoning = llm.ReasoningFor(ctx)
+	f.gate = llm.ShortGateFrom(ctx)
 	var b strings.Builder
 	for _, d := range f.deltas {
 		b.WriteString(d)
@@ -120,6 +140,24 @@ func TestAnswerStreamsSourcesThenTokensThenDone(t *testing.T) {
 
 // The most important honesty case must not depend on the model choosing to
 // admit it — so it never reaches the model at all.
+// The streamed answer is prose a reader keeps, written while they wait: the
+// model's balanced reasoning, on the chat model, never the gate.
+func TestAnswerAsksForBalancedReasoningOnTheChatModel(t *testing.T) {
+	deps, ask := answerDeps(t)
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	doReq(t, h, cookie, http.MethodGet, "/api/search/answer?q=electrolytes", nil)
+	if !ask.called {
+		t.Fatal("the model was never called")
+	}
+	if ask.reasoning != llm.ReasoningBalanced {
+		t.Errorf("answer reasoning = %q, want %q", ask.reasoning, llm.ReasoningBalanced)
+	}
+	if ask.gate {
+		t.Error("the answer ran as a short gate; it is prose a reader sees")
+	}
+}
+
 func TestAnswerWithNoResultsSaysSoWithoutCallingTheModel(t *testing.T) {
 	deps, ask := answerDeps(t)
 	h := New(deps)
@@ -1090,11 +1128,11 @@ func TestTraceNamesTheRealModelsAndEngines(t *testing.T) {
 
 	stages := traceStages(t, rec.Body.String())
 	for _, tc := range []struct{ key, tool, kind string }{
-		{"understand", llm.ModelFor(llm.ShortGate(context.Background())), traceKindModel},
+		{"understand", fakeGateModel, traceKindModel},
 		{"keyword", "sqlite FTS5", traceKindLocal},
 		{"embed", "test-embed-model", traceKindModel},
 		{"vector", "sqlite-vec", traceKindLocal},
-		{"answer", llm.ModelFor(context.Background()), traceKindModel},
+		{"answer", fakeChatModel, traceKindModel},
 	} {
 		s := findStage(t, stages, tc.key)
 		if s.Tool != tc.tool || s.Kind != tc.kind {
@@ -1161,7 +1199,7 @@ func TestTraceSurvivesAFailedAnswer(t *testing.T) {
 		}
 	}
 	failed := findStage(t, stages, "answer_failed")
-	if failed.Tool != llm.ModelFor(context.Background()) || failed.Kind != traceKindModel {
+	if failed.Tool != fakeChatModel || failed.Kind != traceKindModel {
 		t.Errorf("failed answer stage = %+v, want the model that was called", failed)
 	}
 }

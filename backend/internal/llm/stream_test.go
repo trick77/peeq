@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trick77/llmwire"
+	"github.com/trick77/llmwire/llmwiretest"
 )
 
 // The SSE framing the fixtures build. These used to be package constants next to
@@ -65,8 +64,8 @@ func sseEvent(payload string) string {
 	return dataPrefix + " " + flat + "\n\n"
 }
 
-// sseStream renders the event sequence token-plan-sgp.xiaomimimo.com actually
-// sends, verified on the wire and reproduced here so the fakes cannot be
+// sseStream renders the event sequence a real OpenAI-compatible endpoint
+// sent, verified on the wire and reproduced here so the fakes cannot be
 // kinder than the endpoint: an empty opening delta carrying the role, the
 // content, then a finish_reason chunk with "usage":null, then a separate usage
 // chunk with an EMPTY choices array, then [DONE]. rawUsage empty omits that
@@ -129,7 +128,7 @@ func TestComplete_concatenatesContentDeltas(t *testing.T) {
 	}
 }
 
-func TestComplete_streamsWithoutStreamOptions(t *testing.T) {
+func TestComplete_streams(t *testing.T) {
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		decodeJSON(t, r, &body)
@@ -143,14 +142,6 @@ func TestComplete_streamsWithoutStreamOptions(t *testing.T) {
 	}
 	if body["stream"] != true {
 		t.Errorf("stream = %v, want true", body["stream"])
-	}
-	// MiMo needed stream_options.include_usage before it would send the trailing
-	// usage chunk. Z.ai does not take the parameter and sends usage on the final
-	// frame regardless, so the client must NOT send it — an undocumented field on
-	// this endpoint. The accounting it used to buy is covered by the usage-chunk
-	// tests below, which is what actually proves tokens are still counted.
-	if _, present := body["stream_options"]; present {
-		t.Errorf("stream_options = %v, want it absent", body["stream_options"])
 	}
 }
 
@@ -620,24 +611,20 @@ func TestComplete_midStreamErrorFrameNamesTheCode(t *testing.T) {
 }
 
 // mustClient is NewClient for a test whose Config names its fake server, so
-// the only way it can fail is a bug in the constructor.
+// the only way it can fail is a bug in the constructor. The model and registry
+// default to llmwiretest's synthetic chat model: no test here depends on what a
+// real model is called.
 func mustClient(t testing.TB, cfg Config, hc *http.Client) *Client {
 	t.Helper()
+	if cfg.Model == "" {
+		cfg.Model = llmwiretest.ChatModel
+	}
+	if cfg.Registry == nil {
+		cfg.Registry = llmwiretest.Registry()
+	}
 	c, err := NewClient(cfg, hc)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 	return c
-}
-
-// With no BaseURL the constructor takes the host from the profile and asks
-// llmwire for the key variable; a missing one comes back named rather than as
-// a client that dials "".
-func TestNewClient_withoutBaseURLNamesTheMissingVariable(t *testing.T) {
-	t.Setenv("LLMWIRE_ZAI_API_KEY", "")
-	_, err := NewClient(Config{}, nil)
-	var me *llmwire.MissingEnvError
-	if !errors.As(err, &me) || me.Var != "LLMWIRE_ZAI_API_KEY" {
-		t.Fatalf("got %v", err)
-	}
 }

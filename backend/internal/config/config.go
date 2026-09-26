@@ -45,13 +45,22 @@ type Config struct {
 	OIDC          OIDCConfig
 	Dev           DevUserConfig
 
-	// AI integration: no endpoint here. Each model's llmwire profile carries
-	// its host and names the key variable its client reads
-	// (LLMWIRE_ZAI_API_KEY for glm-5.3-flash, LLMWIRE_OPENAI_API_KEY for the
-	// embedding model); llmwire.FromEnv reads them at boot, so a missing one
-	// is a boot error there. Neither model is
-	// configuration: both are constants (llm.ModelFor, rag.EmbedModel), because
-	// prompts, token caps and the vector table's width are all built to them.
+	// AI integration: model ids only, no endpoint. Each model's llmwire
+	// profile carries its host, its capabilities and the key variable its
+	// client reads (LLMWIRE_<PROVIDER>_API_KEY); llmwire reads the keys at
+	// boot, so a missing one is a boot error there. No model has a default:
+	// llm.NewClient and rag.NewEmbedClient refuse an unset, unknown or
+	// unsuitable id, listing the valid choices.
+	//
+	// ChatModel (BACKEND_CHAT_MODEL) writes summaries, key points and Ask
+	// answers. GateModel (BACKEND_GATE_MODEL) answers the short gates —
+	// classification and query understanding; empty uses ChatModel.
+	// EmbedModel (BACKEND_EMBED_MODEL) embeds for search; its vector width
+	// must match the one vec_chunks was built at, or boot refuses.
+	ChatModel  string
+	GateModel  string
+	EmbedModel string
+
 	// SearchMaxDistance bounds the semantic lane: hits at or beyond this L2
 	// distance are dropped rather than ranked. Vectors are unit length, so
 	// L2 = sqrt(2-2*cos); see rag.DefaultMaxDistance for the calibration.
@@ -70,11 +79,12 @@ type Config struct {
 	// here a person is watching an empty panel.
 	AskCallTimeout time.Duration
 
-	// SummaryChunkTokens is the coarse chunk budget for the prose summary. The
-	// chat model has a ~1M-token context window, so a whole transcript fits in a
-	// single call for all but multi-hour videos; this sizes that budget (in
-	// estimated tokens) so the common case is one call and only a marathon fans
-	// out into a few coarse sections. 0 uses the summarizer's default.
+	// SummaryChunkTokens is the coarse chunk budget for the prose summary (in
+	// estimated tokens), sized so a whole transcript fits a single call for all
+	// but multi-hour videos and only a marathon fans out into a few coarse
+	// sections. It must fit the chat model's context window with room for the
+	// prompt and answer; lower it for a smaller-window model. 0 uses the
+	// summarizer's default.
 	SummaryChunkTokens int
 
 	// ChatStreamIdleTimeout is how long a started chat stream may go completely
@@ -156,6 +166,9 @@ func Load() (Config, error) {
 		MediaDir:      env("BACKEND_MEDIA_DIR", "/data/media"),
 		YtdlpDir:      env("BACKEND_YTDLP_DIR", "/data/bin"),
 		AuthMode:      AuthMode(env("BACKEND_AUTH_MODE", "")),
+		ChatModel:     env("BACKEND_CHAT_MODEL", ""),
+		GateModel:     env("BACKEND_GATE_MODEL", ""),
+		EmbedModel:    env("BACKEND_EMBED_MODEL", ""),
 		OIDC: OIDCConfig{
 			Issuer:                env("BACKEND_OIDC_ISSUER", ""),
 			ClientID:              env("BACKEND_OIDC_CLIENT_ID", ""),

@@ -80,7 +80,7 @@ func (f *fakeEmbedder) Embed(_ context.Context, inputs []string) ([][]float32, e
 }
 
 // A name distinct from the real deployments, so a test asserting on the trace
-// cannot pass by accidentally matching a hardcoded "text-embedding-3-small".
+// cannot pass by accidentally matching a hardcoded model id.
 func (f *fakeEmbedder) Model() string { return "test-embed-model" }
 
 // spySummaryJobs is a stub SummaryEnqueuer that records the last enqueued id.

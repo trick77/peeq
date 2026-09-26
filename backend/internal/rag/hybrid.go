@@ -78,9 +78,11 @@ const (
 // "not actually about this" and dropped before ranking.
 //
 // The embedding vectors are unit length, so L2 and cosine rank identically and
-// convert exactly: L2 = sqrt(2 - 2*cos). 1.25 is cosine ~0.22. For
-// text-embedding-3-small, unrelated text pairs sit around cosine 0.0-0.15
-// (L2 1.31-1.41) and genuinely related passages above cosine 0.3.
+// convert exactly: L2 = sqrt(2 - 2*cos). 1.25 is cosine ~0.22. For the
+// embedding model this was calibrated on, unrelated text pairs sit around
+// cosine 0.0-0.15 (L2 1.31-1.41) and genuinely related passages above cosine
+// 0.3. The calibration is per model: re-check it after changing
+// BACKEND_EMBED_MODEL.
 //
 // This started at 1.20 (cosine ~0.28), a value read off published model
 // behaviour and never measured against a real library. It was too permissive to
@@ -99,7 +101,7 @@ const (
 //
 // The reason is that absolute cosine means less here than it looks. A ~600-token
 // chunk's vector averages a lot of content, so a short query against a long
-// passage scores low BY CONSTRUCTION, and text-embedding-3-small compresses the
+// passage scores low BY CONSTRUCTION, and the calibration model compresses the
 // range further — related passages land around 0.25-0.50, not the 0.7+ that
 // older models gave. A bound at cosine 0.45 therefore sits at the TOP of this
 // model's relevant band rather than below it.

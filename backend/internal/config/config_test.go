@@ -113,11 +113,31 @@ func TestLoad_defaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected ok, got %v", err)
 	}
-	// No endpoint, model or width here: the endpoints are read by llmwire from
-	// the env vars each model's profile names, and the models are constants of
-	// the build (llm.ModelFor, rag.EmbedModel / rag.EmbedDim).
+	// No endpoint or width here: the endpoints are read by llmwire from the env
+	// vars each model's profile names, and the width is the embedding model's
+	// profile's. No model default either: llm and rag refuse an unset model
+	// with the valid choices, so a model id is never picked in code.
 	if cfg.DefaultSubLang != "en" {
 		t.Fatalf("defaults wrong: %+v", cfg)
+	}
+	if cfg.ChatModel != "" || cfg.GateModel != "" || cfg.EmbedModel != "" {
+		t.Fatalf("a model was defaulted: %q %q %q", cfg.ChatModel, cfg.GateModel, cfg.EmbedModel)
+	}
+}
+
+func TestLoad_models(t *testing.T) {
+	t.Setenv("BACKEND_SESSION_SECRET", "s")
+	t.Setenv("BACKEND_AUTH_MODE", "dev")
+	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
+	t.Setenv("BACKEND_CHAT_MODEL", "chat-m")
+	t.Setenv("BACKEND_GATE_MODEL", "gate-m")
+	t.Setenv("BACKEND_EMBED_MODEL", "embed-m")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ChatModel != "chat-m" || cfg.GateModel != "gate-m" || cfg.EmbedModel != "embed-m" {
+		t.Fatalf("models = %q %q %q", cfg.ChatModel, cfg.GateModel, cfg.EmbedModel)
 	}
 }
 
@@ -366,6 +386,7 @@ func TestComposeGivesOptionalSettingsADefault(t *testing.T) {
 		"BACKEND_SUMMARIZE_VIDEO_DELAY",
 		"BACKEND_SUMMARIZE_SUMMARY_TOKENS",
 		"BACKEND_ALLOW_ANONYMOUS_YOUTUBE",
+		"BACKEND_GATE_MODEL",
 	}
 	compose, err := os.ReadFile(filepath.Join("..", "..", "..", "compose.yaml"))
 	if err != nil {

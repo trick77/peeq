@@ -2,155 +2,201 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/trick77/llmwire"
+	"github.com/trick77/llmwire/llmwiretest"
 )
 
-func TestCompleteSendsModelAndEffortAndReturnsContent(t *testing.T) {
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
-			t.Errorf("path = %s", r.URL.Path)
-		}
-		if r.Header.Get("Authorization") != "Bearer k" {
-			t.Errorf("missing auth header")
-		}
-		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &gotBody)
-		io.WriteString(w, sseStream("hello world", ""))
-	}))
-	defer srv.Close()
+// The tests here assert what peeq ASKS for — which model, which reasoning
+// intent, how long an answer may be — against llmwiretest's synthetic models.
+// How a real model spells those on the wire, and what level an intent becomes
+// for it, is llmwire's to know and test.
 
-	c := mustClient(t, Config{BaseURL: srv.URL, APIKey: "k"}, srv.Client())
-	out, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}})
+// fakeClient is a Client on an llmwiretest fake, recording every request.
+func fakeClient(t *testing.T, cfg Config) (*Client, *llmwiretest.Server) {
+	t.Helper()
+	srv := llmwiretest.NewServer(t)
+	cfg.BaseURL, cfg.APIKey = srv.URL, "k"
+	if cfg.Logger == nil {
+		cfg.Logger = discardLogger()
+	}
+	return mustClient(t, cfg, srv.Server.Client()), srv
+}
+
+func complete(ctx context.Context, t *testing.T, c *Client) string {
+	t.Helper()
+	out, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "hello world" {
-		t.Fatalf("content = %q", out)
-	}
-	if gotBody["model"] != model {
-		t.Fatalf("model = %v", gotBody["model"])
-	}
-	// The default is max, which is the endpoint's own default and Z.ai's
-	// recommendation — a regression to a shallower value would be silent.
-	if gotBody["reasoning_effort"] != maxReasoningEffort {
-		t.Fatalf("reasoning_effort = %v", gotBody["reasoning_effort"])
-	}
-	// Z.ai's recommended sampling point. Omitting these does not give "the
-	// model's defaults", it gives lower ones, so absence is the bug to catch.
-	//
-	// Literals on purpose. The values come from llmwire's profile now, and the
-	// whole point of this assertion is that the right numbers reach the wire —
-	// comparing against the same constant the renderer read would pass whatever
-	// that constant became.
-	if gotBody["temperature"] != 1.0 {
-		t.Fatalf("temperature = %v, want 1.0", gotBody["temperature"])
-	}
-	if gotBody["top_p"] != 0.95 {
-		t.Fatalf("top_p = %v, want 0.95", gotBody["top_p"])
-	}
-	if gotBody["stream"] != true {
-		t.Fatalf("stream = %v", gotBody["stream"])
-	}
-	// No hand-built thinking object. Depth is reasoning_effort, rendered by
-	// llmwire from its profile; the object peeq used to add rode in ExtraBody
-	// and is exactly the kind of by-hand wire knob this package no longer owns.
-	if _, ok := gotBody["thinking"]; ok {
-		t.Fatalf("request carried a thinking object: %v", gotBody["thinking"])
-	}
-	// No stream_options. Z.ai does not take the parameter and sends usage on the
-	// final frame regardless; sending it would be an undocumented field.
-	if _, ok := gotBody["stream_options"]; ok {
-		t.Fatalf("request carried stream_options: %v", gotBody["stream_options"])
-	}
-	_ = strings.TrimSpace
+	return out
 }
 
-// Shallow cannot switch thinking off — the endpoint refuses that outright with
-// code 1210 — so it lowers reasoning_effort instead. A regression that sent a
-// thinking:{"type":"disabled"} object would fail every call in prod.
-func TestComplete_shallowLowersEffort(t *testing.T) {
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &gotBody)
-		io.WriteString(w, sseStream("news", ""))
-	}))
-	defer srv.Close()
-
-	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
-	if _, err := c.Complete(Shallow(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
-		t.Fatal(err)
+func TestComplete_sendsTheConfiguredModelAndReturnsContent(t *testing.T) {
+	c, srv := fakeClient(t, Config{})
+	if out := complete(context.Background(), t, c); out != llmwiretest.Reply {
+		t.Fatalf("content = %q, want %q", out, llmwiretest.Reply)
 	}
-	if _, ok := gotBody["thinking"]; ok {
-		t.Fatalf("shallow sent a thinking object: %v", gotBody["thinking"])
+	last := srv.Last()
+	if last.Path != "/chat/completions" {
+		t.Errorf("path = %s", last.Path)
 	}
-	if gotBody["reasoning_effort"] != lowReasoningEffort {
-		t.Fatalf("reasoning_effort = %v, want %v", gotBody["reasoning_effort"], lowReasoningEffort)
+	if got := last.Header.Get("Authorization"); got != "Bearer k" {
+		t.Errorf("Authorization = %q", got)
 	}
-
-	// An explicit override still wins over Shallow.
-	if _, err := c.Complete(WithReasoningEffort(Shallow(context.Background()), highReasoningEffort), []Message{{Role: "user", Content: "hi"}}); err != nil {
-		t.Fatal(err)
+	if last.Model() != llmwiretest.ChatModel {
+		t.Errorf("model = %q, want the configured %q", last.Model(), llmwiretest.ChatModel)
 	}
-	if gotBody["reasoning_effort"] != highReasoningEffort {
-		t.Fatalf("reasoning_effort = %v, want the explicit override to win", gotBody["reasoning_effort"])
+	if !last.Stream() {
+		t.Error("request did not stream")
 	}
 }
 
-// ShortGate routes to shortGateModel and nothing else does. Both consts hold the
-// same id today, so this asserts against the consts rather than two literals:
-// written with literals it would pass for the wrong reason now and silently stop
-// testing anything if the deployments are ever split again.
-func TestComplete_shortGateRoutesToTheGateDeployment(t *testing.T) {
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &gotBody)
-		io.WriteString(w, sseStream("news", ""))
-	}))
-	defer srv.Close()
-
-	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
-	if _, err := c.Complete(ShortGate(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
-		t.Fatal(err)
+// A call that asks for nothing sends no reasoning knob at all, so the model
+// runs at its own default. That is the offline lane's deliberate choice: the
+// vendor's default is what the model was tuned for.
+func TestComplete_defaultReasoningSendsNothing(t *testing.T) {
+	c, srv := fakeClient(t, Config{})
+	complete(context.Background(), t, c)
+	if got := srv.Last().Reasoning(); got != "" {
+		t.Fatalf("reasoning = %q, want none sent (the model's default)", got)
 	}
-	if gotBody["model"] != shortGateModel {
-		t.Fatalf("model = %v, want the gate deployment", gotBody["model"])
-	}
-
-	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
-		t.Fatal(err)
-	}
-	if gotBody["model"] != model {
-		t.Fatalf("model = %v, want the default for a call that did not opt in", gotBody["model"])
+	if ReasoningFor(context.Background()) != ReasoningDefault {
+		t.Errorf("ReasoningFor(unset) = %q, want %q", ReasoningFor(context.Background()), ReasoningDefault)
 	}
 }
 
-// The deployment and the reasoning depth are separate choices, and either can be
-// made without the other: asking for shallow reasoning must not silently move a
-// call onto the gate deployment.
-func TestComplete_shallowDoesNotChangeTheDeployment(t *testing.T) {
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &gotBody)
-		io.WriteString(w, sseStream("news", ""))
-	}))
-	defer srv.Close()
-
-	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
-	if _, err := c.Complete(Shallow(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
-		t.Fatal(err)
+func TestComplete_reasoningIntentsReachTheWire(t *testing.T) {
+	c, srv := fakeClient(t, Config{})
+	for _, tc := range []struct {
+		intent Reasoning
+		want   string
+	}{
+		{ReasoningMinimal, llmwiretest.MinimalSent},
+		{ReasoningBalanced, llmwiretest.BalancedSent},
+	} {
+		ctx := WithReasoning(context.Background(), tc.intent)
+		if ReasoningFor(ctx) != tc.intent {
+			t.Errorf("ReasoningFor = %q, want %q", ReasoningFor(ctx), tc.intent)
+		}
+		complete(ctx, t, c)
+		if got := srv.Last().Reasoning(); got != tc.want {
+			t.Errorf("%s: reasoning sent = %q, want %q", tc.intent, got, tc.want)
+		}
 	}
-	if gotBody["model"] != model {
-		t.Fatalf("model = %v, want the default: shallow reasoning is not the same as the gate deployment", gotBody["model"])
+}
+
+// The cap a call sets is for its ANSWER; the reasoning allowance on top is the
+// model profile's, added by llmwire for the level the intent resolved to.
+func TestComplete_maxAnswerTokensAddsTheReasoningAllowance(t *testing.T) {
+	c, srv := fakeClient(t, Config{})
+	const n = 300
+	for _, tc := range []struct {
+		intent Reasoning
+		want   int
+	}{
+		{ReasoningDefault, n + llmwire.DefaultReasoningOverhead},
+		{ReasoningMinimal, n + llmwiretest.MinimalOverhead},
+		{ReasoningBalanced, n + llmwiretest.BalancedOverhead},
+	} {
+		complete(WithMaxAnswerTokens(WithReasoning(context.Background(), tc.intent), n), t, c)
+		if got, ok := srv.Last().MaxTokens(); !ok || got != tc.want {
+			t.Errorf("%s: wire cap = %d (sent %v), want %d", tc.intent, got, ok, tc.want)
+		}
+	}
+}
+
+// Absent a cap, none is sent: the endpoint's own limit applies.
+func TestComplete_noCapByDefault(t *testing.T) {
+	c, srv := fakeClient(t, Config{})
+	complete(context.Background(), t, c)
+	if got, ok := srv.Last().MaxTokens(); ok {
+		t.Fatalf("a cap was sent by default: %d", got)
+	}
+}
+
+// ShortGate routes to the gate model and nothing else does; the reasoning
+// intent is a separate choice and never moves a call.
+func TestComplete_shortGateRoutesToTheGateModel(t *testing.T) {
+	c, srv := fakeClient(t, Config{GateModel: llmwiretest.BudgetModel})
+	complete(ShortGate(context.Background()), t, c)
+	if got := srv.Last().Model(); got != llmwiretest.BudgetModel {
+		t.Fatalf("gate call reached %q, want the gate model %q", got, llmwiretest.BudgetModel)
+	}
+	complete(WithReasoning(context.Background(), ReasoningMinimal), t, c)
+	if got := srv.Last().Model(); got != llmwiretest.ChatModel {
+		t.Fatalf("minimal reasoning moved the call to %q; only ShortGate picks the gate model", got)
+	}
+}
+
+// Left unset, the gate model is the chat model.
+func TestComplete_gateModelDefaultsToTheChatModel(t *testing.T) {
+	c, srv := fakeClient(t, Config{})
+	complete(ShortGate(context.Background()), t, c)
+	if got := srv.Last().Model(); got != llmwiretest.ChatModel {
+		t.Fatalf("gate call reached %q, want the chat model", got)
+	}
+}
+
+// ModelFor labels a call that has already happened, so it has to agree with
+// what the request carried.
+func TestModelFor_namesWhatTheRequestCarries(t *testing.T) {
+	c, srv := fakeClient(t, Config{GateModel: llmwiretest.BudgetModel})
+	for _, ctx := range []context.Context{ShortGate(context.Background()), context.Background()} {
+		complete(ctx, t, c)
+		if got := c.ModelFor(ctx); got != srv.Last().Model() {
+			t.Fatalf("ModelFor = %q, but the request carried %q", got, srv.Last().Model())
+		}
+	}
+}
+
+// Every model fact is llmwire's, so a model that cannot do what peeq asks of
+// it is refused at construction, with the choices that would work.
+func TestNewClient_refusesAModelThatCannotFillTheRole(t *testing.T) {
+	reg := llmwiretest.Registry()
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+		want []string
+	}{
+		{"no chat model", Config{}, []string{"BACKEND_CHAT_MODEL", llmwiretest.ChatModel}},
+		{"unknown chat model", Config{Model: "no-such-model"}, []string{"BACKEND_CHAT_MODEL", "no-such-model"}},
+		// The budget model takes no json_object, which the key-points call needs.
+		{"chat model lacks json", Config{Model: llmwiretest.BudgetModel}, []string{"BACKEND_CHAT_MODEL", "json_object", llmwiretest.ChatModel}},
+		{"unknown gate model", Config{Model: llmwiretest.ChatModel, GateModel: "no-such-model"}, []string{"BACKEND_GATE_MODEL", "no-such-model"}},
+		{"embeddings as chat", Config{Model: llmwiretest.EmbedModel}, []string{"BACKEND_CHAT_MODEL", "not chat"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.cfg.Registry, tc.cfg.BaseURL, tc.cfg.APIKey = reg, "http://127.0.0.1:1", "k"
+			_, err := NewClient(tc.cfg, nil)
+			if err == nil {
+				t.Fatal("NewClient accepted it")
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("err = %q, want it to mention %q", err, w)
+				}
+			}
+		})
+	}
+}
+
+// With no BaseURL the host comes from the model's profile and the key from the
+// variable llmwire names for it; a missing one comes back named.
+func TestNewClient_withoutBaseURLNamesTheMissingVariable(t *testing.T) {
+	t.Setenv("LLMWIRE_LLMWIRETEST_BASE_URL", "http://127.0.0.1:1")
+	t.Setenv("LLMWIRE_LLMWIRETEST_API_KEY", "")
+	_, err := NewClient(Config{Model: llmwiretest.ChatModel, Registry: llmwiretest.Registry()}, nil)
+	var me *llmwire.MissingEnvError
+	if !errors.As(err, &me) || !strings.Contains(err.Error(), "LLMWIRE_LLMWIRETEST_API_KEY") {
+		t.Fatalf("got %v, want a MissingEnvError naming the key variable", err)
 	}
 }
 
@@ -204,51 +250,6 @@ func sseFinish(content, reason string) string {
 		sseEvent(doneMarker)
 }
 
-func TestComplete_maxTokensAndReasoningEffortFromContext(t *testing.T) {
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &gotBody)
-		io.WriteString(w, sseStream("ok", ""))
-	}))
-	defer srv.Close()
-
-	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
-	ctx := WithMaxTokens(WithReasoningEffort(context.Background(), "low"), 4000)
-	if _, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
-		t.Fatal(err)
-	}
-	if gotBody["reasoning_effort"] != "low" {
-		t.Fatalf("reasoning_effort = %v, want low (context override)", gotBody["reasoning_effort"])
-	}
-	if got, ok := gotBody["max_tokens"].(float64); !ok || int(got) != 4000 {
-		t.Fatalf("max_tokens = %v, want 4000", gotBody["max_tokens"])
-	}
-}
-
-// Absent an override, max_tokens is omitted entirely (leaving the endpoint's own
-// limit) and reasoning_effort stays at the package default.
-func TestComplete_maxTokensOmittedByDefault(t *testing.T) {
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &gotBody)
-		io.WriteString(w, sseStream("ok", ""))
-	}))
-	defer srv.Close()
-
-	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
-	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, present := gotBody["max_tokens"]; present {
-		t.Fatalf("max_tokens present by default: %v", gotBody["max_tokens"])
-	}
-	if gotBody["reasoning_effort"] != reasoningEffort {
-		t.Fatalf("reasoning_effort = %v, want the package default", gotBody["reasoning_effort"])
-	}
-}
-
 func TestComplete_failOnEarlyFinish(t *testing.T) {
 	// content_filter under the flag → error, so a truncated answer is not
 	// persisted (the summary call retries instead).
@@ -266,8 +267,8 @@ func TestComplete_failOnEarlyFinish(t *testing.T) {
 		t.Fatalf("without the flag: out=%q err=%v, want partial/nil", out, err)
 	}
 
-	// length is tolerated even under the flag: that cut is our own max_tokens,
-	// and retrying would just re-truncate.
+	// length is tolerated even under the flag: that cut is our own cap, and
+	// retrying would just re-truncate.
 	ln := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, sseFinish("partial", "length"))
 	}))
@@ -278,65 +279,18 @@ func TestComplete_failOnEarlyFinish(t *testing.T) {
 	}
 }
 
-// ModelFor has to agree with what the request actually carries, because it
-// exists to LABEL a call that has already happened. A second copy of the
-// selection rule that drifted from modelFrom would put the wrong model name on
-// the trace panel, and nothing downstream could tell.
-func TestModelFor_namesWhatTheRequestCarries(t *testing.T) {
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &gotBody)
-		io.WriteString(w, sseStream("news", ""))
-	}))
-	defer srv.Close()
-	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
-
-	for _, tc := range []struct {
-		name string
-		ctx  context.Context
-	}{
-		{"short gate", ShortGate(context.Background())},
-		{"default", context.Background()},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.Complete(tc.ctx, []Message{{Role: "user", Content: "hi"}}); err != nil {
-				t.Fatal(err)
-			}
-			if got := ModelFor(tc.ctx); got != gotBody["model"] {
-				t.Fatalf("ModelFor = %q, but the request carried %v", got, gotBody["model"])
-			}
-		})
-	}
-}
-
 // JSON mode is opt-in and off by default: most calls here must not be
 // constrained (classify answers with a bare id, the summary and Ask answers are
 // prose), so a leak would be worse than the absence it replaces.
 func TestComplete_jsonObjectIsOptIn(t *testing.T) {
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &gotBody)
-		io.WriteString(w, sseStream("{}", ""))
-	}))
-	defer srv.Close()
-	c := mustClient(t, Config{BaseURL: srv.URL}, srv.Client())
-
-	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
-		t.Fatal(err)
+	c, srv := fakeClient(t, Config{})
+	complete(context.Background(), t, c)
+	if rf, present := srv.Last().Body["response_format"]; present {
+		t.Fatalf("response_format sent without opting in: %v", rf)
 	}
-	if _, present := gotBody["response_format"]; present {
-		t.Fatalf("response_format sent without opting in: %v", gotBody["response_format"])
-	}
-
-	if _, err := c.Complete(AsJSONObject(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil {
-		t.Fatal(err)
-	}
-	// The literal is the assertion: this is the string the endpoint understands,
-	// and it is rendered by llmwire now.
-	rf, _ := gotBody["response_format"].(map[string]any)
+	complete(AsJSONObject(context.Background()), t, c)
+	rf, _ := srv.Last().Body["response_format"].(map[string]any)
 	if rf == nil || rf["type"] != "json_object" {
-		t.Fatalf("response_format = %v, want type %q", gotBody["response_format"], "json_object")
+		t.Fatalf("response_format = %v, want type %q", srv.Last().Body["response_format"], "json_object")
 	}
 }

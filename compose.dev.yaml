@@ -33,10 +33,20 @@ services:
       BACKEND_DB_PATH: /data/peeq.db
       BACKEND_MEDIA_DIR: /data/media
       BACKEND_YTDLP_DIR: /data/bin
-      # AI keys. Unlike the rest of this file these can't be hardcoded, so
-      # the dev stack needs a populated .env. The hosts are llmwire's.
-      LLMWIRE_ZAI_API_KEY: "${LLMWIRE_ZAI_API_KEY}"
-      LLMWIRE_OPENAI_API_KEY: "${LLMWIRE_OPENAI_API_KEY}"
+      # Models and keys. Unlike the rest of this file these can't be
+      # hardcoded, so the dev stack needs a populated .env. The hosts are
+      # llmwire's.
+      BACKEND_CHAT_MODEL: "${BACKEND_CHAT_MODEL}"
+      BACKEND_GATE_MODEL: "${BACKEND_GATE_MODEL:-}"
+      BACKEND_EMBED_MODEL: "${BACKEND_EMBED_MODEL}"
+      # Every llmwire provider's key; set in .env the one(s) your models'
+      # providers need (see .env.example). Unset ones forward empty.
+      LLMWIRE_ZAI_API_KEY: "${LLMWIRE_ZAI_API_KEY:-}"
+      LLMWIRE_MIMO_API_KEY: "${LLMWIRE_MIMO_API_KEY:-}"
+      LLMWIRE_OPENAI_API_KEY: "${LLMWIRE_OPENAI_API_KEY:-}"
+      LLMWIRE_LITELLM_BASE_URL: "${LLMWIRE_LITELLM_BASE_URL:-}"
+      LLMWIRE_LITELLM_API_KEY: "${LLMWIRE_LITELLM_API_KEY:-}"
+      LLMWIRE_LITELLM_MODELS: "${LLMWIRE_LITELLM_MODELS:-}"
       LLMWIRE_EMULATE_OPENCODE: "${LLMWIRE_EMULATE_OPENCODE:-}"
       BACKEND_DEFAULT_SUB_LANG: "${BACKEND_DEFAULT_SUB_LANG:-en}"
       BACKEND_LOG_LEVEL: "${BACKEND_LOG_LEVEL:-debug}"
