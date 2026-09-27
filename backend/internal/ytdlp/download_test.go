@@ -701,28 +701,36 @@ func TestDownload_logsAllStderrWhenTheCallFails(t *testing.T) {
 	}
 }
 
-// A channel with no /streams tab fails on every scan by design; warning about
-// it would bury real failures. It still reaches the log at debug.
-func TestMetadata_missingTabFailureLogsAtDebug(t *testing.T) {
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
-	t.Setenv("FAKE_YTDLP_STDERR", "ERROR: [youtube:tab] UCabc: This channel does not have a streams tab")
-	t.Setenv("FAKE_YTDLP_EXIT", "1")
+// Routine failures stay at debug so they cannot bury real ones: a channel with
+// no /streams tab fails on every scan by design, and the availability recheck
+// probes walled-off videos expecting a TerminalError.
+func TestMetadata_routineFailureLogsAtDebug(t *testing.T) {
+	for name, stderr := range map[string]string{
+		"missing tab": "ERROR: [youtube:tab] UCabc: This channel does not have a streams tab",
+		"terminal":    "ERROR: [youtube] dQw4w9WgXcQ: Join this channel to get access to members-only content",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+				Level: slog.LevelDebug,
+			}))
+			t.Setenv("FAKE_YTDLP_STDERR", stderr)
+			t.Setenv("FAKE_YTDLP_EXIT", "1")
 
-	r := New(RunnerConfig{
-		Bin:            fakeBinPath(t),
-		CookieProvider: func() (string, string) { return "cookie", "valid" },
-		Sleep:          func(context.Context, time.Duration) error { return nil },
-		Logger:         logger,
-	})
-	if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err == nil {
-		t.Fatal("want an error")
-	}
-	out := buf.String()
-	if !strings.Contains(out, `level=DEBUG msg="yt-dlp failed"`) || strings.Contains(out, "level=WARN") {
-		t.Fatalf("missing-tab failure not logged at debug only\n%s", out)
+			r := New(RunnerConfig{
+				Bin:            fakeBinPath(t),
+				CookieProvider: func() (string, string) { return "cookie", "valid" },
+				Sleep:          func(context.Context, time.Duration) error { return nil },
+				Logger:         logger,
+			})
+			if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err == nil {
+				t.Fatal("want an error")
+			}
+			out := buf.String()
+			if !strings.Contains(out, `level=DEBUG msg="yt-dlp failed"`) || strings.Contains(out, "level=WARN") {
+				t.Fatalf("routine failure not logged at debug only\n%s", out)
+			}
+		})
 	}
 }
 

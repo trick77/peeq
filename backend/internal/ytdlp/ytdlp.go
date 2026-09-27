@@ -506,13 +506,16 @@ func (r *Runner) failed(ctx context.Context, stderr string, runErr error) error 
 // "ytdlp: retryable (rate limited or server error)", with no way to tell a
 // 429 from a 503, or which request of the run it was.
 //
-// Warn, so the production level sees it. Two failures are routine rather
-// than faults and go to debug: a missing channel tab (most channels have no
-// /streams tab, so that fails on every scan by design) and a run whose
-// context was cancelled (shutdown, job cancel).
+// Warn, so the production level sees it. Routine failures go to debug: a
+// missing channel tab (most channels have no /streams tab, so that fails on
+// every scan by design), a TerminalError (the availability recheck probes
+// walled-off videos and expects exactly that; its Detail already carries the
+// ERROR line into the caller's error), and a run whose context was cancelled
+// (shutdown, job cancel).
 func (r *Runner) logFailedStderr(ctx context.Context, stderr string, runErr, classified error) {
 	level := slog.LevelWarn
-	if IsMissingTab(classified) || ctx.Err() != nil {
+	var terminal *TerminalError
+	if IsMissingTab(classified) || errors.As(classified, &terminal) || ctx.Err() != nil {
 		level = slog.LevelDebug
 	}
 	var attrs []any
