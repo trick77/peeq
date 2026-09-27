@@ -215,6 +215,20 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		LimitRate:    set.LimitRate,
 		SubLang:      subLang,
 	}
+	// A stored transcript (the inbox caption read, or an earlier download) is
+	// what the summary, search and player read; asking YouTube for it again
+	// can only fail. A failed lookup fetches captions as before.
+	if w.deps.Videos != nil {
+		source, err := w.deps.Videos.TranscriptSource(video.ID)
+		switch {
+		case err != nil:
+			w.deps.Logger.Warn("download worker: read transcript source failed", "job_id", job.ID, "video_id", video.ID, "err", err)
+		case source != "":
+			req.SkipSubtitles = true
+			w.deps.Logger.Info("download worker: transcript stored, skipping subtitles",
+				"job_id", job.ID, "video_id", video.ID, "transcript_source", source)
+		}
+	}
 
 	// Inactivity watchdog: armed when yt-dlp actually starts, reset on every
 	// progress update; if it fires, it cancels jobCtx (killing the child),

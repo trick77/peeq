@@ -42,6 +42,20 @@ if [ -n "$outtmpl" ]; then
   mkdir -p "$outdir"
   id="${FAKE_YTDLP_ID:-testid}"
 
+  # Caption-only call (--skip-download, Download's caption step): writes the
+  # .vtt and nothing else, like real yt-dlp. FAKE_YTDLP_SUBS_STDERR makes it
+  # fail the way a refused caption request does.
+  case " $* " in
+    *" --skip-download "*)
+      if [ -n "${FAKE_YTDLP_SUBS_STDERR:-}" ]; then
+        echo "$FAKE_YTDLP_SUBS_STDERR" 1>&2
+        exit 1
+      fi
+      printf 'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n' > "$outdir/$id.${FAKE_YTDLP_SUBLANG:-en}.vtt"
+      exit 0
+      ;;
+  esac
+
   # FAKE_YTDLP_EXTRA_LINES lets a test supply its own non-progress stdout,
   # newline-separated. Deliberately caller-supplied and empty by default: peeq
   # has not yet captured what real yt-dlp narrates during a download, and a
@@ -73,7 +87,11 @@ if [ -n "$outtmpl" ]; then
 
   echo "dummy video content" > "$outdir/$id.mp4"
   echo "dummy thumbnail" > "$outdir/$id.jpg"
-  printf 'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n' > "$outdir/$id.${FAKE_YTDLP_SUBLANG:-en}.vtt"
+  case " $* " in
+    *" --write-subs "*)
+      printf 'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n' > "$outdir/$id.${FAKE_YTDLP_SUBLANG:-en}.vtt"
+      ;;
+  esac
   cat > "$outdir/$id.info.json" <<EOF
 {
   "id": "$id",

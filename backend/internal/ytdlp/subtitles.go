@@ -41,8 +41,8 @@ func SummaryDir(mediaDir, videoID string) string {
 // text and answers "is this worth downloading?" for a fraction of the cost of
 // finding out the other way.
 //
-// The flags below are a strict subset of Download's, and must stay that way.
-// If the two ever disagree on --sub-langs or --convert-subs, the .vtt read
+// The flags come from subtitleArgs, which Download's caption step uses too.
+// If the two ever disagreed on --sub-langs or --convert-subs, the .vtt read
 // before a download and the one read after it would differ, and the summary
 // carried over from the inbox would describe a transcript the library no
 // longer has.
@@ -83,7 +83,21 @@ func (r *Runner) Subtitles(ctx context.Context, videoID, rawURL, subLang string)
 
 	ctx = withCallLabel(ctx, videoID)
 
-	if _, execErr := r.exec(ctx,
+	if _, execErr := r.exec(ctx, subtitleArgs(dir, subLang, watchURL)...); execErr != nil {
+		// Leave the directory: an empty one costs an inode and the next
+		// attempt reuses it. Removing it here would race a concurrent read of
+		// a caption this same video fetched on an earlier attempt.
+		return "", execErr
+	}
+
+	return foundSubtitle(r.cfg.MediaDir, dir, videoID)
+}
+
+// subtitleArgs is the caption-only yt-dlp invocation, writing into dir. Both
+// Subtitles and Download's caption step run exactly this, so the .vtt summarized
+// from the inbox and the one fetched with the media cannot drift apart.
+func subtitleArgs(dir, subLang, watchURL string) []string {
+	return []string{
 		"--skip-download",
 		"--write-subs",
 		"--write-auto-subs",
@@ -93,14 +107,7 @@ func (r *Runner) Subtitles(ctx context.Context, videoID, rawURL, subLang string)
 		"--socket-timeout", "30",
 		"-o", filepath.Join(dir, "%(id)s.%(ext)s"),
 		watchURL,
-	); execErr != nil {
-		// Leave the directory: an empty one costs an inode and the next
-		// attempt reuses it. Removing it here would race a concurrent read of
-		// a caption this same video fetched on an earlier attempt.
-		return "", execErr
 	}
-
-	return foundSubtitle(r.cfg.MediaDir, dir, videoID)
 }
 
 // foundSubtitle locates the .vtt yt-dlp wrote into dir and returns it relative
