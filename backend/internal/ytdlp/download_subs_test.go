@@ -51,7 +51,7 @@ func TestDownload_requestsSubtitlesAndCapturesLanguage(t *testing.T) {
 		t.Fatalf("read capture: %v", err)
 	}
 	argLine := string(argv)
-	for _, want := range []string{"--write-subs", "--write-auto-subs", "--sub-langs en", "--convert-subs vtt"} {
+	for _, want := range []string{"--write-subs", "--write-auto-subs", "--sub-langs en-orig ", "--convert-subs vtt"} {
 		if !strings.Contains(argLine, want) {
 			t.Fatalf("missing arg %q in %q", want, argLine)
 		}

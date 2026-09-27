@@ -35,8 +35,8 @@ type DownloadReq struct {
 	// LimitRate is a yt-dlp --limit-rate value (e.g. "5M"). Left empty,
 	// --limit-rate is omitted entirely (no rate limiting).
 	LimitRate string
-	// SubLang is the --sub-langs value passed to yt-dlp. Left empty, "en"
-	// is used as the default.
+	// SubLang is the caption language; --sub-langs asks for its original
+	// track (subLangsArg). Left empty, "en" is used as the default.
 	SubLang string
 }
 
@@ -258,7 +258,7 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		"--sponsorblock-mark", "all",
 		"--write-subs",
 		"--write-auto-subs",
-		"--sub-langs", subLang,
+		"--sub-langs", subLangsArg(subLang),
 		"--convert-subs", "vtt",
 		"--no-playlist",
 		"--newline",
