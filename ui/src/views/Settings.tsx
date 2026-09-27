@@ -457,17 +457,20 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
           </div>
           {cookieError ? <div className="errline">{cookieError}</div> : null}
         </form>
-        <div className="warnline">
-          <Icon
-            name="warning"
-            size="16px"
-            style={{ color: "var(--color-danger)" }}
-          />
-          <span>
-            <b>No cookie, no calls.</b> Peeq never touches YouTube without a
-            valid cookie — it pauses the queue and asks you to re-paste instead.
-          </span>
-        </div>
+        {cookieHealthy ? null : (
+          <div className="warnline">
+            <Icon
+              name="warning"
+              size="16px"
+              style={{ color: "var(--color-danger)" }}
+            />
+            <span>
+              <b>No cookie, no calls.</b> Peeq never touches YouTube without a
+              valid cookie — it pauses the queue and asks you to re-paste
+              instead.
+            </span>
+          </div>
+        )}
       </section>
 
       <section className="sect">

@@ -94,6 +94,21 @@ describe("Settings", () => {
     expect(textarea.value).toBe("");
   });
 
+  it("hides the 'no cookie, no calls' warning while the cookie is active", async () => {
+    render(<Settings />);
+    await screen.findByText("YouTube cookie");
+    expect(screen.queryByText(/No cookie, no calls/)).toBeNull();
+  });
+
+  it("shows the 'no cookie, no calls' warning when the cookie is not valid", async () => {
+    vi.mocked(getSettings).mockResolvedValue({
+      ...baseSettings,
+      cookie_status: "absent",
+    });
+    render(<Settings />);
+    expect(await screen.findByText(/No cookie, no calls/)).toBeInTheDocument();
+  });
+
   it("saving the cookie textarea posts to putCookie", async () => {
     const user = userEvent.setup();
     render(<Settings />);
