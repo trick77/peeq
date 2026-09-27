@@ -5,8 +5,57 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
+
+// A video whose transcript is already stored (the inbox caption read, or an
+// earlier download) must not ask YouTube for captions again: the summary,
+// search and player all read the stored row, and a refused caption request
+// used to fail the whole download.
+func TestDownloadSkipsSubtitlesWhenTranscriptStored(t *testing.T) {
+	var gotSkip bool
+	runner := &fakeRunner{
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			gotSkip = req.SkipSubtitles
+			return &ytdlp.Result{MediaPath: "/media/v1/v1.mp4"}, nil
+		},
+	}
+	h := newHarness(t, runner, nil)
+	id := h.enqueue(t, "v1", 0)
+	if err := h.videos.SetTranscript("v1", videos.TranscriptSourceCaption, "WEBVTT\n"); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
+	runWorker(t, h.worker)
+	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+
+	if !gotSkip {
+		t.Fatal("req.SkipSubtitles = false for a video with a stored transcript")
+	}
+	tr, err := h.videos.GetTranscript("v1")
+	if err != nil || tr == nil || tr.VTT != "WEBVTT\n" {
+		t.Fatalf("stored transcript = (%+v, %v), want the caption read kept", tr, err)
+	}
+}
+
+// No stored transcript: the download is where the captions come from.
+func TestDownloadRequestsSubtitlesWithoutTranscript(t *testing.T) {
+	gotSkip := true
+	runner := &fakeRunner{
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			gotSkip = req.SkipSubtitles
+			return &ytdlp.Result{MediaPath: "/media/v1/v1.mp4"}, nil
+		},
+	}
+	h := newHarness(t, runner, nil)
+	id := h.enqueue(t, "v1", 0)
+	runWorker(t, h.worker)
+	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+
+	if gotSkip {
+		t.Fatal("req.SkipSubtitles = true for a video with no transcript")
+	}
+}
 
 // spySummaryJobs is a SummaryEnqueuer that records every enqueued video ID,
 // so a test can assert that a summary job is queued as a downstream

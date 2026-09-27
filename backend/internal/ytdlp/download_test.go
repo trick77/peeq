@@ -87,9 +87,10 @@ func TestDownload_happyPath(t *testing.T) {
 
 	// Download must go through the same throttle as Metadata (CRITICAL
 	// requirement: "the throttle must run"), waiting out at least the hard
-	// 20s floor before the binary is invoked.
-	if throttleCalls != 1 {
-		t.Fatalf("throttle Sleep called %d times, want 1", throttleCalls)
+	// 20s floor before the binary is invoked. Twice: the caption step after
+	// the media is its own YouTube call, spaced like any other.
+	if throttleCalls != 2 {
+		t.Fatalf("throttle Sleep called %d times, want 2 (media, then captions)", throttleCalls)
 	}
 	if throttleDuration < minThrottleFloor {
 		t.Fatalf("throttle duration %v below hard floor %v", throttleDuration, minThrottleFloor)
@@ -223,6 +224,8 @@ func TestDownload_argsIncludeRequiredFlags(t *testing.T) {
 		VideoID:   "abcDEFghi12",
 		Format:    "apple-1080p",
 		LimitRate: "5M",
+		// The capture keeps the last call; this test is about the media one.
+		SkipSubtitles: true,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Download: %v", err)
@@ -352,6 +355,8 @@ func TestDownload_customFormat_reachesResolve(t *testing.T) {
 		VideoID:      "customFmt01",
 		Format:       "custom",
 		CustomFormat: "bestvideo+bestaudio",
+		// The capture keeps the last call; this test is about the media one.
+		SkipSubtitles: true,
 	}, nil)
 	if err != nil {
 		t.Fatalf("Download: %v", err)

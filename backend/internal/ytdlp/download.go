@@ -38,6 +38,9 @@ type DownloadReq struct {
 	// SubLang is the --sub-langs value passed to yt-dlp. Left empty, "en"
 	// is used as the default.
 	SubLang string
+	// SkipSubtitles leaves out the caption step: the video's transcript is
+	// already stored, and asking YouTube for it again can only fail.
+	SkipSubtitles bool
 }
 
 // Segment is one SponsorBlock-marked chapter parsed out of the
@@ -256,10 +259,6 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		"--write-thumbnail",
 		"--write-info-json",
 		"--sponsorblock-mark", "all",
-		"--write-subs",
-		"--write-auto-subs",
-		"--sub-langs", subLang,
-		"--convert-subs", "vtt",
 		"--no-playlist",
 		"--newline",
 		"--socket-timeout", "30",
@@ -304,12 +303,47 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		return nil, execErr
 	}
 
+	if !req.SkipSubtitles {
+		if err := r.downloadSubtitles(ctx, req.VideoID, watchURL, subLang, stagingDir); err != nil {
+			_ = os.RemoveAll(stagingDir)
+			return nil, err
+		}
+	}
+
 	result, err := finalizeDownload(stagingDir, r.cfg.MediaDir, req.VideoID, formatSelector)
 	if err != nil {
 		_ = os.RemoveAll(stagingDir)
 		return nil, err
 	}
 	return result, nil
+}
+
+// downloadSubtitles fetches the captions into dir once the media is in, as a
+// call of its own. yt-dlp writes subtitles BEFORE the media and aborts the run
+// on a subtitle error, so with the caption flags on the media call a refused
+// caption request (HTTP 429 from the caption endpoint) failed the whole
+// download, and every retry asked again. Here it costs only the transcript.
+//
+// Not every failure is swallowed. It returns, and so fails the download:
+//   - a cancelled ctx (user Cancel, shutdown, watchdog): finalizing anyway
+//     would place media no row points at, since the worker settles a cancel
+//     without looking at the result;
+//   - ErrBlocked / ErrCookieExpired: the worker must still pause and flag the
+//     cookie, or the next job goes out with a cookie YouTube just rejected.
+//
+// A gate refusal (paused, no cookie) made no call and is swallowed with the rest.
+func (r *Runner) downloadSubtitles(ctx context.Context, videoID, watchURL, subLang, dir string) error {
+	_, err := r.exec(ctx, subtitleArgs(dir, subLang, watchURL)...)
+	switch {
+	case err == nil:
+		return nil
+	case ctx.Err() != nil:
+		return ctx.Err()
+	case !IsRefused(err) && (errors.Is(err, ErrBlocked) || errors.Is(err, ErrCookieExpired)):
+		return err
+	}
+	r.cfg.Logger.Warn("download subtitles failed, keeping media", "video_id", videoID, "err", err)
+	return nil
 }
 
 // isRetryable reports whether err is a *RetryableError, i.e. a transient
