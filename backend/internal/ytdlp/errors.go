@@ -9,6 +9,8 @@ import (
 	"errors"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/trick77/peeq/internal/logx"
 )
 
 // Sentinel errors for failure families that apply across an entire run,
@@ -53,22 +55,34 @@ func IsRefused(err error) bool {
 // TerminalError is a permanent, non-retryable failure for one specific
 // video: it is gone, private, members-only, age-gated, or geo-blocked, and
 // retrying will not help.
+//
+// Reason is the stable key callers branch on; Detail is yt-dlp's own words
+// (the stderr tail), so a stored or logged failure says what yt-dlp said.
 type TerminalError struct {
 	Reason string // one of: deleted, private, members, age, geo
+	Detail string // trimmed, redacted tail of yt-dlp's stderr
 }
 
 func (e *TerminalError) Error() string {
-	return "ytdlp: terminal (" + e.Reason + ")"
+	return withDetail("ytdlp: terminal ("+e.Reason+")", e.Detail)
 }
 
 // RetryableError is a transient failure (e.g. rate limiting) that callers
-// may retry later, typically after backoff.
+// may retry later, typically after backoff. Detail as on TerminalError.
 type RetryableError struct {
 	Reason string
+	Detail string
 }
 
 func (e *RetryableError) Error() string {
-	return "ytdlp: retryable (" + e.Reason + ")"
+	return withDetail("ytdlp: retryable ("+e.Reason+")", e.Detail)
+}
+
+func withDetail(msg, detail string) string {
+	if detail == "" {
+		return msg
+	}
+	return msg + ": " + detail
 }
 
 // ExecError is the fallback when stderr matches no known signature. It
@@ -78,7 +92,8 @@ func (e *RetryableError) Error() string {
 // or a missing JS runtime. Unwrap keeps errors.Is/As working against the
 // underlying *exec.ExitError.
 //
-// Stderr is propagated verbatim (trimmed only for length) and surfaces in
+// Stderr is propagated nearly verbatim (trimmed for length, URL queries
+// stripped) and surfaces, as does TerminalError/RetryableError's Detail, in
 // API error bodies and the jobs.last_error column. That is safe for the
 // current argv, which carries neither --verbose nor --print-traffic, so
 // yt-dlp never echoes cookie values. Do NOT add either flag without first
@@ -157,7 +172,9 @@ func stderrTail(stderr string) string {
 		lines = lines[len(lines)-3:]
 	}
 
-	out := strings.Join(lines, "; ")
+	// Redacted: yt-dlp can echo a signed googlevideo URL, and the tail ends up
+	// in jobs.last_error, Activity rows and API bodies.
+	out := logx.RedactText(strings.Join(lines, "; "))
 	if len(out) > maxStderrTail {
 		cut := maxStderrTail
 		// Back off to the start of the rune that straddles the cut, so the
@@ -177,6 +194,7 @@ func stderrTail(stderr string) string {
 // stderr tail (nil is returned unchanged if there was no error at all).
 func Classify(stderr string, exitErr error) error {
 	s := strings.ToLower(stderr)
+	detail := stderrTail(stderr)
 
 	switch {
 	case containsAny(s, "sign in to confirm you're not a bot", "confirm you're not a bot"):
@@ -184,9 +202,9 @@ func Classify(stderr string, exitErr error) error {
 	case containsAny(s, "cookies are no longer valid", "failed to load cookies", "cookie file is invalid", "cookies-from-browser instead"):
 		return ErrCookieExpired
 	case containsAny(s, "private video"):
-		return &TerminalError{Reason: "private"}
+		return &TerminalError{Reason: "private", Detail: detail}
 	case containsAny(s, "video is no longer available", "video unavailable"):
-		return &TerminalError{Reason: "deleted"}
+		return &TerminalError{Reason: "deleted", Detail: detail}
 	// Channel-level deletion signatures. These are distinct from the
 	// video-level ones above: yt-dlp emits them when the CHANNEL itself is
 	// gone, which is exactly the case the auto-unsubscribe feature exists to
@@ -204,21 +222,21 @@ func Classify(stderr string, exitErr error) error {
 		// keep this comment until someone captures the real stderr line.
 		"this account has been terminated",
 	):
-		return &TerminalError{Reason: "deleted"}
+		return &TerminalError{Reason: "deleted", Detail: detail}
 	case containsAny(s, "members-only", "join this channel"):
-		return &TerminalError{Reason: "members"}
+		return &TerminalError{Reason: "members", Detail: detail}
 	case containsAny(s, "age-restricted", "confirm your age"):
-		return &TerminalError{Reason: "age"}
+		return &TerminalError{Reason: "age", Detail: detail}
 	case containsAny(s, "not available in your country", "not available on this app"):
-		return &TerminalError{Reason: "geo"}
+		return &TerminalError{Reason: "geo", Detail: detail}
 	case containsAny(s, "http error 429", "429: too many requests", "http error 5"):
-		return &RetryableError{Reason: "rate limited or server error"}
+		return &RetryableError{Reason: "rate limited or server error", Detail: detail}
 	}
 
 	if exitErr == nil {
 		return nil
 	}
-	return &ExecError{Err: exitErr, Stderr: stderrTail(stderr)}
+	return &ExecError{Err: exitErr, Stderr: detail}
 }
 
 func containsAny(haystack string, subs ...string) bool {
