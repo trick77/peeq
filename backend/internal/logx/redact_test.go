@@ -89,6 +89,28 @@ func TestRedactErr_keepsTheChain(t *testing.T) {
 	}
 }
 
+// yt-dlp's stderr is plain text, not an error, and can echo a signed
+// googlevideo URL; RedactText is what a log site uses on it.
+func TestRedactText(t *testing.T) {
+	tests := []struct {
+		name  string
+		given string
+		want  string
+	}{
+		{"plain", "ERROR: HTTP Error 429: Too Many Requests", "ERROR: HTTP Error 429: Too Many Requests"},
+		{"query", "fetch https://rr1.googlevideo.com/videoplayback?sig=SECRET&ip=1.2.3.4 failed",
+			"fetch https://rr1.googlevideo.com/videoplayback failed"},
+		{"userinfo", "GET https://u:pw@example.com/x", "GET https://example.com/x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RedactText(tt.given); got != tt.want {
+				t.Fatalf("RedactText(%q) = %q, want %q", tt.given, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestRedactAttr_scrubsErrAttrsOnTheHandler: with RedactAttr installed on the
 // handler, an unwrapped *url.Error logged under "err" never reaches the output
 // with its query string, whatever the call site did.

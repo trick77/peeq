@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/trick77/peeq/internal/logx"
 	"github.com/trick77/peeq/internal/sched"
 )
 
@@ -129,12 +131,11 @@ type RunnerConfig struct {
 	// progress, and at one line per update they would bury the handful that say
 	// which phase a download is in.
 	//
-	// It also receives stderr from any Runner call that SUCCEEDED, download or
-	// not. (The package-level Version helper is not a Runner call: it reports
-	// its own stderr in the error it returns and never reaches this logger.)
-	// A failing call already surfaces stderr through Classify, which is how the
-	// job's error text is written; a call that exits 0 used to drop it, so a
-	// download that warned about a throttled fragment finished looking clean.
+	// It also receives every stderr line of every Runner call, download or not:
+	// at debug on success, at warn on failure. (The package-level Version helper
+	// is not a Runner call: it reports its own stderr in the error it returns
+	// and never reaches this logger.) Classify keeps only a short tail for the
+	// job's error text; the log gets all of it.
 	//
 	// Defaults to slog.Default(). Only the download path logs STDOUT — Metadata
 	// returns JSON there, and logging that would dump a whole info blob per
@@ -489,26 +490,63 @@ func SignalStart(ctx context.Context) {
 // Line by line rather than one blob, so the log stays greppable and a long
 // warning cannot swallow the entries around it. Blank lines are skipped.
 func (r *Runner) logStderr(ctx context.Context, stderr string) {
+	r.logStderrLines(ctx, slog.LevelDebug, "yt-dlp stderr", stderr)
+}
+
+// failed classifies a failed run and logs its stderr.
+func (r *Runner) failed(ctx context.Context, stderr string, runErr error) error {
+	err := Classify(stderr, runErr)
+	r.logFailedStderr(ctx, stderr, runErr, err)
+	return err
+}
+
+// logFailedStderr records EVERY line yt-dlp wrote to stderr on a call that
+// failed. Classify keeps only a short tail for the job's error text, and a
+// matched signature used to keep nothing: a download failed as the bare
+// "ytdlp: retryable (rate limited or server error)", with no way to tell a
+// 429 from a 503, or which request of the run it was.
+//
+// Warn, so the production level sees it. Routine failures go to debug: a
+// missing channel tab (most channels have no /streams tab, so that fails on
+// every scan by design), a TerminalError (the availability recheck probes
+// walled-off videos and expects exactly that; its Detail already carries the
+// ERROR line into the caller's error), and a run whose context was cancelled
+// (shutdown, job cancel).
+func (r *Runner) logFailedStderr(ctx context.Context, stderr string, runErr, classified error) {
+	level := slog.LevelWarn
+	var terminal *TerminalError
+	if IsMissingTab(classified) || errors.As(classified, &terminal) || ctx.Err() != nil {
+		level = slog.LevelDebug
+	}
+	var attrs []any
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		attrs = append(attrs, "exit_code", exitErr.ExitCode())
+	}
+	r.logStderrLines(ctx, level, "yt-dlp failed", stderr, attrs...)
+}
+
+// logStderrLines logs each non-blank stderr line under msg, attributed to the
+// call's video and redacted: yt-dlp can echo a signed googlevideo URL.
+func (r *Runner) logStderrLines(ctx context.Context, level slog.Level, msg, stderr string, attrs ...any) {
 	if stderr == "" {
 		return
 	}
-	// Ask before splitting. This runs on every successful call, Metadata
+	// Ask before splitting. The success path runs on every call, Metadata
 	// included, and Metadata runs on every channel scan — so with debug off
 	// (the production default) the split and the per-line trim below would be
 	// work whose every result is thrown away.
-	if !r.cfg.Logger.Enabled(ctx, slog.LevelDebug) {
+	if !r.cfg.Logger.Enabled(ctx, level) {
 		return
 	}
-	label := callLabel(ctx)
+	if label := callLabel(ctx); label != "" {
+		attrs = append([]any{"video_id", label}, attrs...)
+	}
 	for _, line := range strings.Split(stderr, "\n") {
 		if line = strings.TrimSpace(line); line == "" {
 			continue
 		}
-		if label != "" {
-			r.cfg.Logger.Debug("yt-dlp stderr", "video_id", label, "line", line)
-			continue
-		}
-		r.cfg.Logger.Debug("yt-dlp stderr", "line", line)
+		r.cfg.Logger.Log(ctx, level, msg, append(attrs, "line", logx.RedactText(line))...)
 	}
 }
 
@@ -614,7 +652,7 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		if runErr := cmd.Run(); runErr != nil {
-			return nil, Classify(stderr.String(), runErr)
+			return nil, r.failed(ctx, stderr.String(), runErr)
 		}
 		r.logStderr(ctx, stderr.String())
 		return stdout.Bytes(), nil
@@ -647,7 +685,7 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 
 	runErr := cmd.Wait()
 	if runErr != nil {
-		return nil, Classify(stderr.String(), runErr)
+		return nil, r.failed(ctx, stderr.String(), runErr)
 	}
 	// cmd.Wait() succeeding doesn't mean the stdout scan actually saw
 	// everything: a mid-stream read error (scanner.Err()) would otherwise

@@ -308,6 +308,63 @@ func TestStderrTail_truncatesOnRuneBoundary(t *testing.T) {
 	}
 }
 
+// A matched signature used to throw stderr away: a download failure logged as
+// "ytdlp: retryable (rate limited or server error)" and nothing else, so 429
+// vs 503, and which request, were unknowable. Reason stays the stable key
+// callers branch on; the yt-dlp text rides along in Error().
+func TestClassify_matchedSignaturesKeepStderr(t *testing.T) {
+	exitErr := fmt.Errorf("exit status 1")
+	cases := []struct {
+		name   string
+		stderr string
+		want   string
+	}{
+		{"retryable", "WARNING: noise\nERROR: [youtube] abc: Unable to download webpage: HTTP Error 429: Too Many Requests",
+			"Unable to download webpage: HTTP Error 429"},
+		{"terminal", "ERROR: [youtube] abc: Private video. Sign in if you've been granted access",
+			"Private video. Sign in"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Classify(tc.stderr, exitErr)
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error text lost yt-dlp's reason: %q", err.Error())
+			}
+			if strings.Contains(err.Error(), "noise") {
+				t.Fatalf("kept warning noise instead of the ERROR line: %q", err.Error())
+			}
+		})
+	}
+
+	var re *RetryableError
+	if !errors.As(Classify(cases[0].stderr, exitErr), &re) || re.Reason != "rate limited or server error" {
+		t.Fatalf("Reason changed: %+v", re)
+	}
+	var te *TerminalError
+	err := Classify(cases[1].stderr, exitErr)
+	if !errors.As(err, &te) || te.Reason != "private" {
+		t.Fatalf("Reason changed: %+v", te)
+	}
+	// Migration 0014 matched stored error text on this prefix; keep the shape.
+	if !strings.HasPrefix(err.Error(), "ytdlp: terminal (private): ") {
+		t.Fatalf("terminal error text lost its prefix: %q", err.Error())
+	}
+}
+
+// A signed googlevideo URL in stderr must not reach jobs.last_error, the
+// Activity row or an API body with its query string.
+func TestClassify_redactsURLQueries(t *testing.T) {
+	stderr := "ERROR: unable to download https://rr1.googlevideo.com/videoplayback?sig=SECRET: HTTP Error 503"
+	for _, err := range []error{
+		Classify(stderr, fmt.Errorf("exit status 1")),
+		Classify("ERROR: odd https://x.googlevideo.com/v?sig=SECRET", fmt.Errorf("exit status 1")),
+	} {
+		if strings.Contains(err.Error(), "SECRET") {
+			t.Fatalf("query string survived: %q", err.Error())
+		}
+	}
+}
+
 func TestClassify_noErrorNoStderr(t *testing.T) {
 	if err := Classify("", nil); err != nil {
 		t.Fatalf("want nil, got %v", err)

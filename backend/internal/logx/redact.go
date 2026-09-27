@@ -56,12 +56,19 @@ func RedactErr(err error) error {
 		return nil
 	}
 	msg := err.Error()
-	out := queryStringRe.ReplaceAllString(msg, "")
-	out = userinfoRe.ReplaceAllString(out, "://")
+	out := RedactText(msg)
 	if out == msg {
 		return err
 	}
 	return &redacted{msg: out, err: err}
+}
+
+// RedactText strips query strings and userinfo from free text that may embed
+// a URL but is not an error — a subprocess's stderr line, say. Same rules as
+// RedactErr.
+func RedactText(s string) string {
+	s = queryStringRe.ReplaceAllString(s, "")
+	return userinfoRe.ReplaceAllString(s, "://")
 }
 
 // RedactAttr is a slog.HandlerOptions.ReplaceAttr that runs RedactErr on every

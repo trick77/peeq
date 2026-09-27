@@ -645,19 +645,23 @@ func TestDownload_logsStderrFromASuccessfulRun(t *testing.T) {
 	}
 }
 
-// A failing call must not ALSO log its stderr as though nothing was wrong —
-// Classify already carries it into the job's error text, and a debug line
-// saying the same thing under a call that returned an error reads as two
-// separate events.
-func TestDownload_doesNotLogStderrWhenTheCallFails(t *testing.T) {
+// A failing call logs ALL of its stderr at warn, so production (info) sees it.
+// Classify keeps only a 3-line, 600-byte tail for the error text; a failure
+// once logged as the bare "ytdlp: retryable (rate limited or server error)"
+// with no way to tell 429 from 503 or which request failed. It must not reuse
+// the success message: a debug line under a call that returned an error reads
+// as a separate, clean event.
+func TestDownload_logsAllStderrWhenTheCallFails(t *testing.T) {
 	mediaDir := t.TempDir()
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: slog.LevelInfo,
 	}))
 
 	t.Setenv("FAKE_YTDLP_ID", "dQw4w9WgXcQ")
-	t.Setenv("FAKE_YTDLP_STDERR", "ERROR: Video unavailable")
+	t.Setenv("FAKE_YTDLP_STDERR", "WARNING: fragment 1 retried\n"+
+		"WARNING: fetch https://rr1.googlevideo.com/videoplayback?sig=SECRET\n"+
+		"ERROR: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests")
 	t.Setenv("FAKE_YTDLP_EXIT", "1")
 
 	r := New(RunnerConfig{
@@ -674,8 +678,84 @@ func TestDownload_doesNotLogStderrWhenTheCallFails(t *testing.T) {
 	}, nil); err == nil {
 		t.Fatal("want an error")
 	}
-	if strings.Contains(buf.String(), "yt-dlp stderr") {
-		t.Fatalf("a failing call must not log stderr as a success\n%s", buf.String())
+
+	out := buf.String()
+	for _, want := range []string{"fragment 1 retried", "rr1.googlevideo.com/videoplayback", "Unable to download video subtitles"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log missing stderr line %q\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, `level=WARN msg="yt-dlp failed"`); n != 3 {
+		t.Fatalf("got %d warn entries, want one per stderr line\n%s", n, out)
+	}
+	for _, want := range []string{"video_id=dQw4w9WgXcQ", "exit_code=1"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log missing %q\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "SECRET") {
+		t.Fatalf("query string reached the log\n%s", out)
+	}
+	if strings.Contains(out, "yt-dlp stderr") {
+		t.Fatalf("a failing call must not log under the success message\n%s", out)
+	}
+}
+
+// Routine failures stay at debug so they cannot bury real ones: a channel with
+// no /streams tab fails on every scan by design, and the availability recheck
+// probes walled-off videos expecting a TerminalError.
+func TestMetadata_routineFailureLogsAtDebug(t *testing.T) {
+	for name, stderr := range map[string]string{
+		"missing tab": "ERROR: [youtube:tab] UCabc: This channel does not have a streams tab",
+		"terminal":    "ERROR: [youtube] dQw4w9WgXcQ: Join this channel to get access to members-only content",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+				Level: slog.LevelDebug,
+			}))
+			t.Setenv("FAKE_YTDLP_STDERR", stderr)
+			t.Setenv("FAKE_YTDLP_EXIT", "1")
+
+			r := New(RunnerConfig{
+				Bin:            fakeBinPath(t),
+				CookieProvider: func() (string, string) { return "cookie", "valid" },
+				Sleep:          func(context.Context, time.Duration) error { return nil },
+				Logger:         logger,
+			})
+			if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err == nil {
+				t.Fatal("want an error")
+			}
+			out := buf.String()
+			if !strings.Contains(out, `level=DEBUG msg="yt-dlp failed"`) || strings.Contains(out, "level=WARN") {
+				t.Fatalf("routine failure not logged at debug only\n%s", out)
+			}
+		})
+	}
+}
+
+// Metadata takes the buffered branch of execWithProgress, not the streaming
+// one; it runs on every channel scan, so its failures matter most.
+func TestMetadata_logsStderrWhenTheCallFails(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	t.Setenv("FAKE_YTDLP_STDERR", "ERROR: [youtube] dQw4w9WgXcQ: HTTP Error 503: Service Unavailable")
+	t.Setenv("FAKE_YTDLP_EXIT", "1")
+
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+		Logger:         logger,
+	})
+	if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err == nil {
+		t.Fatal("want an error")
+	}
+	out := buf.String()
+	if !strings.Contains(out, `level=WARN msg="yt-dlp failed"`) || !strings.Contains(out, "HTTP Error 503") {
+		t.Fatalf("metadata failure stderr not logged at warn\n%s", out)
 	}
 }
 
