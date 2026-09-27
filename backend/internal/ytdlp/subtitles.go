@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // SummaryDirName is the directory under MediaDir that holds captions fetched
@@ -42,9 +41,8 @@ func SummaryDir(mediaDir, videoID string) string {
 // text and answers "is this worth downloading?" for a fraction of the cost of
 // finding out the other way.
 //
-// The flags below are a strict subset of Download's, and must stay that way;
-// both build --sub-langs with subLangsArg. If the two ever disagree on
-// --sub-langs or --convert-subs, the .vtt read
+// The flags below are a strict subset of Download's, and must stay that way.
+// If the two ever disagree on --sub-langs or --convert-subs, the .vtt read
 // before a download and the one read after it would differ, and the summary
 // carried over from the inbox would describe a transcript the library no
 // longer has.
@@ -89,7 +87,7 @@ func (r *Runner) Subtitles(ctx context.Context, videoID, rawURL, subLang string)
 		"--skip-download",
 		"--write-subs",
 		"--write-auto-subs",
-		"--sub-langs", subLangsArg(subLang),
+		"--sub-langs", subLang,
 		"--convert-subs", "vtt",
 		"--no-playlist",
 		"--socket-timeout", "30",
@@ -103,20 +101,6 @@ func (r *Runner) Subtitles(ctx context.Context, videoID, rawURL, subLang string)
 	}
 
 	return foundSubtitle(r.cfg.MediaDir, dir, videoID)
-}
-
-// subLangsArg is the --sub-langs value for lang: the original-language track
-// only. YouTube serves the plain "<lang>" automatic track as a machine
-// translation and answers HTTP 429 for it every time (yt-dlp/yt-dlp#13831),
-// so a selector that still matches plain "<lang>" ("en.*", "en-orig,en")
-// falls back to it whenever a video has no manual track. Manual tracks are
-// never named "-orig", so a video with manual captions only gets none.
-//
-// The region is dropped: yt-dlp's info.Language is often regional ("en-US"),
-// but YouTube names the track after the base language ("en-orig").
-func subLangsArg(lang string) string {
-	base, _, _ := strings.Cut(lang, "-")
-	return base + "-orig"
 }
 
 // foundSubtitle locates the .vtt yt-dlp wrote into dir and returns it relative

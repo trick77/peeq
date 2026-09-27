@@ -39,7 +39,7 @@ func TestSubtitles_fetchesOnlyCaptions(t *testing.T) {
 	const id = "capsVid0123"
 	dir := SummaryDir(mediaDir, id)
 	r := subsRunner(t, mediaDir, capture,
-		"mkdir -p '"+dir+"' && printf 'WEBVTT\\n' > '"+filepath.Join(dir, id+".en-orig.vtt")+"'")
+		"mkdir -p '"+dir+"' && printf 'WEBVTT\\n' > '"+filepath.Join(dir, id+".en.vtt")+"'")
 
 	rel, err := r.Subtitles(context.Background(), id, "https://youtu.be/"+id, "en")
 	if err != nil {
@@ -53,7 +53,7 @@ func TestSubtitles_fetchesOnlyCaptions(t *testing.T) {
 	line := string(argv)
 	for _, want := range []string{
 		"--skip-download", "--write-subs", "--write-auto-subs",
-		"--sub-langs en-orig ", "--convert-subs vtt", "--no-playlist",
+		"--sub-langs en", "--convert-subs vtt", "--no-playlist",
 	} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("missing arg %q in %q", want, line)
@@ -67,7 +67,7 @@ func TestSubtitles_fetchesOnlyCaptions(t *testing.T) {
 		}
 	}
 
-	want := filepath.Join(SummaryDirName, id, id+".en-orig.vtt")
+	want := filepath.Join(SummaryDirName, id, id+".en.vtt")
 	if rel != want {
 		t.Fatalf("rel = %q, want %q (MediaDir-relative)", rel, want)
 	}
@@ -105,8 +105,8 @@ func TestSubtitles_defaultsTheLanguage(t *testing.T) {
 		t.Fatalf("Subtitles: %v", err)
 	}
 	argv, _ := os.ReadFile(capture)
-	if !strings.Contains(string(argv), "--sub-langs en-orig ") {
-		t.Fatalf("argv = %q, want a defaulted --sub-langs en-orig", string(argv))
+	if !strings.Contains(string(argv), "--sub-langs en") {
+		t.Fatalf("argv = %q, want a defaulted --sub-langs en", string(argv))
 	}
 }
 
@@ -179,20 +179,5 @@ func TestFoundSubtitle(t *testing.T) {
 	}
 	if want := filepath.Join(SummaryDirName, "v1", "v1.en.vtt"); rel != want {
 		t.Fatalf("rel = %q, want %q", rel, want)
-	}
-}
-
-// Only the original-language track. YouTube serves the plain "<lang>" auto
-// track as a machine translation, and that one answers HTTP 429 every time
-// (yt-dlp/yt-dlp#13831); any selector still matching plain "<lang>" falls back
-// to it whenever a video has no manual track.
-func TestSubLangsArg(t *testing.T) {
-	// A regional code (yt-dlp's info.Language, e.g. "en-US") still names the
-	// base-language original track: YouTube calls it "en-orig", never
-	// "en-US-orig".
-	for lang, want := range map[string]string{"en": "en-orig", "de": "de-orig", "en-US": "en-orig", "pt-BR": "pt-orig"} {
-		if got := subLangsArg(lang); got != want {
-			t.Fatalf("subLangsArg(%q) = %q, want %q", lang, got, want)
-		}
 	}
 }
