@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# hack/gen-icons.sh
+# scripts/gen-icons.sh
 #
 # Renders every favicon raster from the three SVG sources, plus the Companion
 # extension's four icons from the same master. Run it by hand after editing any
