@@ -26,7 +26,7 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - `make fe-build` — build the SPA into `backend/web/dist` (embedded by Go)
 - `make build` — full build → `bin/peeq` (CGO_ENABLED=0)
 - `make run` — run locally
-- `make dev` — backend + Vite dev server with `/api` proxy (`hack/dev.sh`)
+- `make dev` — backend + Vite dev server with `/api` proxy (`scripts/dev.sh`)
 - `docker compose up --build` — full stack (copy `.env.example` → `.env` and fill it first)
 
 ## Locked technical choices (do not change without explicit agreement)

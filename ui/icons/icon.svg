@@ -69,7 +69,7 @@
 
   TRANSPARENT CANVAS, not a transparent icon: the chip itself is opaque, and
   only the four corners outside its rx-4 radius are clear, so what lands in a
-  tab is a chip rather than a square tile. That is enough for hack/gen-icons.sh's
+  tab is a chip rather than a square tile. That is enough for scripts/gen-icons.sh's
   opaque=false assertion on icon-192/512, which this file renders.
 
   THIS FILE IS THE TAB ICON AGAIN. It shipped from a separate icon-favicon.svg
@@ -89,7 +89,7 @@
   Mirror any shape change by hand into icon-tile.svg and icon-maskable.svg,
   which are copies and cannot follow on their own, and into SignInMark in
   ui/src/shell/SignIn.tsx, which draws the same geometry off CSS tokens.
-  Regenerate the rasters with hack/gen-icons.sh after touching this file.
+  Regenerate the rasters with scripts/gen-icons.sh after touching this file.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <linearGradient id="og" x1="0" y1="0" x2="0.72" y2="1">
