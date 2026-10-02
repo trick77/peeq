@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"golang.org/x/image/font"
@@ -173,4 +174,18 @@ func abs(v int) int {
 		return -v
 	}
 	return v
+}
+
+// Two unfurlers asking for a card at once is the normal case, and a font.Face
+// is not safe for concurrent use. Run under -race this fails without the lock.
+func TestRender_isSafeToCallConcurrently(t *testing.T) {
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			if _, err := Render(nil, strings.Repeat("A title to wrap ", i+1), "Channel · 10 min"); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
 }

@@ -2150,3 +2150,48 @@ func TestVideosDelete_removeFailure_stillTombstones(t *testing.T) {
 		t.Fatalf("log should carry the orphaned file, got: %s", logs.String())
 	}
 }
+
+// The Library grid reads a card's worth of each video and the Player fetches
+// its own by id, so the list must not carry the description or the analysis
+// text: on a real library those were most of a multi-megabyte response.
+func TestVideosList_returnsCardsNotWholeVideos(t *testing.T) {
+	deps, _ := videosTestDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "T", ChannelID: "UCx", Description: "a long description"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: "v1.mp4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Videos.SetSummary("v1", "the summary", `[{"title":"c","start":1}]`, `["k"]`); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Videos.SetThumbnail("v1", "image/webp", []byte("img")); err != nil {
+		t.Fatal(err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos", nil)
+	var list []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list) != 1 {
+		t.Fatalf("list = %s (err %v), want one video", rec.Body.String(), err)
+	}
+	got := list[0]
+	for _, absent := range []string{"description", "summary", "chapters", "key_points", "yt_tags", "sponsorblock_segments", "url"} {
+		if _, ok := got[absent]; ok {
+			t.Errorf("list row carries %q; the grid does not read it", absent)
+		}
+	}
+	for key, want := range map[string]any{
+		"id": "v1", "title": "T", "channel_id": "UCx", "status": "downloaded",
+		"has_media": true, "has_thumbnail": true, "watched": false, "favorite": false,
+		"category": "uncategorized",
+	} {
+		if got[key] != want {
+			t.Errorf("list row %q = %#v, want %#v", key, got[key], want)
+		}
+	}
+	if v, _ := got["thumbnail_version"].(string); v == "" {
+		t.Errorf("list row has no thumbnail_version: %v", got)
+	}
+}

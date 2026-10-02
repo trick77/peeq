@@ -87,6 +87,10 @@ type Subscription struct {
 	// as "" here, so callers must treat empty as "not scheduled" rather than as
 	// an instant.
 	NextMetaRefreshAt string
+	// StreamsMissingAt is when a scan was last told this channel has no
+	// /streams tab, or "" when the tab answered or was never asked for. The
+	// scan skips the tab while this is recent — see migration 0033.
+	StreamsMissingAt string
 }
 
 // ListItem is a channel joined with its (optional) subscription state, plus
@@ -223,13 +227,8 @@ WHERE v.channel_id = ?`, channelID)
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate chunk rowids for channel: %w", err)
 	}
-	for _, id := range chunkIDs {
-		if _, err := tx.Exec(`DELETE FROM vec_chunks WHERE rowid = ?`, id); err != nil {
-			return fmt.Errorf("delete vec_chunks row %d: %w", id, err)
-		}
-		if _, err := tx.Exec(`DELETE FROM fts_chunks WHERE rowid = ?`, id); err != nil {
-			return fmt.Errorf("delete fts_chunks row %d: %w", id, err)
-		}
+	if err := rag.DeleteChunksTx(context.Background(), tx, chunkIDs); err != nil {
+		return fmt.Errorf("delete vec/fts rows for channel: %w", err)
 	}
 
 	if _, err := tx.Exec(`DELETE FROM videos WHERE channel_id = ?`, channelID); err != nil {
@@ -365,9 +364,9 @@ func (s *Store) Get(id string) (*Channel, error) {
 // Shared so a reader that joins channels (the metadata claims) cannot drift
 // from Get's column order, which scanChannel depends on.
 const channelColumns = `c.id, c.handle, c.name, c.description,
-       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i
+       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i INDEXED BY idx_channel_images_version
           WHERE i.channel_id = c.id AND i.kind = 'avatar') AS avatar_version,
-       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i
+       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i INDEXED BY idx_channel_images_version
           WHERE i.channel_id = c.id AND i.kind = 'banner') AS banner_version,
        c.subscriber_count, c.verified,
        COALESCE(c.resolved_at, ''), c.resolve_ok, COALESCE(c.added_at, ''), c.first_seen_at,
@@ -444,9 +443,9 @@ WITH lv AS (
   GROUP BY channel_id
 )
 SELECT c.id, c.handle, c.name, c.description,
-       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i
+       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i INDEXED BY idx_channel_images_version
           WHERE i.channel_id = c.id AND i.kind = 'avatar'),
-       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i
+       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i INDEXED BY idx_channel_images_version
           WHERE i.channel_id = c.id AND i.kind = 'banner'),
        COALESCE(c.resolved_at, ''), COALESCE(c.added_at, ''), c.first_seen_at,
        s.channel_id IS NOT NULL AS subscribed,
@@ -667,7 +666,8 @@ UPDATE channels SET keep_reads = ? WHERE id = ? RETURNING keep_reads`, on, chann
 // plain SELECT is sufficient — no atomic claim (state flip) is needed.
 func (s *Store) ClaimDue(now string) (*Subscription, error) {
 	row := s.db.QueryRowContext(context.Background(), `
-SELECT channel_id, autodownload, format_override, baselined_at, last_scanned_at, next_scan_at, created_at, scan_requested_at
+SELECT channel_id, autodownload, format_override, baselined_at, last_scanned_at, next_scan_at, created_at, scan_requested_at,
+       COALESCE(streams_missing_at, '')
 FROM subscriptions
 WHERE next_scan_at <= ?
 ORDER BY next_scan_at ASC
@@ -678,6 +678,7 @@ LIMIT 1`, now)
 	err := row.Scan(
 		&sub.ChannelID, &sub.Autodownload, &sub.FormatOverride,
 		&baselinedAt, &lastScannedAt, &sub.NextScanAt, &sub.CreatedAt, &scanRequestedAt,
+		&sub.StreamsMissingAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -689,6 +690,20 @@ LIMIT 1`, now)
 	sub.LastScannedAt = lastScannedAt.String
 	sub.ScanRequestedAt = scanRequestedAt.String
 	return &sub, nil
+}
+
+// SetStreamsMissing records when a scan was told the channel has no /streams
+// tab; at "" clears it, for a tab that answered.
+func (s *Store) SetStreamsMissing(channelID, at string) error {
+	var v any
+	if at != "" {
+		v = at
+	}
+	if _, err := s.db.ExecContext(context.Background(),
+		`UPDATE subscriptions SET streams_missing_at = ? WHERE channel_id = ?`, v, channelID); err != nil {
+		return fmt.Errorf("set streams missing %s: %w", channelID, err)
+	}
+	return nil
 }
 
 // DueChannel is one upcoming scheduled channel task for the Activity page's

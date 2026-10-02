@@ -307,6 +307,22 @@ describe("Channels", () => {
     await user.click(screen.getByRole("button", { name: /^All\b/ }));
     expect(await screen.findByText("Subbed Channel")).toBeInTheDocument();
     expect(listChannels).toHaveBeenCalledTimes(2);
+    // The retry worked, so the failure is no longer true — and while the line
+    // stayed up, every later chip click refetched the list as another retry.
+    expect(screen.queryByText("down")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Subscribed\b/ }));
+    expect(listChannels).toHaveBeenCalledTimes(2);
+  });
+
+  it("a successful list load leaves someone else's error on screen", async () => {
+    // The error line is shared with the row actions and the tombstone fetch.
+    // A list that loads fine has nothing to say about those.
+    vi.mocked(listAutoUnsubscribedChannels).mockRejectedValue(
+      new Error("tombstones down"),
+    );
+    render(<Channels />);
+    expect(await screen.findByText("Subbed Channel")).toBeInTheDocument();
+    expect(await screen.findByText("tombstones down")).toBeInTheDocument();
   });
 
   it("refetches when a scan lands, and not for a scan already in the buffer", async () => {

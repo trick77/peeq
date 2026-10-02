@@ -1,16 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { VideoCard } from "../components/VideoCard";
 import { PillStrip } from "../components/PillStrip";
 import { SearchField } from "../components/SearchField";
-import {
-  listVideos,
-  getVideoCounts,
-  setFavorite,
-  setWatched,
-  redownload,
-} from "../api";
+import { listVideos, getVideoCounts, redownload } from "../api";
+import { useVideoToggles } from "../hooks/useVideoToggles";
+import { useStableCallback } from "../hooks/useStableCallback";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useSettings } from "../settingsStore";
-import type { Video, VideoCounts, VideoFilter, VideoSort } from "../api/types";
+import type {
+  LibraryVideo,
+  VideoCounts,
+  VideoFilter,
+  VideoSort,
+} from "../api/types";
 import { CATEGORIES } from "../categories";
 import { controlClass } from "../ui";
 
@@ -74,7 +76,7 @@ export const INBOX_SORT_OPTIONS = SORT_OPTIONS.filter(
 // reaches this function to be judged. Narrowing it would be equivalent, not a
 // fix — left alone because the extra states document what the filter means
 // ("play-eligible") independently of what the server happens to send.
-function matchesFilter(v: Video, filter: VideoFilter): boolean {
+function matchesFilter(v: LibraryVideo, filter: VideoFilter): boolean {
   switch (filter) {
     case "unwatched":
       // "Unwatched" means never opened: play-eligible, not watched, and the
@@ -160,9 +162,10 @@ export function Library({
   const [filter, setFilter] = useState<VideoFilter>("unwatched");
   const [category, setCategory] = useState<string>("all");
   const [sort, setSort] = useState<VideoSort>("added_newest");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  // Debounced so typing "abyss" fires one request, not five.
+  const debouncedQuery = useDebouncedValue(search, 250, "");
   const [counts, setCounts] = useState<VideoCounts | null>(null);
-  const [videos, setVideos] = useState<Video[]>([]);
+  const [videos, setVideos] = useState<LibraryVideo[]>([]);
   const { settings } = useSettings();
   const [error, setError] = useState<string | null>(null);
   // Each list has exactly one fetching effect, and the queue's refetch is a
@@ -211,12 +214,6 @@ export function Library({
     // queueSignal: a download finishing changes the numbers — see below.
   }, [debouncedQuery, countsTick, queueSignal]);
 
-  // Debounce the search box so typing "abyss" fires one request, not five.
-  useEffect(() => {
-    const id = setTimeout(() => setDebouncedQuery(search), 250);
-    return () => clearTimeout(id);
-  }, [search]);
-
   // The chip's own filtered list, refetched whenever the active chip,
   // search query, or sort changes.
   useEffect(() => {
@@ -261,12 +258,6 @@ export function Library({
     }
   }, [filter, counts, debouncedQuery]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function applyLocalUpdate(id: string, patch: Partial<Video>) {
-    setVideos((prev) =>
-      prev.map((v) => (v.id === id ? { ...v, ...patch } : v)),
-    );
-  }
-
   // A toggle moves a video between chips, so the numbers are asked for again
   // once the server has taken it. Not adjusted by hand: the server owns the
   // definition of every chip (see matchesFilter's note), and a wrong guess
@@ -276,46 +267,18 @@ export function Library({
     setCountsTick((t) => t + 1);
   }
 
-  // Both toggles roll back on failure AND say so: a card that silently flips
-  // and flips back reads as a broken button, and the user's next move is to
-  // click it again. The Archive tab and the Player report the same failures;
-  // this was the last of the three that didn't.
-  async function handleToggleFavorite(id: string) {
-    const current = videos.find((v) => v.id === id);
-    if (!current) return;
-    const next = !current.favorite;
-    applyLocalUpdate(id, { favorite: next });
-    try {
-      await setFavorite(id, next);
-      refreshCounts();
-    } catch (e) {
-      applyLocalUpdate(id, { favorite: current.favorite });
-      setError((e as Error).message);
-    }
-  }
+  const { toggleFavorite, toggleWatched } = useVideoToggles(videos, setVideos, {
+    onError: setError,
+    onSettled: refreshCounts,
+  });
 
-  async function handleToggleWatched(id: string) {
-    const current = videos.find((v) => v.id === id);
-    if (!current) return;
-    const next = !current.watched;
-    // The API answers with the watched flag alone, so the zeroed resume
-    // position has to be mirrored here: without it, un-watching a card would
-    // make the progress bar appear (VideoCard only draws it when !watched)
-    // still showing the position the server has just cleared.
-    applyLocalUpdate(id, { watched: next, resume_position_seconds: 0 });
-    try {
-      await setWatched(id, next);
-      refreshCounts();
-    } catch (e) {
-      applyLocalUpdate(id, {
-        watched: current.watched,
-        resume_position_seconds: current.resume_position_seconds,
-      });
-      setError((e as Error).message);
-    }
-  }
-
-  async function handleRedownload(id: string) {
+  // Stable, like the toggles: VideoCard is memoised, and a handler made fresh
+  // on every render would defeat that for every card in the grid.
+  const onQueuedRef = useRef(onQueued);
+  onQueuedRef.current = onQueued;
+  const openVideo = useStableCallback(onOpenVideo);
+  const openChannel = useStableCallback((id: string) => onOpenChannel?.(id));
+  const handleRedownload = useCallback(async (id: string) => {
     try {
       await redownload(id);
       // Only tell App — do NOT refetch here. The video is 'queued' now, which
@@ -328,11 +291,11 @@ export function Library({
       // would resolve last, claim the newest epoch, and paint the grid with the
       // old filter's rows under the new chip. Deferring to the queue effect
       // reads the live filter and also drops the redundant second refetch.
-      onQueued?.();
+      onQueuedRef.current?.();
     } catch (e) {
       setError((e as Error).message);
     }
-  }
+  }, []);
 
   const retentionDays = settings?.retention_days ?? 14;
 
@@ -348,16 +311,16 @@ export function Library({
   // categories that actually exist under the current top-level filter.
   const catCounts = counts?.categories[filter] ?? {};
 
-  function renderCard(video: Video) {
+  function renderCard(video: LibraryVideo) {
     return (
       <VideoCard
         key={video.id}
         video={video}
         retentionDays={retentionDays}
-        onOpen={onOpenVideo}
-        onToggleFavorite={handleToggleFavorite}
-        onToggleWatched={handleToggleWatched}
-        onOpenChannel={onOpenChannel}
+        onOpen={openVideo}
+        onToggleFavorite={toggleFavorite}
+        onToggleWatched={toggleWatched}
+        onOpenChannel={onOpenChannel ? openChannel : undefined}
         onRedownload={handleRedownload}
       />
     );

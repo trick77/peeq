@@ -1,10 +1,11 @@
+import { memo } from "react";
 import type { MouseEvent } from "react";
 import { Icon } from "../icons";
 import { isSelectingText } from "../selection";
 import { Button } from "../ui";
 import { ThumbFill } from "./ThumbFill";
 import { ChannelLink } from "./ChannelLink";
-import type { Video } from "../api/types";
+import type { LibraryVideo } from "../api/types";
 import {
   daysSince,
   formatAgo,
@@ -19,7 +20,12 @@ import { CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";
 // blocks. Pure presentational: all data comes in as props, all mutation
 // (favorite/watched/open) goes out via callbacks so Library owns the
 // actual API calls and can update its list optimistically.
-export function VideoCard({
+//
+// Memoised: a grid holds hundreds of these, and without it every one re-ran on
+// any render of the view (a queue poll, a keystroke in the search box). The
+// callbacks it is handed must therefore keep their identity — see
+// useVideoToggles.
+export const VideoCard = memo(function VideoCard({
   video,
   retentionDays,
   onOpen,
@@ -28,7 +34,7 @@ export function VideoCard({
   onRedownload,
   onOpenChannel,
 }: {
-  video: Video;
+  video: LibraryVideo;
   /** settings.retention_days — needed to compute "Expires in N days". */
   retentionDays: number;
   onOpen: (id: string) => void;
@@ -125,17 +131,6 @@ export function VideoCard({
         <button
           type="button"
           className="thumb-btn"
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "block",
-            width: "100%",
-            height: "100%",
-            padding: 0,
-            border: "none",
-            background: "none",
-            cursor: "pointer",
-          }}
           onClick={() => onOpen(video.id)}
           aria-label={`Open ${openLabel}`}
         >
@@ -289,14 +284,14 @@ export function VideoCard({
       />
     </article>
   );
-}
+});
 
 function Lifecycle({
   video,
   retentionDays,
   onRedownload,
 }: {
-  video: Video;
+  video: LibraryVideo;
   retentionDays: number;
   onRedownload?: (id: string) => void;
 }) {
@@ -363,7 +358,7 @@ function Redownload({
   video,
   onRedownload,
 }: {
-  video: Video;
+  video: LibraryVideo;
   onRedownload?: (id: string) => void;
 }) {
   if (!onRedownload) return null;

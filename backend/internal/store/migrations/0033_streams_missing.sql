@@ -1,0 +1,16 @@
+-- Remember that a channel has no /streams tab, so the scan stops asking.
+--
+-- Every scan lists a channel twice: /videos and /streams, because YouTube keeps
+-- uploads and stream VODs apart. Each tab is its own yt-dlp call and its own
+-- 20-35 second throttle slot. Most channels have never streamed and have no
+-- /streams tab at all, so for them the second call bought a slot's wait and an
+-- error saying so, on every scan, forever.
+--
+-- streams_missing_at is when a scan was last told the tab does not exist. While
+-- it is recent the scan skips the call; once it is a week old the scan asks
+-- again, which is how a channel that starts streaming is noticed. A tab that
+-- answers clears it. NULL (every existing row) means "ask", so nothing changes
+-- until a scan learns otherwise.
+--
+-- The baseline pass never consults it: that listing must be complete.
+ALTER TABLE subscriptions ADD COLUMN streams_missing_at TEXT;

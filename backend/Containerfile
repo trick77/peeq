@@ -1,12 +1,14 @@
 # syntax=docker/dockerfile:1
 
-# --- Stage 1: build the SPA ---
+# --- Stage 1: build the SPA --- (Node major matches ui/.nvmrc, which CI reads)
 FROM node:26-alpine AS ui
 WORKDIR /app/ui
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci
 COPY ui/ ./
-RUN npm run build
+# The bundle only. `npm run build` type-checks the app and its tests first, and
+# CI has already done both on the commit this image is built from.
+RUN npm run build:bundle
 
 # --- Stage 2: build the Go API binary (pure-Go, no cgo) with the embedded SPA ---
 FROM golang:1.27-alpine AS build
@@ -40,7 +42,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Fetch the yt-dlp standalone binary into /usr/local/bin. /data/bin (BACKEND_YTDLP_DIR)
 # is a separate, writable volume used later for self-update of yt-dlp at runtime
 # without needing to rebuild the image.
-RUN curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+# "latest" is resolved when this layer is BUILT, and the layer cache then keeps
+# that answer for as long as the instruction text is unchanged — which was
+# forever. YTDLP_REFRESH is the cache key: the release workflow passes the ISO
+# week, so the image picks up a new yt-dlp at most a week late. (peeq also
+# updates yt-dlp at runtime into its data directory; this is the copy a fresh
+# container starts with.)
+ARG YTDLP_REFRESH=unset
+RUN echo "yt-dlp layer: ${YTDLP_REFRESH}" \
+    && curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp
 # yt-dlp must execute YouTube's player JavaScript to solve the sig and n
 # challenges. Without a runtime it falls back to a deprecated Python

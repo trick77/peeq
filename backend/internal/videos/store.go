@@ -235,7 +235,7 @@ ON CONFLICT(id) DO UPDATE SET
 }
 
 // videoColumns is the column list shared by every whole-Video reader (Get,
-// List, NextUnclassified, SweepCandidates), in the order scanVideo expects.
+// GetMany, NextUnclassified, SweepCandidates), in the order scanVideo expects.
 // Columns are qualified "v." because these queries LEFT JOIN the channels
 // table (aliased "ch") to resolve the display channel name — see below.
 //
@@ -262,7 +262,7 @@ const videoColumns = `v.id, v.url, v.title, v.channel_id,
 	COALESCE(NULLIF(v.channel_name, ''), NULLIF(ch.name, ''), v.channel_id) AS channel_name,
 	v.duration_seconds, v.published_at,
 	v.description,
-	(SELECT COALESCE(strftime('%s', t.updated_at), '0') FROM video_thumbnails t WHERE t.video_id = v.id) AS thumbnail_version,
+	(SELECT COALESCE(strftime('%s', t.updated_at), '0') FROM video_thumbnails t INDEXED BY idx_video_thumbnails_version WHERE t.video_id = v.id) AS thumbnail_version,
 	v.media_path, v.filesize_bytes, v.format_used, v.requested_format,
 	v.availability, v.status, v.error_message, v.sponsorblock_segments,
 	v.watched, v.watched_at, v.resume_position_seconds, v.state_version, v.favorite, v.favorited_at,
@@ -326,6 +326,45 @@ func scanVideo(rs rowScanner) (Video, error) {
 	return v, nil
 }
 
+// cardColumns is what a grid card shows of a video, in the order scanCard
+// expects. Every column here, and every column List filters or sorts on, is in
+// idx_videos_cards: adding one means adding it there too (the plan test fails
+// otherwise). It is deliberately not videoColumns: the description
+// and the analysis text are most of a row's bytes, and a list that carried them
+// for every video shipped megabytes the grid never read.
+const cardColumns = `v.id, v.title, v.channel_id,
+	COALESCE(NULLIF(v.channel_name, ''), NULLIF(ch.name, ''), v.channel_id) AS channel_name,
+	v.duration_seconds, v.published_at,
+	(SELECT COALESCE(strftime('%s', t.updated_at), '0') FROM video_thumbnails t INDEXED BY idx_video_thumbnails_version WHERE t.video_id = v.id) AS thumbnail_version,
+	v.media_path, v.status, v.watched, v.watched_at, v.resume_position_seconds,
+	v.favorite, v.downloaded_at, v.category`
+
+// scanCard scans one row in the cardColumns order. Every Video field outside
+// that list is left at its zero value.
+func scanCard(rs rowScanner) (Video, error) {
+	var v Video
+	var duration sql.NullInt64
+	var publishedAt, watchedAt, downloadedAt, thumbnailVersion sql.NullString
+	var watched, favorite int
+	err := rs.Scan(
+		&v.ID, &v.Title, &v.ChannelID, &v.ChannelName, &duration, &publishedAt,
+		&thumbnailVersion, &v.MediaPath, &v.Status, &watched, &watchedAt, &v.ResumePositionSeconds,
+		&favorite, &downloadedAt, &v.Category,
+	)
+	if err != nil {
+		return Video{}, err
+	}
+	v.DurationSeconds = duration.Int64
+	v.PublishedAt = publishedAt.String
+	v.HasThumbnail = thumbnailVersion.Valid
+	v.ThumbnailVersion = thumbnailVersion.String
+	v.Watched = watched != 0
+	v.WatchedAt = watchedAt.String
+	v.Favorite = favorite != 0
+	v.DownloadedAt = downloadedAt.String
+	return v, nil
+}
+
 // Get returns the video row for id, or (nil, nil) if there is none.
 func (s *Store) Get(id string) (*Video, error) {
 	row := s.db.QueryRowContext(context.Background(),
@@ -347,11 +386,32 @@ func (s *Store) Get(id string) (*Video, error) {
 const getManyChunk = 500
 
 // GetMany reads the given videos in a few statements instead of one Get per
-// id, for the list endpoints that join job rows to titles. Ids with no row
-// are absent from the map; duplicates and an empty input cost nothing.
+// id. Ids with no row are absent from the map; duplicates and an empty input
+// cost nothing.
 func (s *Store) GetMany(ids []string) (map[string]*Video, error) {
+	return s.readMany(ids, videoColumns, scanVideo)
+}
+
+// Titles is GetMany for the list endpoints that join job rows to a title and
+// a channel: only ID, Title, ChannelID and ChannelName are set. Those columns
+// sit at the front of the row, so the read never follows a video's text into
+// its overflow pages the way a whole-row read does.
+func (s *Store) Titles(ids []string) (map[string]*Video, error) {
+	return s.readMany(ids, titleColumns, scanTitle)
+}
+
+const titleColumns = `v.id, v.title, v.channel_id,
+	COALESCE(NULLIF(v.channel_name, ''), NULLIF(ch.name, ''), v.channel_id) AS channel_name`
+
+func scanTitle(rs rowScanner) (Video, error) {
+	var v Video
+	err := rs.Scan(&v.ID, &v.Title, &v.ChannelID, &v.ChannelName)
+	return v, err
+}
+
+func (s *Store) readMany(ids []string, columns string, scan func(rowScanner) (Video, error)) (map[string]*Video, error) {
 	out := make(map[string]*Video, len(ids))
-	uniq := make([]string, 0, len(ids))
+	uniq := make([]any, 0, len(ids))
 	seen := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		if id != "" && !seen[id] {
@@ -360,36 +420,34 @@ func (s *Store) GetMany(ids []string) (map[string]*Video, error) {
 		}
 	}
 	for start := 0; start < len(uniq); start += getManyChunk {
-		end := min(start+getManyChunk, len(uniq))
-		chunk := uniq[start:end]
-		args := make([]any, len(chunk))
-		marks := make([]string, len(chunk))
-		for i, id := range chunk {
-			args[i] = id
-			marks[i] = "?"
+		chunk := uniq[start:min(start+getManyChunk, len(uniq))]
+		if err := s.readChunk(chunk, columns, scan, out); err != nil {
+			return nil, err
 		}
-		// The only non-constant spliced in is the placeholder list; every id
-		// travels as a bound argument.
-		query := "SELECT " + videoColumns + " " + videoFrom + " WHERE v.id IN (" + strings.Join(marks, ",") + ")" //nolint:gosec // placeholders only
-		rows, err := s.db.QueryContext(context.Background(), query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("get videos: %w", err)
-		}
-		for rows.Next() {
-			v, err := scanVideo(rows)
-			if err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("get videos: scan: %w", err)
-			}
-			out[v.ID] = &v
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("get videos: iterate: %w", err)
-		}
-		_ = rows.Close()
 	}
 	return out, nil
+}
+
+func (s *Store) readChunk(ids []any, columns string, scan func(rowScanner) (Video, error), out map[string]*Video) error {
+	// The only non-constant spliced in is the placeholder list; every id
+	// travels as a bound argument.
+	query := "SELECT " + columns + " " + videoFrom + " WHERE v.id IN (" + store.Placeholders(len(ids)) + ")" //nolint:gosec // placeholders only
+	rows, err := s.db.QueryContext(context.Background(), query, ids...)
+	if err != nil {
+		return fmt.Errorf("get videos: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return fmt.Errorf("get videos: scan: %w", err)
+		}
+		out[v.ID] = &v
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("get videos: iterate: %w", err)
+	}
+	return nil
 }
 
 // ListOptions narrows videos.Store.List. Every field is optional; the zero
@@ -525,9 +583,11 @@ func queryCond(query string) (cond string, arg any, ok bool) {
 	return `v.title LIKE ? ESCAPE '\'`, "%" + escapeLike(q) + "%", true
 }
 
-// List returns videos matching opts, ordered by opts.Sort. The status,
-// category, search, and channel dimensions are orthogonal: all that are set
-// apply together.
+// List returns the videos matching opts as CARDS, ordered by opts.Sort: only
+// the cardColumns fields are set, because every caller draws a grid and a grid
+// row never shows the rest (Get is the whole-video read). The status, category,
+// search, and channel dimensions are orthogonal: all that are set apply
+// together.
 //   - Filter: "unwatched" (downloaded and not watched), "watched" (seen and
 //     still here — tombstoned rows are excluded), "favorites", or anything
 //     else/"" (no further constraint). Every one of them also applies
@@ -550,6 +610,42 @@ func queryCond(query string) (cond string, arg any, ok bool) {
 //     for rows written before channel ids were recorded, an exact
 //     channel_name match on rows with an empty channel_id
 func (s *Store) List(opts ListOptions) ([]Video, error) {
+	query, args := listQuery(opts)
+	rows, err := s.db.QueryContext(context.Background(), query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []Video{}
+	for rows.Next() {
+		v, err := scanCard(rows)
+		if err != nil {
+			return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
+	}
+	return out, nil
+}
+
+// listFrom is videoFrom with the videos side pinned to idx_videos_cards (0032),
+// which holds every column List selects, filters or sorts on. The grid is then
+// answered from the index alone. That matters because of where a row's small
+// columns live: status, watched, category and the rest sit behind the
+// description and the analysis text, so reading them from the table follows
+// each video's overflow pages, a random read apiece on a cold cache.
+//
+// Pinned rather than left to the planner, which has no statistics (peeq never
+// runs ANALYZE) and would take idx_videos_channel_status for a channel-scoped
+// list and go back to the table for the rest.
+const listFrom = `FROM videos v INDEXED BY idx_videos_cards LEFT JOIN channels ch ON ch.id = v.channel_id`
+
+// listQuery builds List's statement. A function of its own so the query-plan
+// test can hold every filter and sort to the index.
+func listQuery(opts ListOptions) (string, []any) {
 	conds := []string{notInFlight}
 	args := []any{}
 	if c := filterCond(opts.Filter); c != "" {
@@ -581,27 +677,7 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 		order = sortClauses["newest"]
 	}
 
-	rows, err := s.db.QueryContext(context.Background(),
-		"SELECT "+videoColumns+" "+videoFrom+" "+where+" ORDER BY "+order,
-		args...,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	out := []Video{}
-	for rows.Next() {
-		v, err := scanVideo(rows)
-		if err != nil {
-			return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
-		}
-		out = append(out, v)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
-	}
-	return out, nil
+	return "SELECT " + cardColumns + " " + listFrom + " " + where + " ORDER BY " + order, args
 }
 
 // CountFilters are the status chips the Library shows, in row order. Counts
@@ -623,59 +699,73 @@ type Counts struct {
 	Categories map[string]map[string]int `json:"categories"`
 }
 
-// Counts runs the same WHERE clauses List does, once per chip, and returns only
-// the numbers. It exists so the Library can populate its chips without loading
-// every row of the library for a client-side count.
+// Counts answers every chip in one pass: one row per category, with a
+// conditional sum per chip built from the same filterCond List uses, so a
+// chip's number and the grid it opens cannot disagree. It exists so the Library
+// can populate its chips without loading every row of the library.
+//
+// One statement on purpose. A query per chip walked the table five times, and
+// the columns it filters on sit behind the description and analysis text in the
+// row; idx_videos_counts (0032) covers this one, so it reads no row at all.
 func (s *Store) Counts(opts CountOptions) (Counts, error) {
 	out := Counts{
 		Filters:    make(map[string]int, len(CountFilters)),
 		Categories: make(map[string]map[string]int, len(CountFilters)),
 	}
 	for _, f := range CountFilters {
-		cats, total, err := s.countByCategory(f, opts.Query)
-		if err != nil {
-			return Counts{}, err
+		out.Filters[f] = 0
+		out.Categories[f] = map[string]int{}
+	}
+	query, args := countsQuery(opts.Query)
+	rows, err := s.db.QueryContext(context.Background(), query, args...)
+	if err != nil {
+		return Counts{}, fmt.Errorf("count videos: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var cat string
+	ns := make([]int, len(CountFilters))
+	dest := []any{&cat}
+	for i := range ns {
+		dest = append(dest, &ns[i])
+	}
+	for rows.Next() {
+		if err := rows.Scan(dest...); err != nil {
+			return Counts{}, fmt.Errorf("count videos: %w", err)
 		}
-		out.Filters[f] = total
-		out.Categories[f] = cats
+		for i, f := range CountFilters {
+			out.Filters[f] += ns[i]
+			if cat != "" && ns[i] > 0 {
+				out.Categories[f][cat] = ns[i]
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Counts{}, fmt.Errorf("count videos: %w", err)
 	}
 	return out, nil
 }
 
-func (s *Store) countByCategory(filter, query string) (map[string]int, int, error) {
-	conds := []string{notInFlight}
-	args := []any{}
-	if c := filterCond(filter); c != "" {
-		conds = append(conds, c)
+// countsQuery builds Counts' statement: the category, then one column per
+// CountFilters entry in that order. A function of its own so the query-plan test
+// can pin the exact statement to idx_videos_counts.
+func countsQuery(query string) (string, []any) {
+	var b strings.Builder
+	b.WriteString("SELECT COALESCE(v.category, '')")
+	for _, f := range CountFilters {
+		if c := filterCond(f); c != "" {
+			b.WriteString(", COALESCE(SUM(CASE WHEN " + c + " THEN 1 ELSE 0 END), 0)")
+		} else {
+			b.WriteString(", COUNT(*)")
+		}
 	}
+	b.WriteString(" FROM videos v WHERE " + notInFlight)
+	args := []any{}
 	if c, arg, ok := queryCond(query); ok {
-		conds = append(conds, c)
+		b.WriteString(" AND " + c)
 		args = append(args, arg)
 	}
-	const countHead = "SELECT COALESCE(v.category, ''), COUNT(*) FROM videos v WHERE "
-	countQuery := countHead + strings.Join(conds, " AND ") + " GROUP BY v.category" //nolint:gosec // only fixed SQL structure is interpolated (literal conditions, a ?-placeholder list, or a closed switch); every value is a bound ? parameter
-	rows, err := s.db.QueryContext(context.Background(), countQuery, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("count videos (%s): %w", filter, err)
-	}
-	defer func() { _ = rows.Close() }()
-	cats := map[string]int{}
-	total := 0
-	for rows.Next() {
-		var cat string
-		var n int
-		if err := rows.Scan(&cat, &n); err != nil {
-			return nil, 0, fmt.Errorf("count videos (%s): %w", filter, err)
-		}
-		total += n
-		if cat != "" {
-			cats[cat] = n
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("count videos (%s): %w", filter, err)
-	}
-	return cats, total, nil
+	b.WriteString(" GROUP BY v.category")
+	return b.String(), args
 }
 
 // ChannelRef is one channel as it appears in the library, for resolving a name
@@ -694,17 +784,24 @@ type ChannelRef struct {
 // nothing. A channel is real, for this purpose, when something of its is on the
 // shelf.
 //
+// The name is resolved the way videoColumns resolves it: the row's own
+// channel_name, else the channels cache. Only the add-by-URL path writes the
+// former, so reading it alone left out every channel whose videos arrived
+// through a scan — which is to say every subscribed one.
+//
 // The handle comes from `channels` by an outer join — same database, and the
 // alternative is making the caller stitch two lists together to answer one
 // question. Rows recorded before channel ids were carry an empty id and are
 // still returned, because the filter has a by-name arm for exactly them.
 func (s *Store) ChannelDirectory() ([]ChannelRef, error) {
 	rows, err := s.db.QueryContext(context.Background(), `
-		SELECT DISTINCT v.channel_id, v.channel_name, COALESCE(c.handle, '')
+		SELECT DISTINCT v.channel_id,
+		       COALESCE(NULLIF(v.channel_name, ''), c.name) AS name,
+		       COALESCE(c.handle, '')
 		FROM videos v
 		LEFT JOIN channels c ON c.id = v.channel_id
-		WHERE v.channel_name <> ''
-		ORDER BY v.channel_name`)
+		WHERE COALESCE(NULLIF(v.channel_name, ''), NULLIF(c.name, '')) IS NOT NULL
+		ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("channel directory: %w", err)
 	}

@@ -16,6 +16,7 @@ import (
 	"image/draw"
 	"image/jpeg"
 	"strings"
+	"sync"
 
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/font"
@@ -48,6 +49,9 @@ var (
 	subFace   = mustFace(goregular.TTF, subtitlePx)
 )
 
+// renderMu guards the shared faces; see Render.
+var renderMu sync.Mutex
+
 // mustFace parses one of the bundled Go font faces. peeq's own typefaces ship as
 // woff2 only (ui/src/fonts), which opentype.Parse cannot read — so the card
 // carries the brand through its colors and layout, not its typeface.
@@ -67,7 +71,14 @@ func mustFace(ttf []byte, px float64) font.Face {
 // Render composes the card and returns JPEG bytes. thumb may be nil (no
 // thumbnail on disk, or an undecodable one), in which case the text block is
 // centered on the empty canvas rather than sitting under a hole.
+//
+// One render at a time: titleFace and subFace are shared, and a font.Face is
+// not safe for concurrent use. Serialising also keeps a burst of unfurlers
+// from scaling and encoding several 1200px images at once.
 func Render(thumb image.Image, title, subtitle string) ([]byte, error) {
+	renderMu.Lock()
+	defer renderMu.Unlock()
+
 	img := image.NewRGBA(image.Rect(0, 0, canvas, canvas))
 	draw.Draw(img, img.Bounds(), image.NewUniform(colBG), image.Point{}, draw.Src)
 

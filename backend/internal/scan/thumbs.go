@@ -86,7 +86,7 @@ func (s *Scheduler) prefetchPendingThumbnail(ctx context.Context, j thumbJob) {
 	if err != nil || entry == nil || entry.State != channelvideos.StatePending {
 		return
 	}
-	if have, err := s.d.Ledger.GetThumbnail(j.videoID); err == nil && have != nil {
+	if have, err := s.d.Ledger.HasThumbnail(j.videoID); err == nil && have {
 		return
 	}
 	fctx, cancel := context.WithTimeout(ctx, pendingThumbPrefetchTimeout)

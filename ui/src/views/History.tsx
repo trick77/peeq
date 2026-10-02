@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { parseSqlUTC } from "../format";
 import { listActivity, type ActivityEvent } from "../api";
 import { SearchField } from "../components/SearchField";
@@ -169,7 +170,7 @@ export function History({
   const [filter, setFilter] = useState("all");
   // Debounced like the Library's box, and for the same reason: typing "abyss"
   // should fire one request, not five.
-  const [debouncedSearch, setDebouncedSearch] = useState(search.trim());
+  const debouncedSearch = useDebouncedValue(search.trim(), 250);
   // The query the rows currently on screen are the answer to. Read in the fetch
   // below to tell "the same query, fetched again" (mount) from "a new query,
   // whose answer replaces the old one".
@@ -177,11 +178,6 @@ export function History({
   // now is captured once per render pass for the relative-time labels and the
   // day names; it does not tick, which is fine for a log.
   const now = Date.now();
-
-  useEffect(() => {
-    const id = setTimeout(() => setDebouncedSearch(search.trim()), 250);
-    return () => clearTimeout(id);
-  }, [search]);
 
   // The newest page, refetched whenever the search changes. On a CHANGED query
   // the rows are replaced rather than merged — the previous query's results,

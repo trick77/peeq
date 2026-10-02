@@ -17,6 +17,14 @@ import (
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
+// Pool bounds. maxConns is above anything one page load plus the background
+// workers ask for at once; a connection idle past connMaxIdle gives its
+// memory back.
+const (
+	maxConns    = 16
+	connMaxIdle = 10 * time.Minute
+)
+
 // Open opens (creating if needed) the SQLite database at path and applies
 // PRAGMAs for safe concurrent use. Callers must run Migrate separately.
 func Open(path string) (*sql.DB, error) {
@@ -29,6 +37,14 @@ func open(path string, busyTimeout time.Duration) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	// database/sql keeps two idle connections by default. A page load fires a
+	// dozen requests at once, so most of them opened a connection of their own
+	// and closed it again: with this driver that is a fresh SQLite instance
+	// and an empty page cache every time. Keeping the pool warm is the fix; the
+	// ceiling bounds memory, since each connection carries its own instance.
+	db.SetMaxOpenConns(maxConns)
+	db.SetMaxIdleConns(maxConns)
+	db.SetConnMaxIdleTime(connMaxIdle)
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping sqlite: %w", err)
@@ -56,8 +72,7 @@ func dsn(path string, busyTimeout time.Duration) string {
 }
 
 // VecLiteral encodes a float32 vector as the JSON-array text sqlite-vec
-// accepts. Unused until embeddings land in a later phase; kept exported for
-// callers in future store code.
+// accepts.
 func VecLiteral(v []float32) string {
 	var b strings.Builder
 	b.WriteByte('[')

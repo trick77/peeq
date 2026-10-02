@@ -56,6 +56,30 @@ export type VideoCounts = {
 export type VideoSort =
   "newest" | "oldest" | "added_newest" | "added_oldest" | "longest" | "title";
 
+// LibraryVideo mirrors httpapi.videoCardDTO: one row of GET /api/videos, which
+// carries what a grid card draws and nothing else. The whole Video is
+// getVideo(id), which the Player asks for when a card is opened. A Pick so a
+// full Video is still accepted wherever a card is drawn.
+export type LibraryVideo = Pick<
+  Video,
+  | "id"
+  | "title"
+  | "channel_id"
+  | "channel_name"
+  | "duration_seconds"
+  | "published_at"
+  | "has_thumbnail"
+  | "thumbnail_version"
+  | "has_media"
+  | "status"
+  | "watched"
+  | "watched_at"
+  | "resume_position_seconds"
+  | "favorite"
+  | "downloaded_at"
+  | "category"
+>;
+
 // Video mirrors httpapi.videoDTO exactly. media_path is deliberately never
 // exposed (server-local filesystem path); has_media + the /stream endpoint
 // are how the UI knows whether/how to play it.

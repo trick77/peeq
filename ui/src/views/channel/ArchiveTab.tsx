@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { VideoCard } from "../../components/VideoCard";
-import { listVideos, setFavorite, setWatched } from "../../api/videos";
+import { listVideos } from "../../api/videos";
+import { useVideoToggles } from "../../hooks/useVideoToggles";
+import { useStableCallback } from "../../hooks/useStableCallback";
+import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { CATEGORIES } from "../../categories";
 import { SORT_OPTIONS } from "../Library";
 import { controlClass } from "../../ui";
 import { useSettings } from "../../settingsStore";
-import type { Video, VideoSort } from "../../api/types";
+import type { LibraryVideo, VideoSort } from "../../api/types";
 
 export function ArchiveTab({
   channelId,
@@ -14,10 +17,10 @@ export function ArchiveTab({
   channelId: string;
   onOpenVideo: (id: string) => void;
 }) {
-  const [videos, setVideos] = useState<Video[]>([]);
+  const [videos, setVideos] = useState<LibraryVideo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 250, "");
   const [category, setCategory] = useState("all");
   const [sort, setSort] = useState<VideoSort>("added_newest");
   // 0 until the settings land or if they never do: a window of nothing badges
@@ -28,11 +31,6 @@ export function ArchiveTab({
   // The Archive tab keeps its own search/category/sort state rather than
   // sharing the Library's: visiting a channel must never change what the
   // Library shows when the user goes back to it.
-  useEffect(() => {
-    const id = setTimeout(() => setDebouncedQuery(query), 250);
-    return () => clearTimeout(id);
-  }, [query]);
-
   const loadSeq = useRef(0);
 
   useEffect(() => {
@@ -49,61 +47,10 @@ export function ArchiveTab({
       });
   }, [channelId, debouncedQuery, category, sort]);
 
-  // Mirrors Library's handleToggleFavorite/handleToggleWatched: flip the
-  // field locally first so the card updates without a refetch, then make
-  // the API call; on failure, revert the optimistic update and surface the
-  // error through the tab's own error banner rather than swallowing it.
-  async function handleToggleFavorite(id: string) {
-    const current = videos.find((v) => v.id === id);
-    if (!current) return;
-    const next = !current.favorite;
-    setVideos((prev) =>
-      prev.map((v) => (v.id === id ? { ...v, favorite: next } : v)),
-    );
-    try {
-      await setFavorite(id, next);
-    } catch (e) {
-      setVideos((prev) =>
-        prev.map((v) =>
-          v.id === id ? { ...v, favorite: current.favorite } : v,
-        ),
-      );
-      setError((e as Error).message);
-    }
-  }
-
-  // The watched toggle zeroes resume_position_seconds server-side in both
-  // directions (videos.SetWatched), and the response carries only the watched
-  // flag — so the optimistic update has to mirror the reset. Without it,
-  // un-watching a partly-played video makes its progress bar appear (VideoCard
-  // draws it only when !watched) still showing a position the server has
-  // already cleared.
-  async function handleToggleWatched(id: string) {
-    const current = videos.find((v) => v.id === id);
-    if (!current) return;
-    const next = !current.watched;
-    setVideos((prev) =>
-      prev.map((v) =>
-        v.id === id ? { ...v, watched: next, resume_position_seconds: 0 } : v,
-      ),
-    );
-    try {
-      await setWatched(id, next);
-    } catch (e) {
-      setVideos((prev) =>
-        prev.map((v) =>
-          v.id === id
-            ? {
-                ...v,
-                watched: current.watched,
-                resume_position_seconds: current.resume_position_seconds,
-              }
-            : v,
-        ),
-      );
-      setError((e as Error).message);
-    }
-  }
+  const openVideo = useStableCallback(onOpenVideo);
+  const { toggleFavorite, toggleWatched } = useVideoToggles(videos, setVideos, {
+    onError: setError,
+  });
 
   return (
     <>
@@ -165,9 +112,9 @@ export function ArchiveTab({
               key={v.id}
               video={v}
               retentionDays={retentionDays}
-              onOpen={onOpenVideo}
-              onToggleFavorite={handleToggleFavorite}
-              onToggleWatched={handleToggleWatched}
+              onOpen={openVideo}
+              onToggleFavorite={toggleFavorite}
+              onToggleWatched={toggleWatched}
             />
           ))}
         </div>

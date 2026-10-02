@@ -197,21 +197,8 @@ func (s *server) handleDeleteShare(w http.ResponseWriter, r *http.Request) {
 // existence of any given video is never revealed. Returns nil when it has
 // already written the 404 (the caller must return immediately).
 func (s *server) resolveShare(w http.ResponseWriter, r *http.Request) *videos.Video {
-	if s.shareLinks == nil || s.videos == nil {
-		http.NotFound(w, r)
-		return nil
-	}
-	token := r.PathValue("token")
-	videoID, ok, err := s.shareLinks.Resolve(r.Context(), token)
-	if err != nil {
-		// A DB fault is ours, not the caller's: answer 500. That is not an
-		// existence signal (a healthy server never 500s here), so it still
-		// doesn't leak whether the token is valid — unlike a 200/404 split.
-		serverError(w, r, err, "resolve share link failed")
-		return nil
-	}
+	videoID, ok := s.resolveShareID(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return nil
 	}
 	v, err := s.videos.Get(videoID)
@@ -224,6 +211,31 @@ func (s *server) resolveShare(w http.ResponseWriter, r *http.Request) *videos.Vi
 		return nil
 	}
 	return v
+}
+
+// resolveShareID is resolveShare for the routes that need only to know WHICH
+// video a token names: the media stream, the poster and the captions. A player
+// re-issues range requests throughout playback, and the whole video row, with
+// its summary and chapters, was read on every one of them. ok is false when the
+// 404 (or 500) has already been written.
+func (s *server) resolveShareID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	if s.shareLinks == nil || s.videos == nil {
+		http.NotFound(w, r)
+		return "", false
+	}
+	videoID, ok, err := s.shareLinks.Resolve(r.Context(), r.PathValue("token"))
+	if err != nil {
+		// A DB fault is ours, not the caller's: answer 500. That is not an
+		// existence signal (a healthy server never 500s here), so it still
+		// doesn't leak whether the token is valid — unlike a 200/404 split.
+		serverError(w, r, err, "resolve share link failed")
+		return "", false
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return "", false
+	}
+	return videoID, true
 }
 
 // handleShareVideo serves the public, trimmed video metadata for a share token.
@@ -264,22 +276,31 @@ func (s *server) handleShareVideo(w http.ResponseWriter, r *http.Request) {
 // captions (.txt/.vtt), which are text this same route family already serves
 // inline for the <track> element.
 func (s *server) handleShareStream(w http.ResponseWriter, r *http.Request) {
-	v := s.resolveShare(w, r)
-	if v == nil {
+	videoID, ok := s.resolveShareID(w, r)
+	if !ok {
 		return
 	}
-	s.serveMediaFile(w, r, v.MediaPath, "")
+	ref, err := s.videos.MediaRef(videoID)
+	if err != nil {
+		serverError(w, r, err, "get shared video failed")
+		return
+	}
+	if ref == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.serveMediaFile(w, r, ref.MediaPath, "")
 }
 
 // handleShareThumbnail serves the shared video's poster image — from the
 // database, exactly like the library endpoint, so the public page and the app
 // can never disagree about whether a video has a poster.
 func (s *server) handleShareThumbnail(w http.ResponseWriter, r *http.Request) {
-	v := s.resolveShare(w, r)
-	if v == nil {
+	videoID, ok := s.resolveShareID(w, r)
+	if !ok {
 		return
 	}
-	serveThumbnail(w, r, s.videos, v.ID, s.shareImagePolicy(r, v.ID))
+	serveThumbnail(w, r, s.videos, videoID, s.shareImagePolicy(r, videoID))
 }
 
 // handleShareSubtitles serves the shared video's VTT captions. The public page
@@ -288,11 +309,11 @@ func (s *server) handleShareThumbnail(w http.ResponseWriter, r *http.Request) {
 // is the browser saving this same response — no attachment disposition here, and
 // none needed.
 func (s *server) handleShareSubtitles(w http.ResponseWriter, r *http.Request) {
-	v := s.resolveShare(w, r)
-	if v == nil {
+	videoID, ok := s.resolveShareID(w, r)
+	if !ok {
 		return
 	}
-	serveTranscript(w, r, s, v.ID)
+	serveTranscript(w, r, s, videoID)
 }
 
 // serveMediaFile resolves storedPath under mediaDir and serves it via

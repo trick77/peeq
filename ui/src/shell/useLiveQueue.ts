@@ -5,7 +5,7 @@ import {
   downloadsStatus,
   cancelDownload as cancelDownloadApi,
   streamDownloads,
-  listPending,
+  countPending,
   listSummaries,
 } from "../api";
 import { getYtdlpVersion, type YtdlpVersion } from "../api/ytdlp";
@@ -52,6 +52,16 @@ export type LiveQueue = {
 const POLL_MS = 3000;
 const ACTIVITY_BUFFER = 50;
 
+// keepIfSame returns prev when next says the same thing, so a poll that came
+// back unchanged does not hand React a new array or object. The queue is
+// re-listed every three seconds while anything is in flight, and each fresh
+// identity re-rendered the whole active view: every Library card, every Inbox
+// row. The values compared are a few dozen small rows, so comparing their JSON
+// costs far less than the render it saves.
+function keepIfSame<T>(prev: T, next: T): T {
+  return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+}
+
 // useLiveQueue owns everything the shell knows about work in flight: the two
 // queue lanes (downloads and summaries), the per-job progress and per-video
 // summary phase that the one SSE subscription feeds, the bounded activity
@@ -60,7 +70,7 @@ const ACTIVITY_BUFFER = 50;
 // session check answers, and everything is torn down when the user leaves.
 export function useLiveQueue(enabled: boolean): LiveQueue {
   const [jobs, setJobs] = useState<Job[]>([]);
-  // undefined until the first listPending() lands. The rail greys Inbox out on
+  // undefined until the first countPending() lands. The rail greys Inbox out on
   // a real 0, so a 0 default would flash the item dim on every cold load.
   const [pendingCount, setPendingCount] = useState<number | undefined>(
     undefined,
@@ -115,7 +125,7 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
   // Every listDownloads() consumer goes through here, so the progress store
   // is pruned to the listed jobs in one place (see progressStore).
   const adoptJobs = useCallback((list: Job[]) => {
-    setJobs(list);
+    setJobs((prev) => keepIfSame(prev, list));
     setJobsLoaded(true);
     pruneProgress(list.map((j) => j.job_id));
   }, []);
@@ -129,7 +139,7 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
       .then(adoptJobs)
       .catch(() => {});
     downloadsStatus()
-      .then((s) => setDownloadStatus(s))
+      .then((s) => setDownloadStatus((prev) => keepIfSame(prev, s)))
       .catch(() => {});
   }, [adoptJobs]);
 
@@ -141,7 +151,7 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
   const refreshSummaries = useCallback(() => {
     listSummaries()
       .then((list) => {
-        setSummaries(list);
+        setSummaries((prev) => keepIfSame(prev, list));
         setSummariesLoaded(true);
         setSummaryPhaseByVideoId((prev) => {
           const next: Record<string, string> = {};
@@ -149,7 +159,7 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
             if (prev[s.video_id] !== undefined)
               next[s.video_id] = prev[s.video_id];
           }
-          return next;
+          return keepIfSame(prev, next);
         });
       })
       .catch(() => {});
@@ -160,8 +170,8 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
   // the user sits on another page, and the rail greys Inbox out when the count
   // is 0 — a stale 0 would claim there is nothing to decide when there is.
   const refreshPending = useCallback(() => {
-    listPending()
-      .then((p) => setPendingCount(p.length))
+    countPending()
+      .then((n) => setPendingCount(n))
       .catch(() => {});
   }, []);
 

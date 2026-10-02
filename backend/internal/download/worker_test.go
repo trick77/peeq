@@ -15,6 +15,7 @@ import (
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/mediaprobe"
 	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/sponsorblock"
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
@@ -266,7 +267,7 @@ func TestWorker_success(t *testing.T) {
 				MediaPath:            "/media/vid/vid.mp4",
 				FilesizeBytes:        4242,
 				FormatUsed:           "bv*+ba",
-				SponsorblockSegments: []ytdlp.Segment{{Category: "sponsor", StartTime: 1, EndTime: 2}},
+				SponsorblockSegments: []sponsorblock.Segment{{Category: "sponsor", StartTime: 1, EndTime: 2}},
 			}, nil
 		},
 	}

@@ -212,6 +212,11 @@ func TestStripSoundEvents(t *testing.T) {
 		// Real speech uses parentheses; an open rule would eat this.
 		{"the result (roughly) doubled", "the result (roughly) doubled", false},
 		{"plain words", "plain words", false},
+		// Tidying whitespace is not removing a marker: counted as one, a
+		// caption track with double spaces reads as a music video.
+		{"plain  words", "plain words", false},
+		{"plain\twords ", "plain words", false},
+		{"two\u00a0 spaces", "two spaces", false},
 	}
 	for _, c := range cases {
 		got, stripped := stripSoundEvents(c.in)

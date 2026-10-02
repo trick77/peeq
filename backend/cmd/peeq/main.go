@@ -1,7 +1,6 @@
-// Command peeq is the all-in-one server: API + embedded SPA, backed by
-// SQLite. This is the Task-5 boot milestone: config, DB, and auth are wired
-// end to end (dev auto-login or OIDC) in front of an empty video library; the
-// actual YouTube archiving pipeline arrives in later tasks.
+// Command peeq is the all-in-one server: the JSON API and the embedded SPA,
+// backed by SQLite, with the scan, download, summarize and upkeep workers
+// running beside it in the same process.
 package main
 
 import (
@@ -294,7 +293,7 @@ func run() error {
 		MediaDir:       cfg.MediaDir,
 		SummaryJobs:    summaryJobsStore,
 		DefaultSubLang: cfg.DefaultSubLang,
-		YoutubePaused:  func() bool { p, _, _ := settingsStore.YoutubePaused(context.Background()); return p },
+		YoutubePaused:  func() bool { return settingsStore.Paused(context.Background()) },
 		FailMonitor:    failMonitor,
 		Activity:       activityStore,
 		OnProgress: func(jobID int64, p ytdlp.Progress) {
@@ -330,9 +329,9 @@ func run() error {
 		Settings:       settingsStore,
 		Lister:         runner,
 		Prober:         runner,
-		CookieStatus:   func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
+		CookieStatus:   settingsStore.CookieStatus,
 		AllowAnonymous: cfg.AllowAnonymousYoutube,
-		YoutubePaused:  func(ctx context.Context) bool { p, _, _ := settingsStore.YoutubePaused(ctx); return p },
+		YoutubePaused:  settingsStore.Paused,
 		FailMonitor:    failMonitor,
 		Activity:       activityStore,
 		MediaDir:       cfg.MediaDir,
@@ -383,9 +382,9 @@ func run() error {
 	}
 	metaWorker := channelmeta.NewWorker(channelmeta.Deps{
 		Refresher:      metaRefresher,
-		CookieStatus:   func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
+		CookieStatus:   settingsStore.CookieStatus,
 		AllowAnonymous: cfg.AllowAnonymousYoutube,
-		YoutubePaused:  func(ctx context.Context) bool { p, _, _ := settingsStore.YoutubePaused(ctx); return p },
+		YoutubePaused:  settingsStore.Paused,
 		Activity:       activityStore,
 	})
 
@@ -473,7 +472,7 @@ func run() error {
 		Worker:          worker,
 		SSEHub:          sseHub,
 		StreamAccess:    streamTracker,
-		YTDLP:           ytdlpVersioner{dir: cfg.YtdlpDir, status: ytdlpStatus},
+		YTDLP:           ytdlpVersioner{dir: cfg.YtdlpDir, status: ytdlpStatus, installed: &ytdlp.VersionCache{}},
 		OnResumeYoutube: failMonitor.Reset,
 
 		Channels:        channelsStore,
@@ -516,9 +515,10 @@ func run() error {
 // ytdlpVersioner adapts the ytdlp package's free functions (Version,
 // UpdateLatest) to the httpapi.YTDLPVersioner interface the Settings page's
 // version display/Update button need. dir is the yt-dlp install directory:
-// Version resolves the binary from it fresh on every call (so an updated
-// binary is reported without a restart), and UpdateLatest downloads the new
-// release into it (see resolveYtdlpBin — dir/yt-dlp).
+// Version resolves the binary from it on every call and re-reads it whenever
+// the file changed (so an updated binary is reported without a restart), and
+// UpdateLatest downloads the new release into it (see resolveYtdlpBin —
+// dir/yt-dlp).
 //
 // status is the shared cache the version-check ticker fills, so the same
 // endpoint can also report the newest published release without making a
@@ -526,10 +526,13 @@ func run() error {
 type ytdlpVersioner struct {
 	dir    string
 	status *ytdlp.StatusCache
+	// installed remembers the binary's answer per file, so the per-page-load
+	// version read does not start yt-dlp each time. See ytdlp.VersionCache.
+	installed *ytdlp.VersionCache
 }
 
 func (v ytdlpVersioner) Version(ctx context.Context) (string, error) {
-	return ytdlp.Version(ctx, resolveYtdlpBin(v.dir))
+	return v.installed.Version(ctx, resolveYtdlpBin(v.dir))
 }
 
 func (v ytdlpVersioner) UpdateLatest(ctx context.Context) (string, error) {

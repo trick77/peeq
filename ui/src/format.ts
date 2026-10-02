@@ -62,12 +62,6 @@ export function summaryPhaseInfo(phase: string | undefined): {
   return { label: SUMMARY_PHASES[idx].label, step: idx + 1 };
 }
 
-// summaryPhaseLabel is the word-only view of the above, kept for the Activity
-// row (which shows the phase without a step meter).
-export function summaryPhaseLabel(phase: string | undefined): string {
-  return summaryPhaseInfo(phase).label;
-}
-
 // parseStamp turns any timestamp the backend sends into a Date.
 //
 // Two shapes arrive. Date-only ('2026-03-01', from published_at) and true ISO

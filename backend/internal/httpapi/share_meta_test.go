@@ -326,3 +326,43 @@ func writePNG(t *testing.T, path string, w, h int) {
 		t.Fatalf("encode thumbnail: %v", err)
 	}
 }
+
+// Unfurlers refetch the card per recipient. Its validator is derived from what
+// goes into it, so a revalidation is answered without decoding the poster and
+// encoding a 1200px JPEG again — and it moves when the inputs do.
+func TestShareCard_revalidatesWithoutRendering(t *testing.T) {
+	deps, _ := shareMetaDeps(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "First title", ChannelName: "Chan"}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(deps)
+	share := createShare(t, h, loginAndGetCookie(t, h), "v1", "never")
+	path := "/api/s/" + share.Token + "/card.jpg"
+
+	first := getPublic(t, h, path)
+	etag := first.Header().Get("ETag")
+	if first.Code != http.StatusOK || etag == "" {
+		t.Fatalf("first GET = %d, ETag %q", first.Code, etag)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("If-None-Match", etag)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
+		t.Fatalf("revalidation = %d with %d body bytes, want an empty 304", rec.Code, rec.Body.Len())
+	}
+	if rec.Header().Get("ETag") != etag || rec.Header().Get("Cache-Control") == "" {
+		t.Fatalf("304 lost its validators: %v", rec.Header())
+	}
+
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "Second title", ChannelName: "Chan"}); err != nil {
+		t.Fatal(err)
+	}
+	h.ServeHTTP(httptest.NewRecorder(), req) // still carries the old tag
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Header().Get("ETag") == etag {
+		t.Fatalf("after a title change: status %d, ETag %q (was %q)", rec.Code, rec.Header().Get("ETag"), etag)
+	}
+}

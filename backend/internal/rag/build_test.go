@@ -224,15 +224,3 @@ func TestBuildVideoChunksBlankSummaryEmitsNoSummaryChunk(t *testing.T) {
 		t.Error("a blank summary must not be indexed")
 	}
 }
-
-func TestDecodeChaptersTolerantOfJunk(t *testing.T) {
-	for _, in := range []string{"", "   ", "[]", "not json", "{}", "null"} {
-		if got := DecodeChapters(in); len(got) != 0 {
-			t.Errorf("DecodeChapters(%q) = %v, want empty", in, got)
-		}
-	}
-	got := DecodeChapters(`[{"ts":42,"title":"Hydration","source":"llm"}]`)
-	if len(got) != 1 || got[0].TS != 42 || got[0].Title != "Hydration" {
-		t.Errorf("DecodeChapters lost data: %+v", got)
-	}
-}

@@ -26,8 +26,9 @@ const (
 	PhaseKeypoints   = "keypoints"
 )
 
-// Phases is the ordered set of non-empty phases the worker can emit. The
-// Player uses the count to render "step N of 4".
+// Phases is the ordered set of non-empty phases the worker can emit. Nothing
+// in Go reads it: it is the list the SPA's enum-sync test (wireenums.test.ts)
+// compares its own phase names against, which is that contract's only guard.
 var Phases = []string{
 	PhaseSummarizing,
 	PhaseClassifying,

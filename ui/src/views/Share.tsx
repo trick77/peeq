@@ -15,7 +15,7 @@ import { daysUntil } from "../components/ShareControl";
 // The same scrubber the owner's Player draws, and the same skip policy. Like
 // ../vtt, ../components/Scrubber imports nothing from api/, so nothing
 // session-gated reaches this page through it.
-import { AUTO_SKIP, categoryLabel, Scrubber } from "../components/Scrubber";
+import { findAutoSkip, Scrubber, skippedLabel } from "../components/Scrubber";
 import { TranscriptCard } from "../components/TranscriptCard";
 // Shared with the Player's Transcript card. ../vtt is deliberately free of any
 // api/ import, so nothing session-gated can reach this page through it.
@@ -186,20 +186,16 @@ export function Share({ token }: { token: string | null }) {
   // account, and the public routes are read-only by design.
   function handleTimeUpdate() {
     const el = videoRef.current;
-    if (!el) return;
+    // Nothing reads the time without segments: the scrubber is only drawn for
+    // them, and setting state four times a second re-rendered the whole page
+    // for every viewer of a video that has none.
+    if (!el || segments.length === 0) return;
     setCurrentTime(el.currentTime);
-    for (const seg of segments) {
-      if (!AUTO_SKIP.has(seg.category)) continue;
-      if (el.currentTime >= seg.start_time && el.currentTime < seg.end_time) {
-        el.currentTime = seg.end_time;
-        setCurrentTime(seg.end_time);
-        showToast(
-          `Skipped ${categoryLabel(seg.category)}${DOT}${formatDuration(
-            seg.end_time - seg.start_time,
-          )}`,
-        );
-        break;
-      }
+    const skip = findAutoSkip(segments, el.currentTime);
+    if (skip) {
+      el.currentTime = skip.end_time;
+      setCurrentTime(skip.end_time);
+      showToast(skippedLabel(skip));
     }
   }
 

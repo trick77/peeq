@@ -399,10 +399,20 @@ func TestVideoChunkWrites_warnOfBloatTheyLeave(t *testing.T) {
 	s := NewStore(db)
 	ctx := context.Background()
 
-	if err := s.ReplaceVideoChunks(ctx, "v1", IndexMeta{Model: "e5", Dim: dim, Rev: ChunkRecipeRev},
-		[]ChunkRow{{Text: "titanium frame"}}, [][]float32{unitOf(dim, 1)}); err != nil {
-		t.Fatal(err)
+	replace := func() {
+		t.Helper()
+		if err := s.ReplaceVideoChunks(ctx, "v1", IndexMeta{Model: "e5", Dim: dim, Rev: ChunkRecipeRev},
+			[]ChunkRow{{Text: "titanium frame"}}, [][]float32{unitOf(dim, 1)}); err != nil {
+			t.Fatal(err)
+		}
 	}
+	// A first index deletes nothing, so it has nothing to report.
+	replace()
+	if strings.Contains(out.String(), "vector index bloated") {
+		t.Fatalf("a write that deleted no vector warned of bloat: %s", out.String())
+	}
+	// Replacing it with fresh vectors drops the old ones.
+	replace()
 	wantAll(t, out.String(), `msg="vector index bloated, compacted at next boot"`, "video_id=v1")
 
 	out.Reset()

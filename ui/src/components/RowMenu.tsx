@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
+import { useDismiss } from "../hooks/usePopover";
 import { Icon, type IconName } from "../icons";
 import { useMenuPlacement } from "./useMenuPlacement";
 
@@ -70,27 +71,7 @@ export function RowMenu({
     menuRef.current?.focus();
   }, [open]);
 
-  // Close on an outside click or Escape. Escape returns focus to the trigger;
-  // an outside click does not, since the click already moved focus somewhere
-  // the user chose.
-  useEffect(() => {
-    if (!open) return;
-    function onDocClick(e: MouseEvent) {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    }
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  useDismiss(open, () => setOpen(false), wrapRef, triggerRef);
 
   function onMenuKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;

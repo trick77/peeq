@@ -158,6 +158,10 @@ var parenSoundEvents = map[string]bool{
 // whether it removed anything. An all-marker line comes back empty, which the
 // caller drops the same way it drops a blank line.
 func stripSoundEvents(s string) (string, bool) {
+	if !strings.ContainsAny(s, "[(\u266a\u266b\u266c\u2669") {
+		// Nothing a marker rule could match; only the whitespace is left to tidy.
+		return collapseSpace(s), false
+	}
 	out := bracketRe.ReplaceAllString(s, " ")
 	out = noteRe.ReplaceAllString(out, " ")
 	out = parenRe.ReplaceAllStringFunc(out, func(m string) string {
@@ -167,8 +171,29 @@ func stripSoundEvents(s string) (string, bool) {
 		}
 		return m
 	})
-	out = strings.TrimSpace(spaceRe.ReplaceAllString(out, " "))
-	return out, out != strings.TrimSpace(s)
+	// Decided before the whitespace is tidied: every rule above replaces what
+	// it matches, so a difference here is a removed marker and nothing else.
+	// Comparing after the collapse counted a double space as one.
+	stripped := out != s
+	return collapseSpace(out), stripped
+}
+
+// collapseSpace folds every run of whitespace (no-break space included) into
+// one space and trims the ends, skipping the regex for a line that has no run
+// to fold.
+func collapseSpace(s string) string {
+	if strings.Contains(s, "  ") || strings.ContainsAny(s, "\t\n\v\f\r\u00a0") {
+		s = spaceRe.ReplaceAllString(s, " ")
+	}
+	return strings.TrimSpace(s)
+}
+
+// timingMatch is timingRe behind the substring every timing line contains.
+func timingMatch(line string) []string {
+	if !strings.Contains(line, "-->") {
+		return nil
+	}
+	return timingRe.FindStringSubmatch(line)
 }
 
 // Thresholds for IsNonSpeech. Deliberately conservative: a false positive
@@ -318,7 +343,10 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), "\r")
-		if m := timingRe.FindStringSubmatch(line); m != nil {
+		// The regexes below run on every line of a track that can be tens of
+		// thousands of lines long, and most lines are plain words: a substring
+		// check first keeps them off the regex engine entirely.
+		if m := timingMatch(line); m != nil {
 			flush()
 			h, _ := strconv.Atoi(m[1])
 			mnt, _ := strconv.Atoi(m[2])
@@ -331,8 +359,11 @@ func ParseVTT(r io.Reader) (Parsed, error) {
 		}
 		// Tags first, then entities: decoding first would turn an escaped
 		// "&lt;c&gt;" spoken on screen into a real tag and tagRe would eat it.
-		clean := unescapeEntities(tagRe.ReplaceAllString(line, ""))
-		clean = strings.TrimSpace(clean)
+		clean := line
+		if strings.IndexByte(clean, '<') >= 0 {
+			clean = tagRe.ReplaceAllString(clean, "")
+		}
+		clean = strings.TrimSpace(unescapeEntities(clean))
 		// Strip non-speech markers before the rolling-duplicate collapse below
 		// sees the line: YouTube re-emits "[Music] I play" then "[Music] I play
 		// games", and the collapse only works on the words that remain.

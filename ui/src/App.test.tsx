@@ -14,7 +14,7 @@ import {
   resumeYoutube,
   listDownloads,
   getMe,
-  listPending,
+  countPending,
   listSummaries,
   cancelDownload,
   cookieHealth,
@@ -146,6 +146,7 @@ vi.mock("./api/channels", () => ({
 
 vi.mock("./api/pending", () => ({
   listPending: vi.fn().mockResolvedValue([]),
+  countPending: vi.fn().mockResolvedValue(0),
   downloadPending: vi.fn(),
   ignorePending: vi.fn(),
 }));
@@ -216,7 +217,7 @@ describe("App dock bootstrap", () => {
       youtube_paused: false,
       youtube_pause_reason: "",
     });
-    vi.mocked(listPending).mockResolvedValue([]);
+    vi.mocked(countPending).mockResolvedValue(0);
     vi.mocked(cookieHealth).mockResolvedValue({
       status: "valid",
       present: true,
@@ -301,7 +302,7 @@ describe("App deep links", () => {
       youtube_paused: false,
       youtube_pause_reason: "",
     });
-    vi.mocked(listPending).mockResolvedValue([]);
+    vi.mocked(countPending).mockResolvedValue(0);
     vi.mocked(cookieHealth).mockResolvedValue({
       status: "valid",
       present: true,
@@ -843,7 +844,7 @@ describe("App queue and summaries", () => {
       youtube_paused: false,
       youtube_pause_reason: "",
     });
-    vi.mocked(listPending).mockResolvedValue([]);
+    vi.mocked(countPending).mockResolvedValue(0);
     vi.mocked(cookieHealth).mockResolvedValue({
       status: "valid",
       present: true,
@@ -919,13 +920,10 @@ describe("App queue and summaries", () => {
     // page. Without this refresh the rail keeps the count it loaded at
     // navigation time — and since the rail now greys Inbox out at 0, a stale
     // count claims there is nothing to decide when there is.
-    vi.mocked(listPending).mockResolvedValue([]);
+    vi.mocked(countPending).mockResolvedValue(0);
     vi.mocked(streamDownloads).mockImplementation((onEvent) => {
       // The next fetch is what the scan surfaced.
-      vi.mocked(listPending).mockResolvedValue([
-        { video_id: "p1", channel_id: "c1", title: "Fresh upload" },
-        { video_id: "p2", channel_id: "c1", title: "Another one" },
-      ] as unknown as Awaited<ReturnType<typeof listPending>>);
+      vi.mocked(countPending).mockResolvedValue(2);
       onEvent({
         event: "activity",
         data: { id: 7, at: "2026-07-25 08:00:00", kind: "scan", outcome: "ok" },
@@ -1132,19 +1130,19 @@ describe("App inbox count", () => {
     // stream fires an activity event on connect, which would count here.
     vi.mocked(streamDownloads).mockReturnValue(new Promise<void>(() => {}));
     // Call counts are the assertion here, so start each test from zero.
-    vi.mocked(listPending).mockClear();
+    vi.mocked(countPending).mockClear();
   });
 
   it("is read once on sign-in and not again on every navigation", async () => {
     render(<App />);
     await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
-    await waitFor(() => expect(listPending).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(countPending).toHaveBeenCalledTimes(1));
 
     fireEvent.click(screen.getByRole("button", { name: /Channels/ }));
     fireEvent.click(screen.getByRole("button", { name: /History/ }));
     fireEvent.click(screen.getByRole("button", { name: /Library/ }));
     await screen.findByPlaceholderText("Search titles");
-    expect(listPending).toHaveBeenCalledTimes(1);
+    expect(countPending).toHaveBeenCalledTimes(1);
   }, 15000);
 });
 

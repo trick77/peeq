@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -1362,5 +1363,35 @@ func TestGetMany_chunksLargeInputs(t *testing.T) {
 	got, err := s.GetMany(ids)
 	if err != nil || len(got) != 1201 {
 		t.Fatalf("len = %d err=%v, want 1201", len(got), err)
+	}
+}
+
+// A video that arrived through a channel scan has no channel_name of its own:
+// only the add-by-URL path writes one, and every reader resolves the name
+// through the channels cache instead. The directory has to do the same, or a
+// question naming a subscribed channel cannot be resolved to it.
+func TestChannelDirectory_includesChannelsNamedOnlyInTheCache(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	if _, err := db.Exec(`INSERT INTO channels (id, handle, name) VALUES ('UCscan','@scanned','Scanned Channel')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO videos (id, url, channel_id, channel_name) VALUES
+		('v1','u','UCscan',''),
+		('v2','u','UCscan',''),
+		('v3','u','UCurl','Pasted Channel'),
+		('v4','u','UCnameless','')`); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := s.ChannelDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ChannelRef{
+		{ID: "UCurl", Name: "Pasted Channel"},
+		{ID: "UCscan", Name: "Scanned Channel", Handle: "@scanned"},
+	}
+	if !reflect.DeepEqual(dir, want) {
+		t.Fatalf("directory = %+v, want %+v", dir, want)
 	}
 }

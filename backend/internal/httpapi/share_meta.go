@@ -168,20 +168,43 @@ func (s *server) handleShareCard(w http.ResponseWriter, r *http.Request) {
 	if v == nil {
 		return
 	}
-	jpg, err := sharecard.Render(s.loadThumbnail(v.ID), v.Title, shareCardSubtitle(v))
+	// The validator comes from what goes INTO the card, not from its bytes, so
+	// a revalidation is answered before the poster is decoded and a 1200px JPEG
+	// encoded. Unfurlers refetch per recipient; rendering to learn that nothing
+	// changed was most of this route's cost.
+	subtitle := shareCardSubtitle(v)
+	etag := etagFor([]byte(shareCardVersion + "\x00" + v.ThumbnailVersion + "\x00" + v.Title + "\x00" + subtitle))
+	w.Header().Set("Cache-Control", s.shareImageCacheControl(r, v.ID))
+	w.Header().Set("ETag", etag)
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	jpg, err := sharecard.Render(s.loadThumbnail(v.ID), v.Title, subtitle)
 	if err != nil {
+		w.Header().Del("Cache-Control")
+		w.Header().Del("ETag")
 		serverError(w, r, err, "render share card failed")
 		return
 	}
-	// ServeContent rather than a raw Write: the card is rendered per request and
-	// has no row of its own, so a content ETag is its only validator, and going
-	// through ServeContent is what makes it answer If-None-Match with a 304
-	// instead of re-sending a freshly rendered JPEG that is byte-identical to the
-	// one the client already has. The zero modTime just means no Last-Modified.
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", s.shareImageCacheControl(r, v.ID))
-	w.Header().Set("ETag", etagFor(jpg))
 	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(jpg))
+}
+
+// shareCardVersion is part of the card's validator. Bump it when the layout
+// changes, or clients keep the old picture for an unchanged video.
+const shareCardVersion = "1"
+
+// etagMatches reports whether an If-None-Match header names etag (or is "*").
+// Weak comparison, as the header requires.
+func etagMatches(header, etag string) bool {
+	for candidate := range strings.SplitSeq(header, ",") {
+		candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "W/")
+		if candidate == etag || candidate == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 // loadThumbnail decodes a video's stored poster, or returns nil — missing,

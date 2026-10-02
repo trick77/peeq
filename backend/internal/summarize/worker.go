@@ -5,12 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/trick77/peeq/internal/activity"
-	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/subtitles"
@@ -459,236 +457,6 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	return true, nil
 }
 
-// analysisRun carries the logging state of one video's analysis: who it is,
-// when it started, and the chat tokens it has cost so far. It exists so every
-// line about a video — start, each step, failures, the total — carries the same
-// identity (title and channel, not just an opaque id) without threading five
-// arguments through the worker.
-// A nil *analysisRun is valid and every method on it is a no-op, which is what
-// lets the failure paths that run before the analysis is announced (and the
-// panic recovery) call them unconditionally.
-type analysisRun struct {
-	log *slog.Logger
-	ctx context.Context // carries the CallInfo the llm client logs against
-	// store is where finished() banks the run's spend. Held here rather than
-	// reached for through the worker because finished() is called from the
-	// defers and panic recovery of paths that have no worker in hand.
-	store   *videos.Store
-	totals  *llm.Totals
-	video   *videos.Video
-	job     *summaryjobs.Job
-	started time.Time
-
-	// stepStarted is only for the failure lines of the step currently running;
-	// each step's own duration and token delta live in its done closure, so a
-	// done() called out of order cannot report another step's numbers.
-	stepStarted time.Time
-
-	// banked stops the run's spend being written twice. finished() used to only
-	// log, so calling it twice cost nothing; it now writes to the video row, and
-	// there is one path that can reach it twice — a panic raised AFTER a normal
-	// finished() (in Jobs.Finish, say) unwinds into processOne's recover, which
-	// calls finished("panic") on the same run. That would double the video's
-	// recorded cost on the one occasion nobody is watching the numbers.
-	banked bool
-}
-
-// startRun announces the analysis and returns its logging state. attempt/
-// max_attempts come straight from the job row: ClaimNext already incremented
-// attempts, so they read as "attempt N of M" for the retries the queue does on
-// its own.
-func (w *Worker) startRun(ctx context.Context, job *summaryjobs.Job, video *videos.Video) *analysisRun {
-	totals := &llm.Totals{}
-	r := &analysisRun{
-		log:    w.d.Logger,
-		store:  w.d.Videos,
-		totals: totals,
-		ctx: llm.WithTotals(llm.WithCall(ctx, llm.CallInfo{
-			VideoID: video.ID,
-			Title:   video.Title,
-			Channel: video.ChannelName,
-		}), totals),
-		video:   video,
-		job:     job,
-		started: time.Now(),
-	}
-	r.log.Info("summarize worker: analysis started", append(r.ident(),
-		"attempt", attemptLabel(job),
-		// A resumed job already has a usable summary and is only redoing the
-		// fragile key-points step.
-		"resumed", video.SummaryStatus == videos.SummaryDone)...)
-	return r
-}
-
-// attemptLabel renders the queue's retry counters as "1/3" — one field to read
-// instead of two to correlate. ClaimNext has already incremented attempts, so
-// it reads as "this attempt, of the allowed maximum".
-func attemptLabel(job *summaryjobs.Job) string {
-	return strconv.Itoa(job.Attempts) + "/" + strconv.Itoa(job.MaxAttempts)
-}
-
-// pipelineStages are the analysis stages in execution order. Their position is
-// what "2/4" in a log line counts against, so a stage a resumed job skips still
-// leaves the others numbered where a reader expects them.
-var pipelineStages = []string{"summary", "classify", "keypoints", "embedding"}
-
-// stageMessage builds a stage line's message: "stage 2/4 done". A stage that
-// is not in pipelineStages is named instead of numbered — a wrong number would
-// silently renumber its neighbours, and a bare "stage  done" would just look
-// broken.
-func stageMessage(name, verb string) string {
-	for i, s := range pipelineStages {
-		if s == name {
-			return "summarize worker: stage " + strconv.Itoa(i+1) + "/" +
-				strconv.Itoa(len(pipelineStages)) + " " + verb
-		}
-	}
-	return "summarize worker: stage " + name + " " + verb
-}
-
-// ident is the video identity every line repeats. It returns a fresh slice so
-// callers can append to it safely.
-func (r *analysisRun) ident() []any {
-	if r == nil {
-		return nil
-	}
-	return []any{"video_id", r.video.ID, "title", r.video.Title, "channel", r.video.ChannelName}
-}
-
-// step marks the start of a pipeline step and returns the context its LLM
-// calls must use plus the func that logs the step as done. Extra key/values
-// passed to that func are appended to the line.
-// A nil run has no context to hand out, and handing out a background one would
-// give the caller's LLM calls no cancellation — they would outlive a shutdown
-// by up to the client timeout. Steps only ever run once the analysis has
-// started, so this cannot happen; it panics rather than degrading quietly if
-// that ever changes.
-func (r *analysisRun) step(name string) (context.Context, func(extra ...any)) {
-	if r == nil {
-		panic("summarize: step on a nil analysis run — a stage ran before the analysis started")
-	}
-	started := time.Now()
-	before := r.totals.Snapshot()
-	r.stepStarted = started
-	// The stage rides on the context too, so the client's "still waiting"
-	// heartbeat says which stage of which video is stuck.
-	sctx := llm.WithStage(llm.WithStep(r.ctx, name), stageOf(name))
-	r.log.Info(stageMessage(name, "started"), append([]any{"step", name}, r.ident()...)...)
-	return sctx, func(extra ...any) {
-		attrs := append([]any{"step", name}, r.ident()...)
-		attrs = append(attrs, "duration_ms", time.Since(started).Milliseconds())
-		attrs = append(attrs, extra...)
-		attrs = append(attrs, r.totals.Snapshot().Sub(before).LogAttrs()...)
-		r.log.Info(stageMessage(name, "done"), attrs...)
-	}
-}
-
-// stageOf is the "2/4" the client's heartbeat carries; empty for a stage that
-// is not in pipelineStages, since CallInfo omits an empty stage entirely.
-func stageOf(name string) string {
-	for i, s := range pipelineStages {
-		if s == name {
-			return strconv.Itoa(i+1) + "/" + strconv.Itoa(len(pipelineStages))
-		}
-	}
-	return ""
-}
-
-// stepElapsedMs is the running step's wall time, for that step's own failure
-// lines (which have no done closure to read).
-func (r *analysisRun) stepElapsedMs() int64 {
-	if r == nil {
-		return 0
-	}
-	return time.Since(r.stepStarted).Milliseconds()
-}
-
-// skipped records a step a resumed job did not have to redo. Debug, not info:
-// it is context for reading a retry, not news.
-func (r *analysisRun) skipped(name, reason string) {
-	if r == nil {
-		return
-	}
-	r.log.Debug(stageMessage(name, "skipped"),
-		append([]any{"step", name}, append(r.ident(), "reason", reason)...)...)
-}
-
-// succeeded reports whether an outcome passed to finished is a success.
-//
-// A prefix test rather than an equality, because "done" is not the only one:
-// an inbox read finishes as done_inbox or done_inbox_indexed, and both are
-// terminal — the job is marked StateDone on the very next line. Comparing
-// against "done" alone printed will_retry=true beside outcome=done_inbox,
-// which reads as though something were still pending on a video that is
-// finished and already rendering its summary.
-//
-// Every failing outcome is named for its failure (error, panic, <step>_failed),
-// so a new success spelled done_* is covered here on the day it is added and a
-// new failure cannot pass by accident.
-func succeeded(outcome string) bool { return strings.HasPrefix(outcome, "done") }
-
-// finished logs the whole analysis: wall time plus the chat tokens it cost.
-// retrying distinguishes a failure the queue will pick up again from a
-// terminal one — without it an outcome of "error" reads as final on a job that
-// still has attempts left. Embedding tokens are not in here: they come from a
-// different endpoint and are logged by the embedding client at debug.
-func (r *analysisRun) finished(outcome string) {
-	if r == nil {
-		return
-	}
-	total := r.totals.Snapshot()
-	r.bankSpend(total)
-	elapsed := time.Since(r.started).Milliseconds()
-	// Everything that was not inference: the pacing gap, embedding, VTT
-	// parsing, SQLite writes. Printed so the numbers on the line add up and a
-	// slow video can be blamed on the right thing. Clamped at zero: inference
-	// is a subset of the run, so a negative here would be an accounting bug,
-	// and a nonsense negative in the log helps nobody.
-	wait := elapsed - total.InferenceMillis()
-	if wait < 0 {
-		wait = 0
-	}
-	attrs := append(r.ident(), "outcome", outcome,
-		"duration_ms", elapsed,
-		"wait_ms", wait,
-		"attempt", attemptLabel(r.job),
-		"will_retry", !succeeded(outcome) && r.job.Attempts < r.job.MaxAttempts)
-	r.log.Info("summarize worker: analysis finished", append(attrs, total.LogAttrs()...)...)
-}
-
-// bankSpend records what this run cost against the video row, so the figure
-// outlives the log line beside it.
-//
-// Called from finished() on EVERY outcome, success and failure alike. A run
-// that died in the keypoints step still paid for the summary it produced first,
-// and token columns that only counted successes would quietly under-report
-// exactly the videos that spent the most.
-//
-// Best-effort by design: the analysis is over by the time this runs and its
-// real artifacts are already committed, so a bookkeeping write that fails must
-// not turn a finished video into a failed job. It warns and moves on.
-func (r *analysisRun) bankSpend(total llm.Usage) {
-	// Nothing accounted means either no call was made (a resumed job that
-	// skipped every LLM step) or the endpoint reported no usage. Neither is a
-	// zero worth adding, and skipping keeps the write off the fast path of a
-	// job that did no inference at all.
-	if r.store == nil || total.Accounted == 0 || r.banked {
-		return
-	}
-	// Set before the write, not after: a failed write must not leave the door
-	// open for a second attempt from the panic path, which would be running
-	// against a row whose state nobody has checked.
-	r.banked = true
-	err := r.store.AddChatUsage(r.video.ID, videos.ChatUsage{
-		PromptTokens:     total.PromptTokens,
-		CachedTokens:     total.CachedTokens,
-		CompletionTokens: total.CompletionTokens,
-	})
-	if err != nil {
-		r.log.Warn("summarize worker: recording chat usage failed", append(r.ident(), "err", err)...)
-	}
-}
-
 // isInboxRead reports whether this video's transcript was fetched to help
 // decide whether to download it, rather than obtained by downloading it.
 //
@@ -711,17 +479,6 @@ func (r *analysisRun) bankSpend(total llm.Usage) {
 // runs the full pipeline, which is exactly the handover this feature promises.
 func isInboxRead(v *videos.Video, source string) bool {
 	return v.Status == videos.StatusNew && source == videos.TranscriptSourceCaption
-}
-
-// finishNoTranscript closes out a video that has nothing to summarize. It is a
-// clean terminal state, not an error, but it must still be visible: otherwise
-// a video simply disappears from the queue with no explanation.
-func (w *Worker) finishNoTranscript(job *summaryjobs.Job, video *videos.Video, reason string) {
-	_ = w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryNoTranscript, "")
-	w.emit(video.ID, videos.SummaryNoTranscript, "")
-	_ = w.d.Jobs.Finish(job.ID, summaryjobs.StateDone, "")
-	w.d.Logger.Info("summarize worker: no transcript", "video_id", video.ID, "title", video.Title,
-		"channel", video.ChannelName, "reason", reason)
 }
 
 // discardStaleAnalysis throws away what an earlier run stored for a video whose
@@ -762,70 +519,6 @@ func (w *Worker) discardStaleAnalysis(ctx context.Context, video *videos.Video) 
 	}
 }
 
-// classifyOne repairs one video from the classification backlog: a downloaded
-// video that has a summary but is still 'uncategorized'. It runs only when the
-// summary queue is empty, so real work always wins, and reports did=true only
-// when it actually made an LLM call — returning true on an empty backlog would
-// spin the Run loop, which skips its poll interval whenever a turn did work.
-//
-// The backlog exists because classification used to sit behind the key-points
-// call and was skipped whenever that failed; it also absorbs any future
-// best-effort classify failure. Errors are logged, never returned as job
-// failures — there is no job here to fail.
-func (w *Worker) classifyOne(ctx context.Context) (bool, error) {
-	skip := make([]string, 0, len(w.classifyFailed))
-	for id := range w.classifyFailed {
-		skip = append(skip, id)
-	}
-	video, err := w.d.Videos.NextUnclassified(skip)
-	if err != nil || video == nil {
-		return false, err
-	}
-
-	// Same identity/token plumbing as a full analysis, so a backlog sweep is as
-	// readable as a normal run — including the "still waiting" heartbeat.
-	totals := &llm.Totals{}
-	cctx := llm.WithTotals(llm.WithCall(ctx, llm.CallInfo{
-		VideoID: video.ID, Title: video.Title, Channel: video.ChannelName,
-		Step: "classify-backlog",
-	}), totals)
-	ident := []any{"video_id", video.ID, "title", video.Title, "channel", video.ChannelName}
-	started := time.Now()
-
-	raw, cerr := w.d.Summarizer.Classify(cctx, video.Title, video.Summary, videos.ClassifiableCategories())
-	elapsed := time.Since(started).Milliseconds()
-	if cerr != nil {
-		// Park it for this process so the sweep advances to the next video
-		// rather than retrying this one on every turn.
-		w.classifyFailed[video.ID] = true
-		w.d.Logger.Warn("summarize worker: backlog classify failed", append(ident, "duration_ms", elapsed, "err", cerr)...)
-		return true, nil
-	}
-	category := videos.NormalizeCategory(raw)
-	// Guarded, because the classify call above is slow enough for the user to
-	// have picked a category on the Player in the meantime. A no-op write is
-	// not a failure and needs no parking: the video no longer matches
-	// NextUnclassified, so the sweep will not offer it again.
-	applied, serr := w.d.Videos.SetCategoryIfUnset(video.ID, category)
-	if serr != nil {
-		w.classifyFailed[video.ID] = true
-		w.d.Logger.Error("summarize worker: backlog set category failed", append(ident, "duration_ms", elapsed, "err", serr)...)
-		return true, nil
-	}
-	if !applied {
-		w.d.Logger.Info("summarize worker: backlog video was categorized meanwhile; keeping it", "video_id", video.ID)
-		return true, nil
-	}
-	if category == videos.UncategorizedCategory {
-		// The call succeeded but the reply was unusable. Park it too: retrying
-		// the same prompt every turn would just burn requests.
-		w.classifyFailed[video.ID] = true
-	}
-	attrs := append(ident, "category", category, "duration_ms", elapsed)
-	w.d.Logger.Info("summarize worker: classified backlog video", append(attrs, totals.Snapshot().LogAttrs()...)...)
-	return true, nil
-}
-
 // emit calls OnPhase when set, so an SSE hub can push live summarize
 // progress to the Player. It is a no-op when OnPhase is nil.
 func (w *Worker) emit(videoID, status, phase string) {
@@ -834,97 +527,44 @@ func (w *Worker) emit(videoID, status, phase string) {
 	}
 }
 
-// failJob records the failure on both the video and the job, and always
-// returns a non-nil error so the caller (processOne) surfaces the failure
-// to the Run loop, which logs it. Jobs.Fail's own return is often nil on
-// the common path, so it must never be returned as-is.
-func (w *Worker) failJob(ctx context.Context, job *summaryjobs.Job, video *videos.Video, run *analysisRun, msg string) error {
-	if err := w.interrupted(ctx, job, run); err != nil {
-		return err
-	}
-	videoID := video.ID
-	if err := w.d.Videos.SetSummaryStatus(videoID, videos.SummaryError, msg); err != nil {
-		w.d.Logger.Error("summarize worker: set error status", "video_id", videoID, "err", err)
-	}
-	w.emit(videoID, videos.SummaryError, "")
-	run.finished("error")
-	terminal, ferr := w.d.Jobs.Fail(job.ID, job.Attempts, msg)
-	if ferr != nil {
-		return fmt.Errorf("summarize job %d failed (%s); also fail-record error: %w", job.ID, msg, ferr)
-	}
-	// Record an Activity row only when the job is genuinely terminal (moved to
-	// 'failed'). Most failJob calls requeue to 'pending' — a retry, not news; a
-	// row on every one would flood the feed.
-	if terminal {
-		activity.Record(w.d.Activity, activity.Event{
-			Kind: activity.KindSummary, Outcome: activity.OutcomeFail,
-			SubjectID: video.ID, Subject: video.Title, Summary: "summary failed",
-			Detail: msg,
-		})
-	}
-	return fmt.Errorf("summarize job %d failed: %s", job.ID, msg)
-}
-
-// requeueJob records a retryable failure and requeues the job WITHOUT touching
-// summary_status. It is used for the steps that run AFTER the summary is marked
-// done — key points and embedding — where a failure must retry only that step
-// and must NOT regress a usable summary to "error". If retries run out the job
-// is marked failed but the video keeps the summary it has.
-//
-// step names which one failed, in both the log and the Activity row. Passing it
-// in rather than hardcoding one is what lets embedding share this path: before,
-// embedding called failJob and so reported "Summarization failed" on a video
-// whose summary was finished and on screen.
-func (w *Worker) requeueJob(ctx context.Context, job *summaryjobs.Job, video *videos.Video, run *analysisRun, step, msg string) error {
-	if err := w.interrupted(ctx, job, run); err != nil {
-		return err
-	}
-	// will_retry=false means Jobs.Fail is about to mark this failed for good
-	// rather than requeue it — same vocabulary as the finished line.
-	w.d.Logger.Warn("summarize worker: "+step+" step failed",
-		append(run.ident(), "attempt", attemptLabel(job),
-			"will_retry", job.Attempts < job.MaxAttempts,
-			"step_duration_ms", run.stepElapsedMs(), "err", msg)...)
-	run.finished(step + "_failed")
-	terminal, ferr := w.d.Jobs.Fail(job.ID, job.Attempts, msg)
-	if ferr != nil {
-		return fmt.Errorf("summarize job %d %s failed (%s); also fail-record error: %w", job.ID, step, msg, ferr)
-	}
-	// One row, only once retries are genuinely exhausted — a row per retry would
-	// flood the feed, which is why the terminal flag exists.
-	//
-	// OutcomeWarn, not OutcomeFail: the summary is finished and readable, so this
-	// is not the "summary failed" event failJob records. But it does need to be
-	// SOMEWHERE. A job that dies here leaves summary_status="done", drops off the
-	// active queue, and is skipped by the boot sweep — so without this the video
-	// reads as complete forever while its chapters, highlights or search index are
-	// permanently missing, with no trace anywhere but the log.
-	if terminal {
-		activity.Record(w.d.Activity, activity.Event{
-			Kind: activity.KindSummary, Outcome: activity.OutcomeWarn,
-			SubjectID: video.ID, Subject: video.Title,
-			Summary: step + " failed", Detail: msg,
-		})
-	}
-	return fmt.Errorf("summarize job %d %s failed: %s", job.ID, step, msg)
-}
-
 // embedAndStore rebuilds the video's chunks from the finished analysis and
-// replaces its index. The chunk recipe itself lives in rag.BuildVideoChunks, so
-// this path and the re-embed backfill cannot drift into producing different
-// indexes for the same video.
+// replaces its index. The chunk recipe itself lives in rag.BuildVideoChunks.
 func (w *Worker) embedAndStore(ctx context.Context, videoID string, parsed subtitles.Parsed, summaryText string, chapters []Chapter) error {
 	rows := rag.BuildVideoChunks(parsed, summaryText, toRagChapters(chapters))
 	if len(rows) == 0 {
 		return errors.New("no chunks")
 	}
-	texts := make([]string, len(rows))
-	for i, r := range rows {
-		texts[i] = r.Text
-	}
-	vecs, err := w.d.Embedder.EmbedBatched(ctx, texts, 0)
+	// Embed only what is not already stored. A re-index usually changes the
+	// chapter chunks and leaves every transcript window as it was — an inbox
+	// read that is later downloaded, a retry after a failed key-points step, a
+	// reprocess — and embedding those again buys the same vectors at full price
+	// and leaves the old ones behind as dead storage.
+	reuse, err := w.d.Rag.ReusableTexts(ctx, videoID, w.d.EmbedModel)
 	if err != nil {
 		return err
+	}
+	vecs := make([][]float32, len(rows))
+	var texts []string
+	var fresh []int
+	for i, r := range rows {
+		if reuse[r.Text] > 0 {
+			reuse[r.Text]--
+			continue
+		}
+		texts = append(texts, r.Text)
+		fresh = append(fresh, i)
+	}
+	if len(texts) > 0 {
+		embedded, err := w.d.Embedder.EmbedBatched(ctx, texts, 0)
+		if err != nil {
+			return err
+		}
+		if len(embedded) != len(texts) {
+			return fmt.Errorf("embedder returned %d vectors for %d texts", len(embedded), len(texts))
+		}
+		for j, i := range fresh {
+			vecs[i] = embedded[j]
+		}
 	}
 	meta := rag.IndexMeta{Model: w.d.EmbedModel, Dim: w.d.EmbedDim, Rev: rag.ChunkRecipeRev}
 	return w.d.Rag.ReplaceVideoChunks(ctx, videoID, meta, rows, vecs)
@@ -942,20 +582,4 @@ func toRagChapters(chapters []Chapter) []rag.Chapter {
 		out = append(out, rag.Chapter{TS: c.TS, Title: c.Title})
 	}
 	return out
-}
-
-// interrupted reports a process shutdown that landed mid-analysis, which is
-// not this video's summary failing. Nothing terminal is written: no
-// summary_status=error for the card to show, no burned attempt with its
-// backoff, no Activity row. The job stays 'running' and the boot-time orphan
-// sweep reclaims it, the same rule the download worker applies. The run still
-// gets its terminal line: the endpoint has billed the tokens the partial
-// stream spent, so they are banked against the video like a panic's are.
-func (w *Worker) interrupted(ctx context.Context, job *summaryjobs.Job, run *analysisRun) error {
-	if ctx.Err() == nil {
-		return nil
-	}
-	run.finished("interrupted")
-	w.d.Logger.Debug("summarize worker: interrupted by shutdown", "job_id", job.ID, "video_id", job.VideoID)
-	return ctx.Err()
 }

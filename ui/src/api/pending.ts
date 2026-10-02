@@ -9,6 +9,16 @@ export async function listPending(channelId?: string): Promise<PendingItem[]> {
   );
 }
 
+// countPending is the Inbox badge's number. A COUNT on the server: the shell
+// refreshes it on every activity event and must not download the list for it.
+export async function countPending(): Promise<number> {
+  const r = await api.get<{ count: number }>(
+    "/api/pending/count",
+    "failed to load pending count",
+  );
+  return r.count;
+}
+
 export async function downloadPending(id: string): Promise<void> {
   await api.post(
     `/api/pending/${encodeURIComponent(id)}/download`,

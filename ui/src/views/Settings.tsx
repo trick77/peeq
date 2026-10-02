@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTransient } from "../hooks/useTransient";
 import { Icon } from "../icons";
 import { Button, Spinner, t } from "../ui";
@@ -12,7 +12,7 @@ import { getYtdlpVersion, updateYtdlp, type YtdlpVersion } from "../api/ytdlp";
 import { formatAgo } from "../format";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
 import { publishSettings, refreshSettings } from "../settingsStore";
-import type { Settings as SettingsType } from "../api/types";
+import type { Settings as SettingsType, SettingsPatch } from "../api/types";
 import { DOT } from "../sep";
 import { PRESETS } from "../formatPresets";
 
@@ -167,95 +167,67 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
     }
   }
 
-  async function handlePickPreset(id: string) {
+  // save sends one settings change and adopts the answer. Every field on this
+  // page saves through it.
+  //
+  // A patch that would change nothing is not sent. The fields commit on blur
+  // and the retention slider on release, so without this merely tabbing
+  // through the page PUT every field back unchanged — and the slider PUT twice
+  // per touch, because a touch ends with both `touchend` and the mouse event
+  // the browser synthesises after it.
+  //
+  // "Nothing" is judged against what the server WILL hold, not what it last
+  // said: `sent` carries the values of saves still in flight. Without it the
+  // second of those two events would be sent again, and — worse — a value put
+  // back to its old self while its save was still on the wire would be taken
+  // for unchanged and never sent.
+  const sent = useRef<SettingsPatch>({});
+  async function save(patch: SettingsPatch) {
     if (!settings) return;
-    const patch =
+    const expected: Record<string, unknown> = { ...settings, ...sent.current };
+    const incoming: Record<string, unknown> = patch;
+    if (Object.keys(incoming).every((k) => expected[k] === incoming[k])) return;
+    sent.current = { ...sent.current, ...patch };
+    try {
+      adoptSettings(await updateSettings(patch));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      // Forget only what this save put there: a later save of the same field
+      // has replaced the value, and its own answer is still to come.
+      const pending: Record<string, unknown> = { ...sent.current };
+      for (const k of Object.keys(incoming)) {
+        if (pending[k] === incoming[k]) delete pending[k];
+      }
+      sent.current = pending as SettingsPatch;
+    }
+  }
+
+  const handlePickPreset = (id: string) =>
+    save(
       id === "custom"
         ? { format_preset: id, format_custom: customFormat }
-        : { format_preset: id };
-    try {
-      const s = await updateSettings(patch);
-      adoptSettings(s);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
-
-  async function handleSaveCustomFormat() {
-    try {
-      const s = await updateSettings({
-        format_preset: "custom",
-        format_custom: customFormat,
-      });
-      adoptSettings(s);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
-
-  async function handleSaveLimitRate() {
-    try {
-      const s = await updateSettings({ limit_rate: limitRate });
-      adoptSettings(s);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
-
-  async function handleSaveThrottleBase() {
-    try {
-      const s = await updateSettings({ throttle_base_seconds: throttleBase });
-      adoptSettings(s);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
-
-  // commitRetention saves retentionDays via PUT /api/settings. Deliberately
-  // NOT called from the range input's onChange (which fires on every
-  // integer step while dragging — up to ~80 PUTs for a single drag from 14
-  // to 90); onChange only updates the displayed value locally, and this
-  // fires once the user releases the slider (onMouseUp/onKeyUp/onTouchEnd).
-  async function commitRetention() {
-    try {
-      const s = await updateSettings({ retention_days: retentionDays });
-      adoptSettings(s);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
-
-  async function handleSaveMinVideoDuration() {
-    try {
-      const s = await updateSettings({
-        min_video_duration_seconds: minVideoDuration,
-      });
-      adoptSettings(s);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
-
+        : { format_preset: id },
+    );
+  const handleSaveCustomFormat = () =>
+    save({ format_preset: "custom", format_custom: customFormat });
+  const handleSaveLimitRate = () => save({ limit_rate: limitRate });
+  const handleSaveThrottleBase = () =>
+    save({ throttle_base_seconds: throttleBase });
+  // commitRetention is deliberately NOT called from the range input's onChange
+  // (which fires on every integer step while dragging — up to ~80 PUTs for a
+  // single drag from 14 to 90); onChange only updates the displayed value
+  // locally, and this fires once the user releases the slider.
+  const commitRetention = () => save({ retention_days: retentionDays });
+  const handleSaveMinVideoDuration = () =>
+    save({ min_video_duration_seconds: minVideoDuration });
   // Unlike the text/number fields above there is no local mirror state to
-  // commit on blur — the checkbox renders straight off settings, so the
-  // response from updateSettings is the only place the new value comes from.
-  async function handleToggleSubtitlesDefault(next: boolean) {
-    try {
-      const s = await updateSettings({ subtitles_default: next });
-      adoptSettings(s);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
-
-  async function handleToggleDirectStream(next: boolean) {
-    try {
-      const s = await updateSettings({ direct_stream_enabled: next });
-      adoptSettings(s);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }
+  // commit on blur — the checkboxes render straight off settings, so the
+  // response is the only place the new value comes from.
+  const handleToggleSubtitlesDefault = (next: boolean) =>
+    save({ subtitles_default: next });
+  const handleToggleDirectStream = (next: boolean) =>
+    save({ direct_stream_enabled: next });
 
   async function handleCreateToken() {
     setTokenBusy(true);
@@ -489,10 +461,9 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
           )}
         </h2>
         <p className="desc">
-          Lets the Peeq browser extension send your YouTube cookie automatically
-          and add videos to your queue, so you never paste a cookie or a link by
-          hand. The token can only write the cookie and enqueue a video — it
-          cannot read your library.
+          Lets the Peeq browser extension send your YouTube cookie
+          automatically, so you never paste a cookie by hand. The token can only
+          write the cookie — it cannot read your library.
         </p>
 
         {freshToken ? (

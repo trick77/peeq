@@ -55,8 +55,9 @@ func TestMigrate0014_rebuildAcceptsUnavailableAndKeepsRows(t *testing.T) {
 		`UPDATE channel_videos SET state='banana' WHERE video_id='keep'`); err == nil {
 		t.Fatal("CHECK must still reject an unknown state")
 	}
-	// Both indexes survive the drop/rename under their own names.
-	for _, idx := range []string{"idx_channel_videos_channel", "idx_channel_videos_state"} {
+	// The indexes survive the drop/rename. The per-channel one is checked under
+	// the name 0032 gave its replacement.
+	for _, idx := range []string{"idx_channel_videos_channel_state", "idx_channel_videos_state"} {
 		var n int
 		if err := db.QueryRow(
 			`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?`, idx,
