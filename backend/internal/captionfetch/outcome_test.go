@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
@@ -90,6 +91,65 @@ func TestLostCaptionIsRecordedAsAFailure(t *testing.T) {
 
 	if got := lastError(t, h); !strings.Contains(got, "read caption") {
 		t.Fatalf("caption_last_error = %q, want the read failure", got)
+	}
+}
+
+// failingLanguage is a VideoStore whose SetAudioLanguage fails: the transcript
+// is stored, the step after it is not.
+type failingLanguage struct{ *videos.Store }
+
+func (failingLanguage) SetAudioLanguage(string, string) error {
+	return errors.New("language write failed")
+}
+
+// TestFailureAfterTheTranscriptIsRecorded: the attempt died after the fetch,
+// and the row must not read as a clean one.
+func TestFailureAfterTheTranscriptIsRecorded(t *testing.T) {
+	h := newHarness(t)
+	rel := filepath.Join(ytdlp.SummaryDirName, "v1", "v1.en.vtt")
+	writeCaption(t, h, rel)
+	w := NewWorker(Deps{
+		Fetcher: &fetcher{results: []string{rel}}, Ledger: h.ledger,
+		Videos: failingLanguage{h.videos}, Summaries: h.summary, MediaDir: h.mediaDir,
+	})
+
+	w.pass(context.Background())
+
+	if got := lastError(t, h); got != "language write failed" {
+		t.Fatalf("caption_last_error = %q, want the failed step", got)
+	}
+}
+
+// outcomeLossLedger fails the outcome write and nothing else.
+type outcomeLossLedger struct{ *channelvideos.Store }
+
+func (outcomeLossLedger) SetCaptionLastError(string, string) error {
+	return errors.New("write failed")
+}
+
+// TestOutcomeWriteFailureDoesNotChangeTheVideo: recording the reason is
+// best-effort. Losing it must not stop the ladder from settling, or the card
+// would wait for captions forever.
+func TestOutcomeWriteFailureDoesNotChangeTheVideo(t *testing.T) {
+	h := newHarness(t)
+	boom := errors.New("yt-dlp exploded")
+	w := NewWorker(Deps{
+		Fetcher: &fetcher{errs: []error{boom, boom, boom, boom, boom}},
+		Ledger:  outcomeLossLedger{h.ledger},
+		Videos:  h.videos, Summaries: h.summary, MediaDir: h.mediaDir,
+	})
+
+	for i := 0; i < channelvideos.CaptionMaxAttempts; i++ {
+		w.pass(context.Background())
+		mustBeDue(t, h)
+	}
+
+	v, err := h.videos.Get("v1")
+	if err != nil || v == nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.SummaryStatus != videos.SummaryNoTranscript {
+		t.Fatalf("summary_status = %q, want no_transcript", v.SummaryStatus)
 	}
 }
 
