@@ -105,7 +105,7 @@ html {
    under 16px, and never zooms back out. The scale has no 16px step (--text-ui is
    15px), so this is a deliberate one-off: a pointer-coarse-only bump that buys
    the phone a stable viewport. Desktop keeps the scale exactly.
-   Fields must take their size from --text-input (via .ui-control or controlStyle
+   Fields must take their size from --text-input (via .ui-control
    in ui.tsx), never from --text-ui and never from an inline fontSize — an inline
    value would out-specify the media query below. */
 :root {
@@ -509,124 +509,11 @@ button {
   gap: 10px;
 }
 
-.dock {
-  background: var(--color-active);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-ui);
-  padding: 12px;
-}
-.dock-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-.dock-top span {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--color-faint);
-}
-.dock-top b {
-  font-family:
-    ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
-    monospace;
-  font-size: 11px;
-  color: var(--color-muted);
-  font-weight: 500;
-}
-/* .srow — one "<label> <count>" line in the rail status panel. Rendered as a
-   <button> when it navigates and a <div> when it doesn't, so the reset below
-   has to neutralise button chrome rather than assume a div. */
-.srow {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 5px 0;
-  font-size: 12.5px;
-  color: var(--color-muted);
-  background: none;
-  border: 0;
-  text-align: left;
-  font-family: inherit;
-}
-.srow > b {
-  margin-left: auto;
-  font-family:
-    ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
-    monospace;
-  font-size: 11.5px;
-  color: var(--color-ink-dim);
-  font-weight: 600;
-}
-.srow > i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex: none;
-  background: var(--color-faint);
-}
-/* Exactly one row is accented, and it is the one that wants a person. See the
-   comment in StatusPanel.tsx for why the other two deliberately stay quiet. */
-.srow.hot {
-  color: var(--color-ink-dim);
-}
-.srow.hot > b {
-  color: var(--color-accent);
-}
-.srow.hot > i {
-  background: var(--color-accent);
-  box-shadow: 0 0 7px var(--glow-accent);
-}
-.srow.run > i {
-  background: var(--color-online);
-  box-shadow: 0 0 7px var(--color-online);
-}
 button.srow:not(:disabled) {
   cursor: pointer;
 }
 button.srow:not(:disabled):hover {
   color: var(--color-ink);
-}
-/* The state word. "paused" is the only one that earns a colour: idle and
-   working are both fine, and colouring "working" would make routine activity
-   look like something to attend to. */
-.dock-top b.stalled {
-  color: var(--color-danger);
-}
-.dock-sub {
-  font-family:
-    ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
-    monospace;
-  font-size: 10.5px;
-  color: var(--color-accent);
-  margin-top: 6px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dock-bar {
-  height: 4px;
-  border-radius: 4px;
-  background: var(--color-elevated);
-  overflow: hidden;
-  margin-top: 9px;
-}
-.dock-bar > i {
-  display: block;
-  height: 100%;
-  background: linear-gradient(
-    90deg,
-    var(--color-accent-dim),
-    var(--color-accent)
-  );
-  border-radius: 4px;
-  box-shadow: 0 0 8px var(--glow-accent);
-}
-.dock-empty {
-  font-size: 12px;
-  color: var(--color-faint);
 }
 
 /* Up next's own leftovers. Its rows ARE History's rows now — same grid, same
@@ -2562,15 +2449,7 @@ button.sleeppick.armed {
   max-width: 78px;
   opacity: 0.85;
 }
-/* .life.fresh and its `.metapill` rules lived here until the category pill
-   moved onto the thumbnail; nothing renders that row any more, so the pill's
-   placement now lives with `.thumb .metapill.oncover`. */
-.life .sz {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--color-faint);
-}
+
 .life.err {
   color: var(--color-danger);
 }
@@ -3472,14 +3351,6 @@ button.sleeppick.armed {
   padding: 16px;
 }
 
-.summ-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--color-online);
-  margin-bottom: 12px;
-}
 .summ p {
   margin: 0 0 12px;
   color: var(--color-ink-dim);
@@ -4237,20 +4108,6 @@ textarea.cookiebox:focus {
   accent-color: var(--color-accent);
   width: 15px;
   height: 15px;
-}
-.channel-format-input {
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  padding: 8px 11px;
-  color: var(--color-ink);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  outline: none;
-  width: 200px;
-}
-.channel-format-input:focus {
-  border-color: var(--color-accent);
 }
 
 /* ---- Channels list: banner-scrim rows (Option B) ----
@@ -6005,17 +5862,6 @@ details.tomb-sect[open] > summary svg {
   color: var(--color-accent-strong);
 }
 
-/* pressed state for toggles (the captions button) — was .abtn.cc-btn.on. */
-.ui-btn.is-on {
-  background: var(--color-accent-fill);
-  border-color: var(--color-accent);
-  color: var(--color-ink);
-}
-/* success confirmation on an icon button (Copy -> Copied). */
-.ui-btn.is-ok {
-  color: var(--color-online);
-}
-
 /* ---- channel page ---------------------------------------------------- */
 /* Deliberately prefixed `chan-` rather than reusing `.card`, which is
    already defined twice in this file (grid tile ~576, panel ~1202) and
@@ -6801,21 +6647,7 @@ details.tomb-sect[open] > summary svg {
 .sharepage-transcript {
   margin-top: 20px;
 }
-/* The caption download row inside .tsearch. The Player writes the equivalent
-   inline; here it earns a class because the share page repeats it. */
-.sharepage-dl {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-.sharepage-dl .pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  text-decoration: none;
-}
+
 /* The transcript "Copy text" pill sits after the two download pills in the
    same row; the extra gap keeps it from reading as a third file format. */
 .transcript-copy {

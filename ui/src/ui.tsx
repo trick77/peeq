@@ -43,16 +43,8 @@ export const t = {
   },
 } satisfies Record<string, CSSProperties>;
 
-/** Field label: 13px muted, 6px above its control. Replaces the 11px uppercase .lab. */
-export const fieldLabel: CSSProperties = {
-  display: "block",
-  ...t.label,
-  marginBottom: 6,
-};
-
 /**
- * The 40px form control. Prefer the `ui-control` class (it carries the focus ring);
- * `controlStyle` is the same look as an inline object for composition.
+ * The 40px form control, as the `ui-control` class (it carries the focus ring).
  *
  * Font size comes from --text-input, which is 15px on a fine pointer and 16px on a
  * coarse one. That bump is not cosmetic: iOS Safari zooms the page in whenever a
@@ -61,18 +53,6 @@ export const fieldLabel: CSSProperties = {
  * the media query that does the bumping.
  */
 export const controlClass = "ui-control";
-export const controlStyle: CSSProperties = {
-  width: "100%",
-  minHeight: 40,
-  padding: "0 12px",
-  background: "var(--color-panel)",
-  border: "1px solid var(--color-border)",
-  borderRadius: "var(--radius-ui)",
-  color: "var(--color-ink)",
-  fontFamily: "var(--font-sans)",
-  fontSize: "var(--text-input)",
-  outline: "none",
-};
 
 /**
  * tocGridStyle sizes a .toc.toc-grid so its two columns read top-to-bottom
