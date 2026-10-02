@@ -167,8 +167,11 @@ func stripSoundEvents(s string) (string, bool) {
 		}
 		return m
 	})
-	out = strings.TrimSpace(spaceRe.ReplaceAllString(out, " "))
-	return out, out != strings.TrimSpace(s)
+	// Decided before the whitespace is tidied: every rule above replaces what
+	// it matches, so a difference here is a removed marker and nothing else.
+	// Comparing after the collapse counted a double space as one.
+	stripped := out != s
+	return strings.TrimSpace(spaceRe.ReplaceAllString(out, " ")), stripped
 }
 
 // Thresholds for IsNonSpeech. Deliberately conservative: a false positive
