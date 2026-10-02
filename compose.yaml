@@ -100,9 +100,15 @@ services:
       traefik.http.routers.peeq.entrypoints: websecure
       traefik.http.routers.peeq.tls: "true"
       # peeq compresses nothing itself, so without this the SPA bundle and every
-      # JSON list cross the wire at full size. Traefik leaves text/event-stream
-      # alone, so the live queue's SSE still flushes frame by frame.
-      traefik.http.middlewares.peeq-compress.compress: "true"
+      # JSON list cross the wire at full size.
+      #
+      # An include list, not plain `compress: true`, which compresses every
+      # type a client will accept it for. Media and images are compressed
+      # already: gzipping a video download costs CPU for nothing and takes its
+      # Content-Length and its Range support with it. text/event-stream is left
+      # off on purpose too, so the live queue's SSE is never buffered.
+      # Needs Traefik v3 (includedContentTypes).
+      traefik.http.middlewares.peeq-compress.compress.includedcontenttypes: "application/json,text/html,text/css,text/javascript,application/javascript,image/svg+xml,text/vtt,text/plain"
       traefik.http.routers.peeq.middlewares: peeq-compress
       traefik.http.services.peeq.loadbalancer.server.port: "8080"
 
