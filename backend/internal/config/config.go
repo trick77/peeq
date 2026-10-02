@@ -35,15 +35,14 @@ const (
 
 // Config holds all runtime settings. Secrets come from ENV only.
 type Config struct {
-	Addr          string // HTTP listen address
-	PublicURL     string // externally reachable base URL
-	SessionSecret string
-	DBPath        string // path to the SQLite file
-	MediaDir      string // root for downloaded media
-	YtdlpDir      string // directory holding the yt-dlp binary
-	AuthMode      AuthMode
-	OIDC          OIDCConfig
-	Dev           DevUserConfig
+	Addr      string // HTTP listen address
+	PublicURL string // externally reachable base URL
+	DBPath    string // path to the SQLite file
+	MediaDir  string // root for downloaded media
+	YtdlpDir  string // directory holding the yt-dlp binary
+	AuthMode  AuthMode
+	OIDC      OIDCConfig
+	Dev       DevUserConfig
 
 	// AI integration: model ids only, no endpoint. Each model's llmwire
 	// profile carries its host, its capabilities and the key variable its
@@ -115,12 +114,10 @@ type Config struct {
 
 // OIDCConfig holds OpenID Connect settings.
 type OIDCConfig struct {
-	Issuer                string
-	ClientID              string
-	ClientSecret          string
-	RedirectURL           string
-	PostLogoutRedirectURL string
-	AdminGroup            string
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
 }
 
 // DevUserConfig holds the fixed local-only development identity.
@@ -159,23 +156,20 @@ func envDuration(key string, def time.Duration) (time.Duration, error) {
 // Load reads configuration from the environment, applying defaults.
 func Load() (Config, error) {
 	cfg := Config{
-		Addr:          env("BACKEND_ADDR", ":8080"),
-		PublicURL:     env("BACKEND_PUBLIC_URL", ""),
-		SessionSecret: env("BACKEND_SESSION_SECRET", ""),
-		DBPath:        env("BACKEND_DB_PATH", "/data/peeq.db"),
-		MediaDir:      env("BACKEND_MEDIA_DIR", "/data/media"),
-		YtdlpDir:      env("BACKEND_YTDLP_DIR", "/data/bin"),
-		AuthMode:      AuthMode(env("BACKEND_AUTH_MODE", "")),
-		ChatModel:     env("BACKEND_CHAT_MODEL", ""),
-		GateModel:     env("BACKEND_GATE_MODEL", ""),
-		EmbedModel:    env("BACKEND_EMBED_MODEL", ""),
+		Addr:       env("BACKEND_ADDR", ":8080"),
+		PublicURL:  env("BACKEND_PUBLIC_URL", ""),
+		DBPath:     env("BACKEND_DB_PATH", "/data/peeq.db"),
+		MediaDir:   env("BACKEND_MEDIA_DIR", "/data/media"),
+		YtdlpDir:   env("BACKEND_YTDLP_DIR", "/data/bin"),
+		AuthMode:   AuthMode(env("BACKEND_AUTH_MODE", "")),
+		ChatModel:  env("BACKEND_CHAT_MODEL", ""),
+		GateModel:  env("BACKEND_GATE_MODEL", ""),
+		EmbedModel: env("BACKEND_EMBED_MODEL", ""),
 		OIDC: OIDCConfig{
-			Issuer:                env("BACKEND_OIDC_ISSUER", ""),
-			ClientID:              env("BACKEND_OIDC_CLIENT_ID", ""),
-			ClientSecret:          env("BACKEND_OIDC_CLIENT_SECRET", ""),
-			RedirectURL:           env("BACKEND_OIDC_REDIRECT_URL", ""),
-			PostLogoutRedirectURL: env("BACKEND_OIDC_POST_LOGOUT_REDIRECT_URL", ""),
-			AdminGroup:            env("BACKEND_OIDC_ADMIN_GROUP", ""),
+			Issuer:       env("BACKEND_OIDC_ISSUER", ""),
+			ClientID:     env("BACKEND_OIDC_CLIENT_ID", ""),
+			ClientSecret: env("BACKEND_OIDC_CLIENT_SECRET", ""),
+			RedirectURL:  env("BACKEND_OIDC_REDIRECT_URL", ""),
 		},
 		Dev: DevUserConfig{
 			Subject:     env("BACKEND_DEV_USER_SUBJECT", "dev-admin"),
@@ -241,10 +235,6 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("BACKEND_SUMMARIZE_SUMMARY_TOKENS must be a positive integer")
 		}
 		cfg.SummaryChunkTokens = n
-	}
-
-	if cfg.SessionSecret == "" {
-		return Config{}, fmt.Errorf("BACKEND_SESSION_SECRET is required")
 	}
 
 	switch cfg.AuthMode {

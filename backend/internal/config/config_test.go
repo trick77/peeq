@@ -15,7 +15,6 @@ import (
 )
 
 func TestLoad_devAuthRejectsNonLoopback(t *testing.T) {
-	t.Setenv("BACKEND_SESSION_SECRET", "x")
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "0.0.0.0:8080")
 	t.Setenv("BACKEND_PUBLIC_URL", "")
@@ -25,19 +24,11 @@ func TestLoad_devAuthRejectsNonLoopback(t *testing.T) {
 }
 
 func TestLoad_devAuthLoopbackOK(t *testing.T) {
-	t.Setenv("BACKEND_SESSION_SECRET", "x")
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 	t.Setenv("BACKEND_PUBLIC_URL", "")
 	if _, err := Load(); err != nil {
 		t.Fatalf("loopback dev auth must pass: %v", err)
-	}
-}
-
-func TestLoad_missingSecretFails(t *testing.T) {
-	t.Setenv("BACKEND_SESSION_SECRET", "")
-	if _, err := Load(); err == nil {
-		t.Fatal("missing secret must fail")
 	}
 }
 
@@ -47,7 +38,6 @@ func TestLoad_allowAnonymousYoutube_requiresDevAuth(t *testing.T) {
 	// later tests in this file aren't polluted by leftover vars.
 	t.Cleanup(os.Clearenv)
 	base := map[string]string{
-		"BACKEND_SESSION_SECRET":          "s",
 		"BACKEND_ALLOW_ANONYMOUS_YOUTUBE": "true",
 	}
 	setEnv := func(m map[string]string) {
@@ -96,7 +86,6 @@ func TestLoad_allowAnonymousYoutube_requiresDevAuth(t *testing.T) {
 }
 
 func TestLoad_allowAnonymousYoutube_defaultFalse(t *testing.T) {
-	t.Setenv("BACKEND_SESSION_SECRET", "x")
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 	cfg, err := Load()
@@ -109,7 +98,6 @@ func TestLoad_allowAnonymousYoutube_defaultFalse(t *testing.T) {
 }
 
 func TestLoad_defaults(t *testing.T) {
-	t.Setenv("BACKEND_SESSION_SECRET", "s")
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 	cfg, err := Load()
@@ -129,7 +117,6 @@ func TestLoad_defaults(t *testing.T) {
 }
 
 func TestLoad_models(t *testing.T) {
-	t.Setenv("BACKEND_SESSION_SECRET", "s")
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 	t.Setenv("BACKEND_CHAT_MODEL", "chat-m")
@@ -146,7 +133,6 @@ func TestLoad_models(t *testing.T) {
 
 func TestLoad_summarizeDelays(t *testing.T) {
 	setRequired := func() {
-		t.Setenv("BACKEND_SESSION_SECRET", "x")
 		t.Setenv("BACKEND_AUTH_MODE", "dev")
 		t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 		t.Setenv("BACKEND_PUBLIC_URL", "")
@@ -194,7 +180,6 @@ func TestLoad_summarizeDelays(t *testing.T) {
 
 func TestLoad_chatStreamIdleTimeout(t *testing.T) {
 	setRequired := func() {
-		t.Setenv("BACKEND_SESSION_SECRET", "x")
 		t.Setenv("BACKEND_AUTH_MODE", "dev")
 		t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 		t.Setenv("BACKEND_PUBLIC_URL", "")
@@ -233,7 +218,6 @@ func TestLoad_chatStreamIdleTimeout(t *testing.T) {
 // only the variable it is exercising.
 func baseEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("BACKEND_SESSION_SECRET", "x")
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 	t.Setenv("BACKEND_PUBLIC_URL", "")

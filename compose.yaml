@@ -2,8 +2,7 @@
 # proxy that terminates TLS. Requires an external "traefik" network
 # (`docker network create traefik`) shared with your Traefik instance.
 #
-#   cp .env.example .env   # fill in the values, especially BACKEND_SESSION_SECRET
-#                           # and the OIDC block
+#   cp .env.example .env   # fill in the values, especially the OIDC block
 #   docker compose up -d
 #
 # The Traefik Host() rule below is set to peeq.trick77.com.
