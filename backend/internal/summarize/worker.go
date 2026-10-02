@@ -910,21 +910,43 @@ func (w *Worker) requeueJob(ctx context.Context, job *summaryjobs.Job, video *vi
 }
 
 // embedAndStore rebuilds the video's chunks from the finished analysis and
-// replaces its index. The chunk recipe itself lives in rag.BuildVideoChunks, so
-// this path and the re-embed backfill cannot drift into producing different
-// indexes for the same video.
+// replaces its index. The chunk recipe itself lives in rag.BuildVideoChunks.
 func (w *Worker) embedAndStore(ctx context.Context, videoID string, parsed subtitles.Parsed, summaryText string, chapters []Chapter) error {
 	rows := rag.BuildVideoChunks(parsed, summaryText, toRagChapters(chapters))
 	if len(rows) == 0 {
 		return errors.New("no chunks")
 	}
-	texts := make([]string, len(rows))
-	for i, r := range rows {
-		texts[i] = r.Text
-	}
-	vecs, err := w.d.Embedder.EmbedBatched(ctx, texts, 0)
+	// Embed only what is not already stored. A re-index usually changes the
+	// chapter chunks and leaves every transcript window as it was — an inbox
+	// read that is later downloaded, a retry after a failed key-points step, a
+	// reprocess — and embedding those again buys the same vectors at full price
+	// and leaves the old ones behind as dead storage.
+	reuse, err := w.d.Rag.ReusableTexts(ctx, videoID, w.d.EmbedModel)
 	if err != nil {
 		return err
+	}
+	vecs := make([][]float32, len(rows))
+	var texts []string
+	var fresh []int
+	for i, r := range rows {
+		if reuse[r.Text] > 0 {
+			reuse[r.Text]--
+			continue
+		}
+		texts = append(texts, r.Text)
+		fresh = append(fresh, i)
+	}
+	if len(texts) > 0 {
+		embedded, err := w.d.Embedder.EmbedBatched(ctx, texts, 0)
+		if err != nil {
+			return err
+		}
+		if len(embedded) != len(texts) {
+			return fmt.Errorf("embedder returned %d vectors for %d texts", len(embedded), len(texts))
+		}
+		for j, i := range fresh {
+			vecs[i] = embedded[j]
+		}
 	}
 	meta := rag.IndexMeta{Model: w.d.EmbedModel, Dim: w.d.EmbedDim, Rev: rag.ChunkRecipeRev}
 	return w.d.Rag.ReplaceVideoChunks(ctx, videoID, meta, rows, vecs)

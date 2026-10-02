@@ -227,13 +227,8 @@ WHERE v.channel_id = ?`, channelID)
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate chunk rowids for channel: %w", err)
 	}
-	for _, id := range chunkIDs {
-		if _, err := tx.Exec(`DELETE FROM vec_chunks WHERE rowid = ?`, id); err != nil {
-			return fmt.Errorf("delete vec_chunks row %d: %w", id, err)
-		}
-		if _, err := tx.Exec(`DELETE FROM fts_chunks WHERE rowid = ?`, id); err != nil {
-			return fmt.Errorf("delete fts_chunks row %d: %w", id, err)
-		}
+	if err := rag.DeleteChunksTx(context.Background(), tx, chunkIDs); err != nil {
+		return fmt.Errorf("delete vec/fts rows for channel: %w", err)
 	}
 
 	if _, err := tx.Exec(`DELETE FROM videos WHERE channel_id = ?`, channelID); err != nil {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -58,41 +59,71 @@ const (
 	HighlightEnd   = "\x03"
 )
 
-// deleteVideoTx removes a video's rows from all three chunk tables
-// (transcript_chunks, vec_chunks, fts_chunks) within tx. vec_chunks.rowid ==
-// fts_chunks.rowid == transcript_chunks.id, so the ids are gathered first,
-// then vec_chunks and fts_chunks are purged by rowid before transcript_chunks
-// itself is deleted.
-func deleteVideoTx(ctx context.Context, tx *sql.Tx, videoID string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM transcript_chunks WHERE video_id = ?`, videoID)
+// chunkIDsTx returns a video's chunk ids with their text, oldest first.
+func chunkIDsTx(ctx context.Context, tx *sql.Tx, videoID string) (ids []int64, texts []string, err error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, text FROM transcript_chunks WHERE video_id = ? ORDER BY id`, videoID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int64
+		var text string
+		if err := rows.Scan(&id, &text); err != nil {
+			return nil, nil, err
+		}
+		ids = append(ids, id)
+		texts = append(texts, text)
+	}
+	return ids, texts, rows.Err()
+}
+
+// DeleteChunksTx removes the vector and keyword rows of the given chunk ids
+// within tx. vec_chunks.rowid == fts_chunks.rowid == transcript_chunks.id, and
+// neither virtual table can ride a foreign-key cascade, so whoever deletes
+// transcript_chunks rows (here, or by deleting their videos) calls this first.
+//
+// One row at a time on purpose: vec0 answers `rowid = ?` with a point lookup
+// and `rowid IN (...)` with a scan of every chunk (see copyOutSelect).
+func DeleteChunksTx(ctx context.Context, tx *sql.Tx, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	delVec, err := tx.PrepareContext(ctx, `DELETE FROM vec_chunks WHERE rowid = ?`)
 	if err != nil {
 		return err
 	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	_ = rows.Close()
-	if err := rows.Err(); err != nil {
+	defer func() { _ = delVec.Close() }()
+	delFTS, err := tx.PrepareContext(ctx, `DELETE FROM fts_chunks WHERE rowid = ?`)
+	if err != nil {
 		return err
 	}
+	defer func() { _ = delFTS.Close() }()
 	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM vec_chunks WHERE rowid = ?`, id); err != nil {
+		if _, err := delVec.ExecContext(ctx, id); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM fts_chunks WHERE rowid = ?`, id); err != nil {
+		if _, err := delFTS.ExecContext(ctx, id); err != nil {
 			return err
 		}
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM transcript_chunks WHERE video_id = ?`, videoID); err != nil {
-		return err
 	}
 	return nil
+}
+
+// deleteVideoTx removes a video's rows from all three chunk tables within tx
+// and reports how many chunks went.
+func deleteVideoTx(ctx context.Context, tx *sql.Tx, videoID string) (int, error) {
+	ids, _, err := chunkIDsTx(ctx, tx, videoID)
+	if err != nil {
+		return 0, err
+	}
+	if err := DeleteChunksTx(ctx, tx, ids); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM transcript_chunks WHERE video_id = ?`, videoID); err != nil {
+		return 0, err
+	}
+	return len(ids), nil
 }
 
 // IndexMeta describes the index a write produces: which model and dimension
@@ -105,8 +136,43 @@ type IndexMeta struct {
 	Rev   int
 }
 
-// ReplaceVideoChunks atomically replaces a video's transcript chunks and
-// embeddings and records the index metadata on the video row.
+// ReusableTexts returns the chunk texts already stored for a video with
+// vectors from model, each with how many chunks carry it. A caller about to
+// re-index the video embeds only the texts not in here and passes a nil vector
+// for the rest (see ReplaceVideoChunks).
+//
+// Empty when the stored vectors came from another model: the same text under a
+// different model is a different vector.
+func (s *Store) ReusableTexts(ctx context.Context, videoID, model string) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT tc.text FROM transcript_chunks tc
+JOIN videos v ON v.id = tc.video_id
+WHERE tc.video_id = ? AND v.embed_model = ?`, videoID, model)
+	if err != nil {
+		return nil, fmt.Errorf("rag: reusable texts %s: %w", videoID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]int{}
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return nil, fmt.Errorf("rag: reusable texts %s: %w", videoID, err)
+		}
+		out[text]++
+	}
+	return out, rows.Err()
+}
+
+// ReplaceVideoChunks atomically makes rows the video's chunks and records the
+// index metadata on the video row.
+//
+// vectors[i] is row i's embedding, or nil to keep the vector already stored
+// for a chunk with the same text. A kept chunk stays under its rowid and has
+// only its position updated; chunks no row claims are deleted. That is what
+// keeps a re-index of unchanged text from growing vec_chunks: vec0 never frees
+// a deleted vector, so replacing every row wholesale left a dead copy of the
+// video's vectors behind each time (see CompactVectors). A nil vector with no
+// stored chunk to keep is an error and writes nothing.
 func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID string, meta IndexMeta, rows []ChunkRow, vectors [][]float32) error {
 	if len(rows) != len(vectors) {
 		return fmt.Errorf("rag: %d rows but %d vectors", len(rows), len(vectors))
@@ -121,13 +187,52 @@ func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID string, meta Ind
 			return err
 		}
 	}
-	if err := deleteVideoTx(ctx, tx, videoID); err != nil {
+	ids, texts, err := chunkIDsTx(ctx, tx, videoID)
+	if err != nil {
 		return err
+	}
+	// The stored chunks a nil-vector row may claim, by text, oldest first.
+	free := make(map[string][]int64, len(ids))
+	for i, id := range ids {
+		free[texts[i]] = append(free[texts[i]], id)
+	}
+	kept := make([]int64, len(rows)) // 0 = insert
+	for i, r := range rows {
+		if vectors[i] != nil {
+			continue
+		}
+		candidates := free[r.Text]
+		if len(candidates) == 0 {
+			return fmt.Errorf("rag: chunk %d of %s has no vector and no stored chunk to keep", r.Ordinal, videoID)
+		}
+		kept[i], free[r.Text] = candidates[0], candidates[1:]
+	}
+	var stale []int64
+	for _, id := range ids {
+		if !slices.Contains(kept, id) {
+			stale = append(stale, id)
+		}
+	}
+	if err := DeleteChunksTx(ctx, tx, stale); err != nil {
+		return err
+	}
+	for _, id := range stale {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM transcript_chunks WHERE id = ?`, id); err != nil {
+			return err
+		}
 	}
 	for i, r := range rows {
 		kind := r.Kind
 		if kind == "" {
 			kind = "transcript"
+		}
+		if kept[i] != 0 {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE transcript_chunks SET ordinal = ?, kind = ?, start_seconds = ?, token_count = ? WHERE id = ?`,
+				r.Ordinal, kind, r.StartSeconds, r.TokenCount, kept[i]); err != nil {
+				return err
+			}
+			continue
 		}
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO transcript_chunks (video_id, ordinal, text, kind, start_seconds, token_count) VALUES (?,?,?,?,?,?)`,
@@ -156,8 +261,10 @@ func (s *Store) ReplaceVideoChunks(ctx context.Context, videoID string, meta Ind
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	// A re-embed left the old vectors' storage behind (CompactVectors).
-	WarnVectorBloat(ctx, s.db, slog.Default(), "video_id", videoID)
+	if len(stale) > 0 {
+		// Deleted vectors keep their storage (CompactVectors).
+		WarnVectorBloat(ctx, s.db, slog.Default(), "video_id", videoID)
+	}
 	return nil
 }
 
@@ -168,13 +275,16 @@ func (s *Store) DeleteVideoChunks(ctx context.Context, videoID string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := deleteVideoTx(ctx, tx, videoID); err != nil {
+	deleted, err := deleteVideoTx(ctx, tx, videoID)
+	if err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	WarnVectorBloat(ctx, s.db, slog.Default(), "video_id", videoID)
+	if deleted > 0 {
+		WarnVectorBloat(ctx, s.db, slog.Default(), "video_id", videoID)
+	}
 	return nil
 }
 

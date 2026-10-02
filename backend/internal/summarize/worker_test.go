@@ -785,14 +785,21 @@ func (c *keyPointsFailOnceCompleter) Complete(_ context.Context, m []llm.Message
 }
 
 // countingEmbedder records how many times Embed is called, to prove a resumed
-// job does not re-embed.
+// job does not re-embed, and how often each text was sent.
 type countingEmbedder struct {
 	dim   int
 	calls int
+	sent  map[string]int
 }
 
 func (c *countingEmbedder) EmbedBatched(_ context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
 	c.calls++
+	if c.sent == nil {
+		c.sent = map[string]int{}
+	}
+	for _, in := range inputs {
+		c.sent[in]++
+	}
 	out := make([][]float32, len(inputs))
 	for i := range inputs {
 		v := make([]float32, c.dim)
@@ -883,8 +890,13 @@ func TestWorkerResumable_keyPointsFailureKeepsSummaryAndRetriesOnlyKeyPoints(t *
 	if !strings.Contains(v.KeyPoints, "a point") {
 		t.Errorf("key points not set on retry: %q", v.KeyPoints)
 	}
-	if embedder.calls != 2 {
-		t.Errorf("embedder called %d times, want 2 — the retry must reindex with the chapters key points just wrote", embedder.calls)
+	// The reindex embeds only what attempt 1 did not already store: the
+	// transcript windows and the summary are the same text, so sending them
+	// again would buy the same vectors twice and leave the old ones behind.
+	for text, n := range embedder.sent {
+		if n > 1 {
+			t.Errorf("text embedded %d times across the two attempts: %.40q", n, text)
+		}
 	}
 	if v.EmbedRev != rag.ChunkRecipeRev {
 		t.Errorf("embed_rev = %d, want %d — the retry's index must be marked current", v.EmbedRev, rag.ChunkRecipeRev)
