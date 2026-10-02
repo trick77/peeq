@@ -4,6 +4,7 @@ import { PillStrip } from "../components/PillStrip";
 import { SearchField } from "../components/SearchField";
 import { listVideos, getVideoCounts, redownload } from "../api";
 import { useVideoToggles } from "../hooks/useVideoToggles";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { useSettings } from "../settingsStore";
 import type { LibraryVideo, VideoCounts, VideoFilter, VideoSort } from "../api/types";
 import { CATEGORIES } from "../categories";
@@ -275,6 +276,8 @@ export function Library({
   // on every render would defeat that for every card in the grid.
   const onQueuedRef = useRef(onQueued);
   onQueuedRef.current = onQueued;
+  const openVideo = useStableCallback(onOpenVideo);
+  const openChannel = useStableCallback((id: string) => onOpenChannel?.(id));
   const handleRedownload = useCallback(async (id: string) => {
     try {
       await redownload(id);
@@ -314,10 +317,10 @@ export function Library({
         key={video.id}
         video={video}
         retentionDays={retentionDays}
-        onOpen={onOpenVideo}
+        onOpen={openVideo}
         onToggleFavorite={toggleFavorite}
         onToggleWatched={toggleWatched}
-        onOpenChannel={onOpenChannel}
+        onOpenChannel={onOpenChannel ? openChannel : undefined}
         onRedownload={handleRedownload}
       />
     );

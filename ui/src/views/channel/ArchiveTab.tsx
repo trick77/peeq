@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { VideoCard } from "../../components/VideoCard";
 import { listVideos } from "../../api/videos";
 import { useVideoToggles } from "../../hooks/useVideoToggles";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { CATEGORIES } from "../../categories";
 import { SORT_OPTIONS } from "../Library";
 import { controlClass } from "../../ui";
@@ -50,6 +51,7 @@ export function ArchiveTab({
       });
   }, [channelId, debouncedQuery, category, sort]);
 
+  const openVideo = useStableCallback(onOpenVideo);
   const { toggleFavorite, toggleWatched } = useVideoToggles(
     videos,
     setVideos,
@@ -116,7 +118,7 @@ export function ArchiveTab({
               key={v.id}
               video={v}
               retentionDays={retentionDays}
-              onOpen={onOpenVideo}
+              onOpen={openVideo}
               onToggleFavorite={toggleFavorite}
               onToggleWatched={toggleWatched}
             />
