@@ -390,11 +390,10 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/cookie/health", s.requireAuth(http.HandlerFunc(s.handleCookieHealth)))
 	mux.Handle("GET /api/settings/token", s.requireAuth(http.HandlerFunc(s.handleGetAPIToken)))
 	mux.Handle("POST /api/settings/token", s.requireAuth(http.HandlerFunc(s.handlePostAPIToken)))
-	// The only routes in peeq that bypass OIDC: the /api/machine surface,
+	// The only route in peeq that bypasses OIDC: the /api/machine surface,
 	// token-gated for the browser extension. Kept deliberately narrow — a
-	// cookie write and a single-video add, nothing that can read the library.
+	// cookie write, nothing that can read the library.
 	mux.Handle("PUT /api/machine/cookie", s.requireToken(http.HandlerFunc(s.handleMachineCookie)))
-	mux.Handle("POST /api/machine/downloads", s.requireToken(http.HandlerFunc(s.handleMachineDownloadsPost)))
 	mux.Handle("POST /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsPost)))
 	mux.Handle("GET /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsList)))
 	mux.Handle("GET /api/summaries", s.requireAuth(http.HandlerFunc(s.handleSummariesList)))

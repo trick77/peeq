@@ -1047,3 +1047,61 @@ func TestDownloads_listsJobsWhoseVideoIsGone(t *testing.T) {
 		t.Fatalf("job without a video row should list untitled, got %v", titles)
 	}
 }
+
+// A malformed JSON body is the caller's mistake: 400, never a 500, and nothing
+// is enqueued.
+func TestDownloads_malformedBody_400(t *testing.T) {
+	deps := downloadsTestDeps(t, &fakeDownloadsRunner{})
+	h := New(deps)
+	req := httptest.NewRequest(http.MethodPost, "/api/downloads", bytes.NewReader([]byte(`{"url":`)))
+	req.AddCookie(loginAndGetCookie(t, h))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+	all, err := deps.Jobs.ListQueue(100)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(all) != 0 {
+		t.Fatalf("a malformed body enqueued %d job(s)", len(all))
+	}
+}
+
+// TestDownloads_pastingAKnownVideoReQueuesIt: pasting a link is deliberate, so
+// a video that already exists goes back in the queue, even one already
+// downloaded.
+func TestDownloads_pastingAKnownVideoReQueuesIt(t *testing.T) {
+	deps := downloadsTestDeps(t, &fakeDownloadsRunner{})
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	const id = "dQw4w9WgXcQ"
+	if err := deps.Videos.Upsert(videos.Video{ID: id, URL: "https://www.youtube.com/watch?v=" + id}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetStatus(id, videos.StatusDownloaded, ""); err != nil {
+		t.Fatalf("seed status: %v", err)
+	}
+
+	rec := postDownload(t, h, sessionCookie, "https://youtu.be/"+id)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("session POST status = %d, want 201 (always re-queues), body = %s", rec.Code, rec.Body.String())
+	}
+	v, err := deps.Videos.Get(id)
+	if err != nil || v == nil {
+		t.Fatalf("get video: %v (video=%v)", err, v)
+	}
+	if v.Status != videos.StatusQueued {
+		t.Fatalf("video status = %q, want %q (session route re-queues)", v.Status, videos.StatusQueued)
+	}
+	all, err := deps.Jobs.ListQueue(100)
+	if err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("len(jobs) = %d, want 1 (a fresh job on re-queue)", len(all))
+	}
+}
