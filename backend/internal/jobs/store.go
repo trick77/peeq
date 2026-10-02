@@ -305,6 +305,11 @@ func (s *Store) ActiveIDsForVideos(videoIDs []string) ([]int64, error) {
 // state was a read that grew with every job ever created. The page renders
 // pending and running as upcoming work; the terminal window is a margin
 // for what just finished, not a history. A negative window means none.
+//
+// The terminal half says NOT IN (pending, running) rather than naming the
+// three terminal states: the state index would hand back every finished job
+// ever recorded to be sorted for the newest few, where this walks the table
+// backwards by id and stops at the window.
 func (s *Store) ListQueue(finishedWindow int) ([]Job, error) {
 	finishedWindow = max(finishedWindow, 0) // SQLite reads a negative LIMIT as "no limit"
 	rows, err := s.db.QueryContext(context.Background(),
@@ -314,13 +319,13 @@ func (s *Store) ListQueue(finishedWindow int) ([]Job, error) {
 		    UNION ALL
 		    SELECT * FROM (
 		        SELECT `+selectColumns+` FROM download_jobs
-		         WHERE state IN (?, ?, ?)
+		         WHERE state NOT IN (?, ?)
 		         ORDER BY id DESC
 		         LIMIT ?
 		    )
 		 )
 		 ORDER BY priority DESC, enqueued_at ASC, id ASC`,
-		StatePending, StateRunning, StateDone, StateFailed, StateCanceled, finishedWindow)
+		StatePending, StateRunning, StatePending, StateRunning, finishedWindow)
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}

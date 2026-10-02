@@ -94,3 +94,28 @@ func TestMigrate0032_channelCountsSeekOnTheChannel(t *testing.T) {
 		}
 	}
 }
+
+// The grid must be answered from idx_videos_cards alone, whatever the filter
+// and the sort: a plan that opens the videos table follows each row's text
+// into its overflow pages, which is what made the Library slow on a cold cache.
+func TestMigrate0032_listNeverOpensTheVideosTable(t *testing.T) {
+	db := openTestDB(t)
+	cases := []ListOptions{
+		{},
+		{Sort: "added_newest"},
+		{Filter: "unwatched", Category: "ai", Query: "needle"},
+		{Filter: "watched"}, {Filter: "favorites"}, {Filter: "in_progress"},
+		{ChannelID: "UCx", Sort: "added_oldest"},
+		{ChannelID: "UCx", ChannelName: "Name"},
+	}
+	for sort := range sortClauses {
+		cases = append(cases, ListOptions{Sort: sort})
+	}
+	for _, opts := range cases {
+		query, args := listQuery(opts)
+		plan := queryPlan(t, db, query, args...)
+		if !strings.Contains(plan, "v USING COVERING INDEX idx_videos_cards") {
+			t.Errorf("%+v: list is not covered by idx_videos_cards; plan = %s", opts, plan)
+		}
+	}
+}

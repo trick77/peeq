@@ -251,7 +251,7 @@ type videoCardDTO struct {
 	Category              string  `json:"category"`
 }
 
-// toVideoCardDTO maps a row read with videos.Store.List or Cards.
+// toVideoCardDTO maps a row read with videos.Store.List.
 func toVideoCardDTO(v *videos.Video) videoCardDTO {
 	return videoCardDTO{
 		ID:                    v.ID,

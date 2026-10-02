@@ -100,6 +100,11 @@ services:
       traefik.http.routers.peeq.rule: Host(`peeq.trick77.com`)
       traefik.http.routers.peeq.entrypoints: websecure
       traefik.http.routers.peeq.tls: "true"
+      # peeq compresses nothing itself, so without this the SPA bundle and every
+      # JSON list cross the wire at full size. Traefik leaves text/event-stream
+      # alone, so the live queue's SSE still flushes frame by frame.
+      traefik.http.middlewares.peeq-compress.compress: "true"
+      traefik.http.routers.peeq.middlewares: peeq-compress
       traefik.http.services.peeq.loadbalancer.server.port: "8080"
 
 networks:

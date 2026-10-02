@@ -326,8 +326,10 @@ func scanVideo(rs rowScanner) (Video, error) {
 	return v, nil
 }
 
-// cardColumns is what a grid card or a joined list row shows of a video, in the
-// order scanCard expects. It is deliberately not videoColumns: the description
+// cardColumns is what a grid card shows of a video, in the order scanCard
+// expects. Every column here, and every column List filters or sorts on, is in
+// idx_videos_cards: adding one means adding it there too (the plan test fails
+// otherwise). It is deliberately not videoColumns: the description
 // and the analysis text are most of a row's bytes, and a list that carried them
 // for every video shipped megabytes the grid never read.
 const cardColumns = `v.id, v.title, v.channel_id,
@@ -390,10 +392,21 @@ func (s *Store) GetMany(ids []string) (map[string]*Video, error) {
 	return s.readMany(ids, videoColumns, scanVideo)
 }
 
-// Cards is GetMany for the list endpoints that join rows to a title and a
-// channel: the same lookup over cardColumns, so only those fields are set.
-func (s *Store) Cards(ids []string) (map[string]*Video, error) {
-	return s.readMany(ids, cardColumns, scanCard)
+// Titles is GetMany for the list endpoints that join job rows to a title and
+// a channel: only ID, Title, ChannelID and ChannelName are set. Those columns
+// sit at the front of the row, so the read never follows a video's text into
+// its overflow pages the way a whole-row read does.
+func (s *Store) Titles(ids []string) (map[string]*Video, error) {
+	return s.readMany(ids, titleColumns, scanTitle)
+}
+
+const titleColumns = `v.id, v.title, v.channel_id,
+	COALESCE(NULLIF(v.channel_name, ''), NULLIF(ch.name, ''), v.channel_id) AS channel_name`
+
+func scanTitle(rs rowScanner) (Video, error) {
+	var v Video
+	err := rs.Scan(&v.ID, &v.Title, &v.ChannelID, &v.ChannelName)
+	return v, err
 }
 
 func (s *Store) readMany(ids []string, columns string, scan func(rowScanner) (Video, error)) (map[string]*Video, error) {
@@ -597,6 +610,42 @@ func queryCond(query string) (cond string, arg any, ok bool) {
 //     for rows written before channel ids were recorded, an exact
 //     channel_name match on rows with an empty channel_id
 func (s *Store) List(opts ListOptions) ([]Video, error) {
+	query, args := listQuery(opts)
+	rows, err := s.db.QueryContext(context.Background(), query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []Video{}
+	for rows.Next() {
+		v, err := scanCard(rows)
+		if err != nil {
+			return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
+	}
+	return out, nil
+}
+
+// listFrom is videoFrom with the videos side pinned to idx_videos_cards (0032),
+// which holds every column List selects, filters or sorts on. The grid is then
+// answered from the index alone. That matters because of where a row's small
+// columns live: status, watched, category and the rest sit behind the
+// description and the analysis text, so reading them from the table follows
+// each video's overflow pages, a random read apiece on a cold cache.
+//
+// Pinned rather than left to the planner, which has no statistics (peeq never
+// runs ANALYZE) and would take idx_videos_channel_status for a channel-scoped
+// list and go back to the table for the rest.
+const listFrom = `FROM videos v INDEXED BY idx_videos_cards LEFT JOIN channels ch ON ch.id = v.channel_id`
+
+// listQuery builds List's statement. A function of its own so the query-plan
+// test can hold every filter and sort to the index.
+func listQuery(opts ListOptions) (string, []any) {
 	conds := []string{notInFlight}
 	args := []any{}
 	if c := filterCond(opts.Filter); c != "" {
@@ -628,27 +677,7 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 		order = sortClauses["newest"]
 	}
 
-	rows, err := s.db.QueryContext(context.Background(),
-		"SELECT "+cardColumns+" "+videoFrom+" "+where+" ORDER BY "+order,
-		args...,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	out := []Video{}
-	for rows.Next() {
-		v, err := scanCard(rows)
-		if err != nil {
-			return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
-		}
-		out = append(out, v)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
-	}
-	return out, nil
+	return "SELECT " + cardColumns + " " + listFrom + " " + where + " ORDER BY " + order, args
 }
 
 // CountFilters are the status chips the Library shows, in row order. Counts
