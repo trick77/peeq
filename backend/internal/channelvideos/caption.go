@@ -150,6 +150,76 @@ func (s *Store) SetCaptionLastError(videoID, msg string) error {
 	return nil
 }
 
+// CaptionLastError returns what SetCaptionLastError stored for videoID, "" when
+// there is no ledger row.
+func (s *Store) CaptionLastError(videoID string) (string, error) {
+	var msg string
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT caption_last_error FROM channel_videos WHERE video_id = ?`, videoID).Scan(&msg)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("caption last error %s: %w", videoID, err)
+	}
+	return msg, nil
+}
+
+// RetryCaptions puts a video the fetcher gave up on back at the start of the
+// ladder, and reports whether it did. It makes no YouTube call: the row becomes
+// due and the fetcher reaches it through the Runner's gates like any other.
+//
+// Only a row the fetcher can pick up again and has nothing to lose:
+//   - still 'pending' — a decided video is not being considered;
+//   - settled as no_transcript — one still on the ladder needs no help;
+//   - no transcript — captions that were fetched and judged music-only come
+//     back the same, and the reset would discard that verdict;
+//   - not in the download pipeline and on an opted-in channel — the two
+//     conditions NextCaptionCandidate applies, without which the row would
+//     read "waiting for captions" and never be fetched.
+//
+// The videos row goes back to 'pending', which with no transcript is what the
+// Inbox reads as waiting. One transaction: a ladder reset without the status
+// leaves a card that still says it gave up.
+func (s *Store) RetryCaptions(videoID string) (bool, error) {
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("retry captions %s: %w", videoID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+UPDATE channel_videos
+   SET caption_attempts        = 0,
+       next_caption_attempt_at = NULL,
+       caption_last_error      = ''
+ WHERE video_id = ?
+   AND state = 'pending'
+   AND EXISTS (SELECT 1 FROM channels c WHERE c.id = channel_videos.channel_id AND c.auto_summary = 1)
+   AND EXISTS (SELECT 1 FROM videos v
+                WHERE v.id = channel_videos.video_id
+                  AND v.summary_status = ?
+                  AND v.status IN (?, ?))
+   AND NOT EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = channel_videos.video_id)`,
+		videoID, videos.SummaryNoTranscript, videos.StatusNew, videos.StatusError)
+	if err != nil {
+		return false, fmt.Errorf("retry captions %s: %w", videoID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE videos SET summary_status = ?, summary_error = '' WHERE id = ?`,
+		videos.SummaryPending, videoID); err != nil {
+		return false, fmt.Errorf("retry captions %s: reset status: %w", videoID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("retry captions %s: %w", videoID, err)
+	}
+	return true, nil
+}
+
 // MarkCaptionSettled stops any further caption fetching for videoID, whether
 // because captions arrived or because the ladder ran out.
 //

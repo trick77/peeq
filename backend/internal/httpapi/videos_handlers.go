@@ -76,6 +76,10 @@ type videoDTO struct {
 	Category      string `json:"category"`
 	AudioLanguage string `json:"audio_language"`
 	HasSubtitles  bool   `json:"has_subtitles"`
+	// CaptionError is why the caption fetcher's last attempt failed, for a video
+	// it gave up on (no_transcript, no transcript). Empty when that attempt ran
+	// cleanly and found no track — and on the list endpoints, which never set it.
+	CaptionError string `json:"caption_error,omitempty"`
 	// MediaType/LiveStatus/YTTags/YTCategories are YouTube's own facts about
 	// the video, straight from yt-dlp. Note Category (peeq's classification
 	// enum) and YTCategories (YouTube's labels) are different things that
@@ -312,7 +316,18 @@ func (s *server) handleGetVideo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, toVideoDTO(v))
+	dto := toVideoDTO(v)
+	// Only the one state the reason explains, so every other video's page costs
+	// no extra query.
+	if s.ledger != nil && v.SummaryStatus == videos.SummaryNoTranscript && !v.HasTranscript {
+		msg, err := s.ledger.CaptionLastError(v.ID)
+		if err != nil {
+			serverError(w, r, err, "get video failed")
+			return
+		}
+		dto.CaptionError = msg
+	}
+	writeJSON(w, dto)
 }
 
 // embeddingsDTO is what the player's Search index card reads: what the vector

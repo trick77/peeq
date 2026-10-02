@@ -53,9 +53,9 @@ var Statuses = []string{
 //
 // SummaryNoTranscript covers both "this video has no captions" and "the
 // captions turned out to be music or ambience rather than speech" — the
-// music-only guard in internal/summarize decides the second case. The UI's
-// copy has to fit both readings, which is why it says "No speech in this
-// video" rather than naming captions.
+// music-only guard in internal/summarize decides the second case. Whether a
+// transcript exists tells them apart: with one it is the second, without one
+// the caption fetcher gave up (see channelvideos.Store.RetryCaptions).
 const (
 	SummaryPending      = "pending"
 	SummaryRunning      = "running"

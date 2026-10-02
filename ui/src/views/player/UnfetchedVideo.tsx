@@ -2,7 +2,11 @@ import { useState } from "react";
 import { ThumbFill } from "../../components/ThumbFill";
 import { ChannelLink } from "../../components/ChannelLink";
 import { Icon } from "../../icons";
-import { downloadPending, ignorePending } from "../../api/pending";
+import {
+  downloadPending,
+  ignorePending,
+  retryCaptions,
+} from "../../api/pending";
 import { pendingThumbnailUrl } from "../../api/videos";
 import { subtitlesUrl } from "../../api/search";
 import { TranscriptCard } from "../../components/TranscriptCard";
@@ -74,6 +78,27 @@ export function UnfetchedVideo({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [decided, setDecided] = useState<"queued" | "ignored" | null>(null);
+
+  // Which video Try again was pressed for, not a bare flag: the stepper swaps
+  // the video under this component without remounting it.
+  const [retriedID, setRetriedID] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  async function retry() {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      await retryCaptions(video.id);
+      setRetriedID(video.id);
+      // The card behind this page now reads "Waiting for captions".
+      onPendingChanged?.();
+    } catch (e) {
+      setRetryError(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   async function decide(kind: "queued" | "ignored") {
     setBusy(true);
@@ -258,11 +283,39 @@ export function UnfetchedVideo({
               No speech peeq could summarize in this video. The captions it
               fetched are below.
             </p>
-          ) : (
+          ) : retriedID === video.id ? (
+            // The same words the waiting state below uses, because that is the
+            // state the video is now in; the prop still says no_transcript
+            // until the page is next loaded.
             <p className="unfetched-empty">
-              No speech in this video, so there is nothing to summarize. The
-              title and the channel are all peeq knows about it.
+              Waiting for YouTube to publish captions for this video.
             </p>
+          ) : (
+            // No captions and no summary: the fetcher gave up. This used to
+            // say "No speech in this video", which claimed a verdict on
+            // captions nobody had read — a failed fetch ends here exactly like
+            // a video YouTube never captioned. So it says what happened, gives
+            // the fetcher's own reason when it left one, and offers the retry
+            // nothing else will make.
+            <div className="unfetched-nocaptions">
+              <p className="unfetched-empty">
+                peeq could not fetch captions for this video, so there is no
+                summary.
+                {video.caption_error ? " The last attempt failed:" : null}
+              </p>
+              {video.caption_error ? (
+                <pre className="unfetched-reason mono">
+                  {video.caption_error}
+                </pre>
+              ) : null}
+              <div>
+                <Button type="button" disabled={retrying} onClick={retry}>
+                  <Icon name="refresh" size="15px" />
+                  Try again
+                </Button>
+              </div>
+              {retryError ? <div className="errline">{retryError}</div> : null}
+            </div>
           )
         ) : video.summary_status === "error" ? (
           <p className="unfetched-empty">

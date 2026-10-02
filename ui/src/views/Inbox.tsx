@@ -88,11 +88,13 @@ function compareBy(
 //                                                   would 404 — the marker is a
 //                                                   promise about the channel,
 //                                                   not a fact about the video
-//   no_transcript          —                inert   a summary is the only thing
-//                                                   this card ever offers to
-//                                                   read, and there will not be
-//                                                   one — whether or not a .vtt
-//                                                   exists behind it
+//   no_transcript,         —                inert   a summary is the only thing
+//     captions in                                   this card ever offers to
+//                                                   read, and these captions
+//                                                   produced none
+//   no_transcript,         No captions      opens   the fetcher gave up, and
+//     no captions                                   the page says why and is
+//                                                   where Try again is
 //   "" + opted out         —                inert   never will be
 //   error, retry pending   —                inert   the page's only news is
 //                                                   that it will be retried
@@ -100,7 +102,7 @@ function compareBy(
 //                                                   the card sends you to the
 //                                                   Player, where Reprocess is
 type Offer = {
-  mark: "summary" | "reading" | "waiting" | "failed" | null;
+  mark: "summary" | "reading" | "waiting" | "failed" | "nocaptions" | null;
   opens: boolean;
 };
 
@@ -118,23 +120,30 @@ function offer(item: PendingItem): Offer {
     case "pending":
     case "running":
       return { mark: item.has_subtitles ? "reading" : "waiting", opens: true };
-    // no_transcript is two different videos wearing one status: YouTube had no
-    // captions at all, or the captions turned out to be music and produced no
-    // summary. The distinction used to matter, because the second kind offered
-    // its raw transcript to skim. It no longer does — the Inbox is a triage
-    // list, and the only thing worth stopping to read here is a summary. A
-    // card with captions but no summary has nothing to offer that a glance at
-    // the poster does not, so it goes inert rather than sending you to a wall
-    // of caption text you would have to read to learn what the summary would
-    // have told you.
+    // no_transcript is two different videos wearing one status, and
+    // has_subtitles tells them apart.
     //
-    // Inert, not merely unmarked: the two halves stay one promise, so the card
-    // stops opening at the same moment it stops advertising. has_subtitles is
-    // deliberately not consulted — a .vtt behind the card is no longer a
-    // reason to offer it. Download is still on the card, and downloading is
-    // still how you get the video itself.
+    // Captions in, no summary: they turned out to be music. The Inbox is a
+    // triage list, and the only thing worth stopping to read here is a
+    // summary. A card with captions but no summary has nothing to offer that a
+    // glance at the poster does not, so it goes inert rather than sending you
+    // to a wall of caption text. Inert, not merely unmarked: the two halves
+    // stay one promise, so the card stops opening at the same moment it stops
+    // advertising.
+    //
+    // No captions at all: the fetcher spent its ladder and gave up, which is
+    // not the same as the video having none — a yt-dlp failure ends here too,
+    // and five spoken talks once did, looking exactly like cards nobody had
+    // read. Nothing retries a settled video, so silence leaves it written off
+    // for good. It opens, because the page says why and is where Try again is.
+    //
+    // Only on an opted-in channel. Opted out, the fetcher skips the video and
+    // the server refuses the retry, so the mark would lead to a button that
+    // can only fail.
     case "no_transcript":
-      return { mark: null, opens: false };
+      return !item.has_subtitles && item.auto_summary
+        ? { mark: "nocaptions", opens: true }
+        : { mark: null, opens: false };
     case "":
       return { mark: item.auto_summary ? "waiting" : null, opens: false };
     // 'error' is two cards, and only the job's own state tells them apart. The
@@ -209,6 +218,29 @@ function summaryMark(item: PendingItem, onOpen?: (videoID: string) => void) {
       >
         <Icon name="warning" size="12px" />
         Summary failed
+        <Icon name="chevronRight" size="12px" />
+      </button>
+    );
+  }
+  // The fetcher gave up. Same shape as "Summary failed" and for the same
+  // reason, but not in danger: a video YouTube never captioned ends here too,
+  // and that is not something going wrong.
+  if (mark === "nocaptions") {
+    if (!onOpen) {
+      return (
+        <span className="metapill oncover is-reading is-nocaptions">
+          No captions
+        </span>
+      );
+    }
+    return (
+      <button
+        type="button"
+        className="metapill oncover is-nocaptions summary-open"
+        onClick={() => onOpen(item.video_id)}
+      >
+        <Icon name="warning" size="12px" />
+        No captions
         <Icon name="chevronRight" size="12px" />
       </button>
     );
