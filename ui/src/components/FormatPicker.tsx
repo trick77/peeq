@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useDismiss, useFocusChecked } from "../hooks/usePopover";
 import { Icon } from "../icons";
 import { controlClass } from "../ui";
 import { PRESETS_NO_CUSTOM, presetLabel } from "../formatPresets";
@@ -44,37 +45,9 @@ export function FormatPicker({ value, globalPreset, onPick, disabled }: Props) {
   const triggerLabel =
     value === "" ? "Use the global setting" : (known ?? value);
 
-  // Focus the checked row when the menu opens, so the keyboard lands where
-  // the eye does.
-  useEffect(() => {
-    if (!open) return;
-    const menu = menuRef.current;
-    if (!menu) return;
-    const items = menu.querySelectorAll<HTMLButtonElement>("button");
-    const checked = menu.querySelector<HTMLButtonElement>(
-      'button[aria-checked="true"]',
-    );
-    (checked ?? items[0])?.focus();
-  }, [open]);
+  useFocusChecked(open, menuRef);
 
-  useEffect(() => {
-    if (!open) return;
-    function onDocClick(e: MouseEvent) {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    }
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  useDismiss(open, () => setOpen(false), wrapRef, triggerRef);
 
   function onMenuKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;

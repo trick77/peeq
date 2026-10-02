@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useDismiss, useFocusChecked } from "../hooks/usePopover";
 import { Icon } from "../icons";
 import { CATEGORIES, CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";
 import { useMenuPlacement } from "./useMenuPlacement";
@@ -31,40 +32,9 @@ export function CategoryPicker({ category, onPick }: Props) {
       ? (CATEGORY_BY_ID[category] ?? null)
       : null;
 
-  // Focus the checked row when the menu opens, so the keyboard lands where
-  // the eye does.
-  useEffect(() => {
-    if (!open) return;
-    const menu = menuRef.current;
-    if (!menu) return;
-    const items = menu.querySelectorAll<HTMLButtonElement>("button");
-    const checked = menu.querySelector<HTMLButtonElement>(
-      'button[aria-checked="true"]',
-    );
-    (checked ?? items[0])?.focus();
-  }, [open]);
+  useFocusChecked(open, menuRef);
 
-  // Close on an outside click or Escape. Escape returns focus to the
-  // trigger; an outside click deliberately does not, since the click has
-  // already moved focus somewhere the user chose.
-  useEffect(() => {
-    if (!open) return;
-    function onDocClick(e: MouseEvent) {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    }
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  useDismiss(open, () => setOpen(false), wrapRef, triggerRef);
 
   function onMenuKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
