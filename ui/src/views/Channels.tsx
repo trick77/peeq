@@ -246,6 +246,7 @@ export function Channels({
       .then((cs) => {
         if (seq !== allSeq.current) return; // a newer fetch superseded this one
         setAllChannels(cs);
+        setError(null);
       })
       .catch((e: Error) => {
         if (seq !== allSeq.current) return;
