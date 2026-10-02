@@ -142,6 +142,31 @@ describe("Settings", () => {
     });
   });
 
+  it("does not save a field that was only tabbed through", async () => {
+    const user = userEvent.setup();
+    render(<Settings />);
+    const input = await screen.findByLabelText(
+      "Minimum delay between YouTube calls (seconds)",
+    );
+    await user.click(input);
+    await user.tab();
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("saves the retention slider once per release, not once per event", async () => {
+    // A touch ends with touchend AND the mouse event the browser synthesises
+    // after it; both used to PUT.
+    render(<Settings />);
+    const slider = await screen.findByLabelText("Retention days");
+    fireEvent.change(slider, { target: { value: "30" } });
+    fireEvent.touchEnd(slider);
+    fireEvent.mouseUp(slider);
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({ retention_days: 30 }),
+    );
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+  });
+
   it("renders the current min_video_duration_seconds value and saves it on blur", async () => {
     const user = userEvent.setup();
     render(<Settings />);
