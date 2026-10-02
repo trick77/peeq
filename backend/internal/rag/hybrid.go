@@ -219,25 +219,12 @@ type Lane struct {
 	Weight float64
 }
 
-// FuseRRF merges pre-ranked hit lists via Reciprocal Rank Fusion: a hit's
-// score is the sum over lists of 1/(rrfK + rank), where rank is its 0-based
-// position in that list. Hits are identified across lists by video id +
-// ordinal. Returns up to k hits, best score first; ties break by the identity
-// key for determinism.
-//
-// Every lane counts equally here. Callers mixing retrieval methods of differing
-// reliability want FuseWeighted instead.
-func FuseRRF(lists [][]Hit, k int) []Hit {
-	lanes := make([]Lane, 0, len(lists))
-	for _, l := range lists {
-		lanes = append(lanes, Lane{Hits: l, Weight: 1})
-	}
-	return FuseWeighted(lanes, k)
-}
-
-// FuseWeighted is FuseRRF with a per-lane confidence multiplier, so a lane that
-// is merely returning its nearest rows cannot outvote a lane that found a
-// literal match. Scoring is otherwise identical: the sum of weight/(rrfK+rank).
+// FuseWeighted merges pre-ranked hit lists via Reciprocal Rank Fusion with a
+// per-lane confidence multiplier, so a lane that is merely returning its
+// nearest rows cannot outvote a lane that found a literal match. A hit's score
+// is the sum over lanes of weight/(rrfK + rank), where rank is its 0-based
+// position in that lane. Hits are identified across lanes by video id +
+// ordinal; ties break by that key for determinism.
 //
 // A lane whose weight is zero or negative contributes nothing at all.
 func FuseWeighted(lanes []Lane, k int) []Hit {

@@ -1,7 +1,6 @@
 package rag
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 
@@ -31,25 +30,7 @@ type Chapter struct {
 	Title string `json:"title"`
 }
 
-// DecodeChapters parses the videos.chapters JSON column, tolerating empty or
-// malformed input by returning nil — a video with unreadable chapters should
-// index its transcript rather than fail.
-func DecodeChapters(s string) []Chapter {
-	if strings.TrimSpace(s) == "" {
-		return nil
-	}
-	var out []Chapter
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return nil
-	}
-	return out
-}
-
 // BuildVideoChunks is the single definition of what gets indexed for a video.
-//
-// Both writers call it — the summarize worker on first analysis and the
-// re-embed worker on backfill — so the two paths cannot drift into producing
-// different indexes for the same video.
 //
 // It emits, in order:
 //

@@ -809,20 +809,6 @@ func (f *failingRag) SearchFTS(ctx context.Context, match string, n int) ([]rag.
 	return f.real.SearchFTS(ctx, match, n)
 }
 
-func (f *failingRag) Retrieve(ctx context.Context, q []float32, k int) ([]rag.Hit, error) {
-	if f.retrieve != nil {
-		return nil, f.retrieve
-	}
-	return f.real.Retrieve(ctx, q, k)
-}
-
-func (f *failingRag) RetrieveWithin(ctx context.Context, q []float32, k int, maxDistance float64) ([]rag.Hit, error) {
-	if f.retrieve != nil {
-		return nil, f.retrieve
-	}
-	return f.real.RetrieveWithin(ctx, q, k, maxDistance)
-}
-
 // The filtered pair is what askLanes actually calls, so the injected failures
 // have to reach it — a fake that only broke the unfiltered methods would let
 // every degraded-path test pass while exercising nothing.

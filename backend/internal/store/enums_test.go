@@ -26,9 +26,9 @@ import (
 // mirrors what ui/src/enumsync.test.ts does from the other side, and the two
 // together are what let the TypeScript unions be checked against Go.
 //
-// It deliberately does NOT cover summarize.Phases: nothing persists a phase, so
-// there is no constraint to compare it to. That set's only contract is with the
-// SPA, and guarding it is the frontend's job.
+// It deliberately does NOT cover the summarize phase names: nothing persists a
+// phase, so there is no constraint to compare them to. Their only contract is
+// with the SPA, and guarding it is the frontend's job.
 func TestEnumConstantsMatchTheCheckConstraints(t *testing.T) {
 	// Table + column as they appear in the migration -> the Go set that mirrors
 	// it. The table is part of the key on purpose: three tables carry a column

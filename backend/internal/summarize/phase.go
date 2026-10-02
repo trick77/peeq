@@ -25,12 +25,3 @@ const (
 	PhaseEmbedding   = "embedding"
 	PhaseKeypoints   = "keypoints"
 )
-
-// Phases is the ordered set of non-empty phases the worker can emit. The
-// Player uses the count to render "step N of 4".
-var Phases = []string{
-	PhaseSummarizing,
-	PhaseClassifying,
-	PhaseKeypoints,
-	PhaseEmbedding,
-}

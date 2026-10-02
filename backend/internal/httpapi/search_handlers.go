@@ -37,12 +37,9 @@ import (
 // documented 503.
 type RagStore interface {
 	SearchFTS(ctx context.Context, match string, n int) ([]rag.Hit, error)
-	Retrieve(ctx context.Context, queryEmbedding []float32, k int) ([]rag.Hit, error)
-	RetrieveWithin(ctx context.Context, queryEmbedding []float32, k int, maxDistance float64) ([]rag.Hit, error)
 	// The *Filtered pair narrows retrieval to the videos a question named — a
 	// channel, "unwatched", a date. Both take rag.Filter{} to mean the whole
-	// library, so they are supersets of the two above rather than a second way
-	// of doing the same thing.
+	// library.
 	SearchFTSFiltered(ctx context.Context, match string, n int, f rag.Filter) ([]rag.Hit, error)
 	RetrieveWithinFiltered(ctx context.Context, queryEmbedding []float32, k int, maxDistance float64, f rag.Filter) ([]rag.Hit, error)
 	// CountVideos answers an inventory question in SQL rather than leaving the
