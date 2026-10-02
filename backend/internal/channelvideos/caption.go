@@ -136,8 +136,24 @@ UPDATE channel_videos
 	return nil
 }
 
+// SetCaptionLastError records how the latest caption fetch for videoID ended:
+// the failure's text, or "" for a call that ran cleanly. See migration 0034.
+//
+// Not called for a refused fetch (cookie, pause, block): that is no outcome
+// for this video, and it must not erase one.
+func (s *Store) SetCaptionLastError(videoID, msg string) error {
+	_, err := s.db.ExecContext(context.Background(),
+		`UPDATE channel_videos SET caption_last_error = ? WHERE video_id = ?`, msg, videoID)
+	if err != nil {
+		return fmt.Errorf("set caption last error %s: %w", videoID, err)
+	}
+	return nil
+}
+
 // MarkCaptionSettled stops any further caption fetching for videoID, whether
 // because captions arrived or because the ladder ran out.
+//
+// caption_last_error is left as it is: settling is when the reason gets read.
 //
 // Note what it does NOT do: it leaves state alone. A row whose captions have
 // been fetched and summarized is still 'pending' — still in the Inbox, still

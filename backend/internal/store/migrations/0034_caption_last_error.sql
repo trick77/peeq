@@ -1,0 +1,15 @@
+-- Keep the reason a caption fetch failed, so a written-off video can say why.
+--
+-- The fetcher tries five times and then settles the video as no_transcript,
+-- for good. Why it gave up was only ever logged: a failed call at WARN, a clean
+-- run that found no track not at all until the last one. After a restart the
+-- log is gone and the row says nothing — five spoken-word videos settled that
+-- way and there was no telling a yt-dlp failure from a missing caption track.
+--
+-- caption_last_error is the LAST attempt's outcome: yt-dlp's error text when
+-- the call failed, '' when it ran cleanly (captions found or not). Read with
+-- caption_attempts: tried and '' means yt-dlp found no track in the requested
+-- language. Settling leaves it alone, since that is when it gets read.
+--
+-- '' for every existing row, which for one already settled means "unknown".
+ALTER TABLE channel_videos ADD COLUMN caption_last_error TEXT NOT NULL DEFAULT '';
