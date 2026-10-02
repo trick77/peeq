@@ -43,14 +43,6 @@ type DownloadReq struct {
 	SkipSubtitles bool
 }
 
-// Segment is one SponsorBlock-marked chapter parsed out of the
-// downloaded video's own *.info.json (never from a prior Metadata call).
-type Segment struct {
-	Category  string
-	StartTime float64
-	EndTime   float64
-}
-
 // Result is what a successful Download produces.
 type Result struct {
 	// MediaPath is the absolute path to the final merged media file,
@@ -64,7 +56,7 @@ type Result struct {
 	// FormatUsed is the resolved -f selector string that was passed to
 	// yt-dlp.
 	FormatUsed           string
-	SponsorblockSegments []Segment
+	SponsorblockSegments []sponsorblock.Segment
 	// SubtitleRelPath is the MediaDir-relative path to the downloaded
 	// subtitle .vtt file, or "" if none was found.
 	SubtitleRelPath string
@@ -182,7 +174,7 @@ const sponsorblockChapterPrefix = "[SponsorBlock]: "
 // the same boundaries, whether it was downloaded or filled in later. Doing
 // only half of it here would leave freshly-downloaded videos with unsnapped
 // boundaries for the full refresh interval.
-func sponsorblockSegmentsFromInfo(info downloadInfoJSON) []Segment {
+func sponsorblockSegmentsFromInfo(info downloadInfoJSON) []sponsorblock.Segment {
 	raw := make([]sponsorblock.Segment, 0, len(info.SponsorblockChapters))
 	for _, c := range info.SponsorblockChapters {
 		raw = append(raw, sponsorblock.Segment{
@@ -195,15 +187,7 @@ func sponsorblockSegmentsFromInfo(info downloadInfoJSON) []Segment {
 	if len(normalized) == 0 {
 		return nil
 	}
-	segs := make([]Segment, 0, len(normalized))
-	for _, s := range normalized {
-		segs = append(segs, Segment{
-			Category:  s.Category,
-			StartTime: s.StartTime,
-			EndTime:   s.EndTime,
-		})
-	}
-	return segs
+	return normalized
 }
 
 // Download runs yt-dlp to fetch req.URL into a per-video staging

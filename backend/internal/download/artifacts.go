@@ -9,8 +9,8 @@ import (
 
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/mediaprobe"
+	"github.com/trick77/peeq/internal/sponsorblock"
 	"github.com/trick77/peeq/internal/videos"
-	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 // probeProbeTimeout bounds the inline probe of a just-finished download.
@@ -140,23 +140,14 @@ func humanSize(b int64) string {
 	}
 }
 
-// segmentJSON is the stored shape of one SponsorBlock segment in the
-// sponsorblock_segments TEXT column (ytdlp.Segment carries no json tags).
-type segmentJSON struct {
-	Category  string  `json:"category"`
-	StartTime float64 `json:"start_time"`
-	EndTime   float64 `json:"end_time"`
-}
-
 // marshalSegments renders the download's SponsorBlock segments as the JSON
 // array text stored in videos.sponsorblock_segments. It always returns a
 // valid JSON array ("[]" when there are none).
-func marshalSegments(segs []ytdlp.Segment) string {
-	out := make([]segmentJSON, 0, len(segs))
-	for _, s := range segs {
-		out = append(out, segmentJSON{Category: s.Category, StartTime: s.StartTime, EndTime: s.EndTime})
+func marshalSegments(segs []sponsorblock.Segment) string {
+	if len(segs) == 0 {
+		return "[]"
 	}
-	b, err := json.Marshal(out)
+	b, err := json.Marshal(segs)
 	if err != nil {
 		return "[]"
 	}

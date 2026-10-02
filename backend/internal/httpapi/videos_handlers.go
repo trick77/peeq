@@ -98,7 +98,7 @@ type videoDTO struct {
 }
 
 // sponsorblockSegmentDTO is one entry of the parsed sponsorblock_segments
-// column (see download/worker.go's segmentJSON, which writes this exact
+// column (sponsorblock.Segment is what both writers marshal, in this exact
 // shape). The player auto-skips [StartTime, EndTime) ranges client-side.
 type sponsorblockSegmentDTO struct {
 	Category  string  `json:"category"`
