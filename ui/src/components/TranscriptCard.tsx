@@ -355,35 +355,21 @@ function TranscriptCardImpl({
                     than it is jumped from, and the jump is now something aimed
                     at rather than triggered by touching the text. */}
                 {cues.map((cue, i) => {
-                  const stamp = formatDuration(cue.ts);
+                  const hit = hits.has(i);
                   return (
-                    <div
+                    <CueRow
                       key={i}
-                      data-cue={i}
-                      className={`cue${hits.has(i) ? " hit" : ""}${
-                        i === activeCue ? " current" : ""
-                      }`}
-                    >
-                      {seek ? (
-                        <button
-                          type="button"
-                          className="ts mono tseek"
-                          onClick={seekOnClick(seek, cue.ts)}
-                          title={`Play from ${stamp}`}
-                          aria-label={`Play from ${stamp}`}
-                        >
-                          {stamp}
-                        </button>
-                      ) : (
-                        // Nothing to jump to — the inbox video page has no
-                        // media — so the stamp is plain text rather than a
-                        // control that would do nothing.
-                        <span className="ts mono">{stamp}</span>
-                      )}
-                      <span className="line">
-                        {highlightCue(cue.text, find)}
-                      </span>
-                    </div>
+                      cue={cue}
+                      index={i}
+                      hit={hit}
+                      current={i === activeCue}
+                      // Only a matching row is handed the term. Every other
+                      // row's props then stay as they were, so a keystroke in
+                      // the find box re-renders the rows it changes rather
+                      // than all five thousand.
+                      query={hit ? find : ""}
+                      seek={seek}
+                    />
                   );
                 })}
               </div>
@@ -394,6 +380,49 @@ function TranscriptCardImpl({
     </div>
   );
 }
+
+// CueRow is one transcript line: its stamp (a seek button when there is media
+// to seek) and its words, with the find term marked.
+const CueRow = memo(function CueRow({
+  cue,
+  index,
+  hit,
+  current,
+  query,
+  seek,
+}: {
+  cue: Cue;
+  index: number;
+  hit: boolean;
+  current: boolean;
+  query: string;
+  seek?: (seconds: number) => void;
+}) {
+  const stamp = formatDuration(cue.ts);
+  return (
+    <div
+      data-cue={index}
+      className={`cue${hit ? " hit" : ""}${current ? " current" : ""}`}
+    >
+      {seek ? (
+        <button
+          type="button"
+          className="ts mono tseek"
+          onClick={seekOnClick(seek, cue.ts)}
+          title={`Play from ${stamp}`}
+          aria-label={`Play from ${stamp}`}
+        >
+          {stamp}
+        </button>
+      ) : (
+        // Nothing to jump to — the inbox video page has no media — so the
+        // stamp is plain text rather than a control that would do nothing.
+        <span className="ts mono">{stamp}</span>
+      )}
+      <span className="line">{highlightCue(cue.text, query)}</span>
+    </div>
+  );
+});
 
 // Memoised: the Player re-renders on every timeupdate while a video plays,
 // and this card's props (the VTT URL and filename base (strings), a stable seek and a class name) do not change with the playhead.
