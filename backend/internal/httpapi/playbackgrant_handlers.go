@@ -93,7 +93,9 @@ func (s *server) handleGrantStream(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	v, err := s.videos.Get(videoID)
+	// Just the file's whereabouts: a receiver re-issues range requests for as
+	// long as it plays, and the whole row was read on each.
+	v, err := s.videos.MediaRef(videoID)
 	if err != nil || v == nil {
 		http.NotFound(w, r)
 		return
