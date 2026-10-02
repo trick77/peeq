@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/trick77/peeq/internal/rag"
@@ -376,6 +377,25 @@ func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter, q
 	// answering from one chunk — was far worse than the dilution being accepted.
 	// Widening the bar is what to revisit if focused answers turn out to suffer.
 	diag := askDiag{topic: topic, rawLane: -1, topicLane: -1}
+
+	// The embedding request leaves BEFORE the keyword ladder, not after it. It
+	// is the one network call in retrieval and depends on nothing the ladder
+	// produces, so the two overlap and the reader waits for the slower of them
+	// rather than for both. BOTH vector queries go out in that ONE request: the
+	// topic lane costs a lane, not a round-trip.
+	var embedding chan queryVectors
+	if s.embedder != nil && (qv == nil || !qv.done) {
+		inputs := []string{q}
+		if topic != "" {
+			inputs = append(inputs, topic)
+		}
+		embedding = make(chan queryVectors, 1) // buffered: the send never blocks
+		go func() {
+			vecs, err := s.embedder.Embed(r.Context(), inputs)
+			embedding <- queryVectors{done: true, vecs: vecs, err: err}
+		}()
+	}
+
 	ftsStart := time.Now()
 	videosSeen := make(map[string]bool)
 	for _, tier := range rag.BuildFTSQueries(q) {
@@ -425,50 +445,55 @@ func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter, q
 
 	diag.ftsMs = time.Since(ftsStart).Milliseconds()
 
-	// BOTH vector queries go out in ONE embedding request. The topic lane costs a
-	// lane, not a round-trip: Embed already takes a slice, and a second call would
-	// put its own network latency in front of the first byte to no purpose.
 	if s.embedder != nil {
-		inputs := []string{q}
-		if topic != "" {
-			inputs = append(inputs, topic)
-		}
 		// Set whether the vectors are computed here or reused from the first pass
 		// of a relaxed search: either way this question got embedded.
 		diag.embedQueried = true
-		embedStart := time.Now()
-		var vecs [][]float32
-		var err error
-		if qv != nil && qv.done {
+		var got queryVectors
+		if embedding != nil {
+			// embedMs is what the embedding cost the READER: the wait left over
+			// once the ladder was done, which is zero when the reply was already
+			// in. That keeps the trace's spans additive (keyword + embed + vector
+			// = retrieval) now that the call overlaps the ladder.
+			waitStart := time.Now()
+			got = <-embedding
+			diag.embedMs = time.Since(waitStart).Milliseconds()
+			if qv != nil {
+				*qv = got
+			}
+		} else {
 			// Second pass over the same question: reuse rather than re-embed.
 			// Recorded as 0ms, which is what it cost.
-			vecs, err = qv.vecs, qv.err
-		} else {
-			vecs, err = s.embedder.Embed(r.Context(), inputs)
-			if qv != nil {
-				qv.done, qv.vecs, qv.err = true, vecs, err
-			}
-			diag.embedMs = time.Since(embedStart).Milliseconds()
+			got = *qv
 		}
-		if err != nil {
+		if got.err != nil {
 			// Semantic unavailable (endpoint down/misconfigured); fall back to
 			// FTS-only rather than failing the whole search.
-			slog.Warn("search: semantic degraded, using FTS only", "err", err)
-		} else {
-			if len(vecs) > 0 {
-				if lane, ok := s.semanticLane(r, vecs[0], rag.WeightSemantic, filter, &diag.semRaw); ok {
-					diag.rawLane = len(lanes)
-					lanes = append(lanes, lane)
-				}
+			slog.Warn("search: semantic degraded, using FTS only", "err", got.err)
+		} else if len(got.vecs) > 0 {
+			// The two vector queries are independent reads, so they run side by
+			// side. A reply too short to hold the second vector is a misbehaving
+			// endpoint, not a reason to fail: the topic lane simply does not run
+			// and the log says it returned nothing.
+			var rawLane, topicLane rag.Lane
+			var rawOK, topicOK bool
+			var wg sync.WaitGroup
+			wg.Go(func() {
+				rawLane, rawOK = s.semanticLane(r, got.vecs[0], rag.WeightSemantic, filter, &diag.semRaw)
+			})
+			if topic != "" && len(got.vecs) > 1 {
+				wg.Go(func() {
+					topicLane, topicOK = s.semanticLane(r, got.vecs[1], rag.WeightSemanticTopic, filter, &diag.semTopic)
+				})
 			}
-			// A reply too short to hold the second vector is a misbehaving
-			// endpoint, not a reason to fail: the raw lane is already in, so the
-			// topic lane simply does not run and the log says it returned nothing.
-			if topic != "" && len(vecs) > 1 {
-				if lane, ok := s.semanticLane(r, vecs[1], rag.WeightSemanticTopic, filter, &diag.semTopic); ok {
-					diag.topicLane = len(lanes)
-					lanes = append(lanes, lane)
-				}
+			wg.Wait()
+			if rawOK {
+				diag.rawLane = len(lanes)
+				lanes = append(lanes, rawLane)
+			}
+			if topicOK {
+				diag.topicLane = len(lanes)
+				lanes = append(lanes, topicLane)
 			}
 		}
 	}
