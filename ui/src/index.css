@@ -1734,6 +1734,19 @@ body:has(.nowdock) {
   border: 1px solid var(--color-border);
   background: var(--color-active);
 }
+/* The poster is the card's open button: it covers the frame and carries no
+   chrome of its own. */
+.thumb .thumb-btn {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
 .thumb img.fill {
   position: absolute;
   inset: 0;

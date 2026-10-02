@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { VideoCard } from "../../components/VideoCard";
-import { listVideos, setFavorite, setWatched } from "../../api/videos";
+import { listVideos } from "../../api/videos";
+import { useVideoToggles } from "../../hooks/useVideoToggles";
 import { CATEGORIES } from "../../categories";
 import { SORT_OPTIONS } from "../Library";
 import { controlClass } from "../../ui";
@@ -49,61 +50,11 @@ export function ArchiveTab({
       });
   }, [channelId, debouncedQuery, category, sort]);
 
-  // Mirrors Library's handleToggleFavorite/handleToggleWatched: flip the
-  // field locally first so the card updates without a refetch, then make
-  // the API call; on failure, revert the optimistic update and surface the
-  // error through the tab's own error banner rather than swallowing it.
-  async function handleToggleFavorite(id: string) {
-    const current = videos.find((v) => v.id === id);
-    if (!current) return;
-    const next = !current.favorite;
-    setVideos((prev) =>
-      prev.map((v) => (v.id === id ? { ...v, favorite: next } : v)),
-    );
-    try {
-      await setFavorite(id, next);
-    } catch (e) {
-      setVideos((prev) =>
-        prev.map((v) =>
-          v.id === id ? { ...v, favorite: current.favorite } : v,
-        ),
-      );
-      setError((e as Error).message);
-    }
-  }
-
-  // The watched toggle zeroes resume_position_seconds server-side in both
-  // directions (videos.SetWatched), and the response carries only the watched
-  // flag — so the optimistic update has to mirror the reset. Without it,
-  // un-watching a partly-played video makes its progress bar appear (VideoCard
-  // draws it only when !watched) still showing a position the server has
-  // already cleared.
-  async function handleToggleWatched(id: string) {
-    const current = videos.find((v) => v.id === id);
-    if (!current) return;
-    const next = !current.watched;
-    setVideos((prev) =>
-      prev.map((v) =>
-        v.id === id ? { ...v, watched: next, resume_position_seconds: 0 } : v,
-      ),
-    );
-    try {
-      await setWatched(id, next);
-    } catch (e) {
-      setVideos((prev) =>
-        prev.map((v) =>
-          v.id === id
-            ? {
-                ...v,
-                watched: current.watched,
-                resume_position_seconds: current.resume_position_seconds,
-              }
-            : v,
-        ),
-      );
-      setError((e as Error).message);
-    }
-  }
+  const { toggleFavorite, toggleWatched } = useVideoToggles(
+    videos,
+    setVideos,
+    { onError: setError },
+  );
 
   return (
     <>
@@ -166,8 +117,8 @@ export function ArchiveTab({
               video={v}
               retentionDays={retentionDays}
               onOpen={onOpenVideo}
-              onToggleFavorite={handleToggleFavorite}
-              onToggleWatched={handleToggleWatched}
+              onToggleFavorite={toggleFavorite}
+              onToggleWatched={toggleWatched}
             />
           ))}
         </div>
