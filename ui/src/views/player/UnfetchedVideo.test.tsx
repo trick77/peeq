@@ -7,9 +7,14 @@ import type { Video } from "../../api/types";
 vi.mock("../../api/pending", () => ({
   downloadPending: vi.fn(),
   ignorePending: vi.fn(),
+  retryCaptions: vi.fn(),
 }));
 
-import { downloadPending, ignorePending } from "../../api/pending";
+import {
+  downloadPending,
+  ignorePending,
+  retryCaptions,
+} from "../../api/pending";
 
 function video(overrides: Partial<Video> = {}): Video {
   return {
@@ -29,6 +34,8 @@ function video(overrides: Partial<Video> = {}): Video {
 
 describe("UnfetchedVideo", () => {
   beforeEach(() => {
+    vi.mocked(retryCaptions).mockReset();
+    vi.mocked(retryCaptions).mockResolvedValue(undefined);
     vi.mocked(downloadPending).mockReset();
     vi.mocked(ignorePending).mockReset();
     vi.mocked(downloadPending).mockResolvedValue(undefined);
@@ -123,7 +130,51 @@ describe("UnfetchedVideo", () => {
   // captions" from "they turned out to be music". The copy splits on it,
   // because a page that says the title and the channel are all peeq knows
   // contradicts the transcript panel sitting right underneath it.
-  it("explains a video with no speech instead of showing a spinner", () => {
+  //
+  // With no captions the fetcher gave up, and the page must not pass a verdict
+  // on speech nobody read: it says the fetch failed and shows the reason.
+  it("says captions could not be fetched, and why", () => {
+    render(
+      <UnfetchedVideo
+        video={video({
+          summary: "",
+          summary_status: "no_transcript",
+          has_subtitles: false,
+          caption_error: "exit status 1: The page needs to be reloaded.",
+        })}
+      />,
+    );
+    expect(screen.queryByText(/No speech/)).toBeNull();
+    expect(screen.getByText(/could not fetch captions/)).toBeTruthy();
+    expect(screen.getByText(/The page needs to be reloaded/)).toBeTruthy();
+  });
+
+  // Nothing else revisits a settled video, so the page is where the retry is.
+  it("retries the caption fetch and then reads as waiting", async () => {
+    const onPendingChanged = vi.fn();
+    render(
+      <UnfetchedVideo
+        video={video({
+          summary: "",
+          summary_status: "no_transcript",
+          has_subtitles: false,
+        })}
+        onPendingChanged={onPendingChanged}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /Try again/ }));
+
+    expect(retryCaptions).toHaveBeenCalledWith("v1");
+    expect(await screen.findByText(/Waiting for YouTube/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Try again/ })).toBeNull();
+    expect(onPendingChanged).toHaveBeenCalled();
+  });
+
+  it("says so when the retry is refused, and stays retryable", async () => {
+    vi.mocked(retryCaptions).mockRejectedValue(
+      new Error("captions cannot be retried for this video"),
+    );
     render(
       <UnfetchedVideo
         video={video({
@@ -133,7 +184,11 @@ describe("UnfetchedVideo", () => {
         })}
       />,
     );
-    expect(screen.getByText(/No speech in this video/)).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: /Try again/ }));
+
+    expect(await screen.findByText(/cannot be retried/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Try again/ })).toBeEnabled();
   });
 
   // A no_transcript video that HAS captions — where the Inbox card's "Read

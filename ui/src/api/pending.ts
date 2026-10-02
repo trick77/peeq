@@ -27,6 +27,17 @@ export async function downloadPending(id: string): Promise<void> {
   );
 }
 
+// retryCaptions puts a video the caption fetcher gave up on back at the start
+// of its retry ladder. It fetches nothing itself: the server makes the row due
+// and the fetcher gets to it on its next pass.
+export async function retryCaptions(id: string): Promise<void> {
+  await api.post(
+    `/api/pending/${encodeURIComponent(id)}/retry-captions`,
+    undefined,
+    "failed to retry captions",
+  );
+}
+
 export async function ignorePending(id: string): Promise<void> {
   await api.post(
     `/api/pending/${encodeURIComponent(id)}/ignore`,

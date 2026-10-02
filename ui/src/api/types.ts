@@ -150,6 +150,10 @@ export type Video = {
   indexed: boolean;
   audio_language: string;
   has_subtitles: boolean;
+  // caption_error is why the caption fetcher's last attempt failed, for a video
+  // it gave up on. Absent when that attempt ran cleanly and found no track, and
+  // on every list endpoint — only GET /api/videos/{id} sets it.
+  caption_error?: string;
   // category mirrors the Task 7 classification field — always present,
   // "uncategorized" is the fallback (see categories.ts, the TS mirror of
   // backend/internal/videos/category.go).

@@ -6704,7 +6704,8 @@ details.tomb-sect[open] > summary svg {
    this pill were ever used on a card that has one. */
 .thumb .metapill.oncover.has-summary,
 .thumb .metapill.oncover.is-reading,
-.thumb .metapill.oncover.is-failed {
+.thumb .metapill.oncover.is-failed,
+.thumb .metapill.oncover.is-nocaptions {
   top: 8px;
   bottom: auto;
 }
@@ -6930,6 +6931,27 @@ details.tomb-sect[open] > summary svg {
   align-items: center;
   gap: 8px;
   color: var(--color-faint);
+}
+/* The fetcher gave up: what happened, its own reason, and the retry. */
+.unfetched-nocaptions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.unfetched-nocaptions .errline {
+  margin-bottom: 0;
+}
+/* yt-dlp's own words, so they wrap rather than scroll: the line is a URL-free
+   sentence or two, and a phone has no room for a horizontal scroller. */
+.unfetched-reason {
+  margin: 0;
+  padding: 10px 13px;
+  font-size: 12px;
+  color: var(--color-ink-dim);
+  background: color-mix(in srgb, var(--color-ink-dim) 6%, transparent);
+  border-radius: var(--radius-ui-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Below this the poster would be squeezed to a stamp beside the title, so it

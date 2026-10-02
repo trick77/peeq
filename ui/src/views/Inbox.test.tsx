@@ -956,7 +956,7 @@ describe("Inbox summaries", () => {
         title: "No speech",
         summary_status: "no_transcript",
         auto_summary: true,
-        has_subtitles: false,
+        has_subtitles: true,
       }),
     ]);
     render(<Inbox onOpen={vi.fn()} />);
@@ -1040,10 +1040,11 @@ describe("Inbox summaries", () => {
     expect(card.className).toContain("is-inert");
   });
 
-  // The card opens exactly when it says it opens. A no_transcript video with
-  // no captions has nothing behind it — its page would add nothing the card is
-  // not already showing — so it must neither draw a marker nor answer a click.
-  it("does not open a video with nothing to read", async () => {
+  // A no_transcript video with no captions is one the fetcher gave up on. It
+  // used to draw nothing and go inert, which made a failed fetch look like a
+  // card nobody had read, permanently — nothing retries a settled video. Now
+  // it says so and opens, because the page carries the reason and the retry.
+  it("marks and opens a video whose captions never arrived", async () => {
     vi.mocked(listPending).mockResolvedValue([
       baseItem({
         video_id: "silent",
@@ -1058,8 +1059,36 @@ describe("Inbox summaries", () => {
     const card = (await screen.findByText("No captions ever")).closest(
       "article",
     ) as HTMLElement;
+    expect(card.className).not.toContain("is-inert");
+    await userEvent.click(
+      within(card).getByRole("button", { name: /No captions/ }),
+    );
+
+    expect(onOpen).toHaveBeenCalledWith("silent");
+  });
+
+  // The channel opted out after the fetcher gave up. The fetcher now skips the
+  // video and the server refuses the retry, so the mark would lead to a button
+  // that can only fail.
+  it("does not offer a retry on an opted-out channel", async () => {
+    vi.mocked(listPending).mockResolvedValue([
+      baseItem({
+        video_id: "silent",
+        title: "No captions ever",
+        summary_status: "no_transcript",
+        has_subtitles: false,
+        auto_summary: false,
+      }),
+    ]);
+    const onOpen = vi.fn();
+    render(<Inbox onOpen={onOpen} />);
+
+    const card = (await screen.findByText("No captions ever")).closest(
+      "article",
+    ) as HTMLElement;
     await userEvent.click(card.querySelector(".thumb") as HTMLElement);
 
+    expect(within(card).queryByText(/No captions$/)).toBeNull();
     expect(onOpen).not.toHaveBeenCalled();
     expect(card.className).toContain("is-inert");
   });
