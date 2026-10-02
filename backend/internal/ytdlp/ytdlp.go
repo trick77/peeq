@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand/v2"
 	"os"
@@ -647,6 +648,12 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 	// requiring a restart.
 	cmd := exec.CommandContext(ctx, r.cfg.BinResolver(), fullArgs...) //nolint:gosec // argv, no shell. Every URL reaches here through Canonicalize, which url.Parse-es it, requires scheme and host, allowlists the youtube hosts and returns a rebuilt https://www.youtube.com/... literal, so a '-' prefixed string cannot become a flag
 
+	// Bound how long Wait may sit on the output pipes once the process is gone
+	// or the context has ended. yt-dlp starts ffmpeg and a JS runtime; a child
+	// of its own that outlives it keeps the pipe open, and without this Wait
+	// blocks on that pipe for as long as the stray lives.
+	cmd.WaitDelay = waitDelay
+
 	if onLine == nil {
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
@@ -662,7 +669,7 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 	if err != nil {
 		return nil, fmt.Errorf("ytdlp: stdout pipe: %w", err)
 	}
-	var stdout, stderr bytes.Buffer
+	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
 	if err := cmd.Start(); err != nil {
@@ -674,14 +681,19 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 	// the buffer past bufio's small default to avoid truncating them.
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	scanner.Split(scanLinesCR)
+	// The lines go to onLine and nowhere else: the one caller of this branch
+	// (Download) reads its result from the info.json, and a download's whole
+	// progress log is not worth holding in memory to throw away.
 	for scanner.Scan() {
-		line := scanner.Text()
-		stdout.WriteString(line)
-		stdout.WriteByte('\n')
-		onLine(line)
+		onLine(scanner.Text())
 	}
 
 	scanErr := scanner.Err()
+	if scanErr != nil {
+		// The scan stopped early (a line past the buffer). Keep reading, or the
+		// process blocks on its next write and Wait never returns.
+		_, _ = io.Copy(io.Discard, stdoutPipe)
+	}
 
 	runErr := cmd.Wait()
 	if runErr != nil {
@@ -701,8 +713,11 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 	// would put a reassuring entry under a call that is about to return an
 	// error.
 	r.logStderr(ctx, stderr.String())
-	return stdout.Bytes(), nil
+	return nil, nil
 }
+
+// waitDelay is exec.Cmd.WaitDelay for every yt-dlp call.
+const waitDelay = 10 * time.Second
 
 // scanLinesCR is a bufio.SplitFunc like bufio.ScanLines but also splits on
 // bare '\r' (yt-dlp overwrites its progress line with '\r', not '\n').
