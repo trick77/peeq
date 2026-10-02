@@ -62,6 +62,18 @@ func (s *Store) GetThumbnail(videoID string) (*Thumbnail, error) {
 	return &t, nil
 }
 
+// HasThumbnail reports whether a poster is cached for videoID, without reading
+// the image to find out.
+func (s *Store) HasThumbnail(videoID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT EXISTS (SELECT 1 FROM pending_thumbnails WHERE video_id = ?)`, videoID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("has pending thumbnail %s: %w", videoID, err)
+	}
+	return n == 1, nil
+}
+
 // DeleteThumbnail drops a cached inbox poster.
 //
 // This is the PRIMARY reclaim path, not a nicety: a channel_videos row survives

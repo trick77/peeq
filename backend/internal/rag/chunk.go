@@ -3,7 +3,10 @@
 // relevant chunks for a query.
 package rag
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // TextChunk is one unit of indexed text with its position and an estimated token count.
 type TextChunk struct {
@@ -41,7 +44,7 @@ func DefaultChunkOptions() ChunkOptions {
 // deployment cannot rely on; ~4 characters/token is the standard heuristic and
 // is sufficient for sizing chunks and the embedding budget.
 func estimateTokens(s string) int {
-	n := len([]rune(s))
+	n := utf8.RuneCountInString(s)
 	if n == 0 {
 		return 0
 	}
