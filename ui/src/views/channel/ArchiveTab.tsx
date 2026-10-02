@@ -5,7 +5,7 @@ import { CATEGORIES } from "../../categories";
 import { SORT_OPTIONS } from "../Library";
 import { controlClass } from "../../ui";
 import { useSettings } from "../../settingsStore";
-import type { Video, VideoSort } from "../../api/types";
+import type { LibraryVideo, VideoSort } from "../../api/types";
 
 export function ArchiveTab({
   channelId,
@@ -14,7 +14,7 @@ export function ArchiveTab({
   channelId: string;
   onOpenVideo: (id: string) => void;
 }) {
-  const [videos, setVideos] = useState<Video[]>([]);
+  const [videos, setVideos] = useState<LibraryVideo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");

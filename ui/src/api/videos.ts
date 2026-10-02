@@ -1,5 +1,6 @@
 import { api } from "./http";
 import type {
+  LibraryVideo,
   PlaybackGrant,
   Video,
   VideoCounts,
@@ -21,7 +22,7 @@ export type ListVideosOptions = {
 
 export async function listVideos(
   opts: ListVideosOptions = {},
-): Promise<Video[]> {
+): Promise<LibraryVideo[]> {
   const p = new URLSearchParams();
   if (opts.filter) p.set("filter", opts.filter);
   if (opts.category && opts.category !== "all")
@@ -30,7 +31,7 @@ export async function listVideos(
   if (opts.sort) p.set("sort", opts.sort);
   if (opts.channel) p.set("channel", opts.channel);
   const qs = p.toString();
-  return api.get<Video[]>(
+  return api.get<LibraryVideo[]>(
     `/api/videos${qs ? `?${qs}` : ""}`,
     "failed to load videos",
   );

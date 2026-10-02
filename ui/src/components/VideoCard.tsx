@@ -4,7 +4,7 @@ import { isSelectingText } from "../selection";
 import { Button } from "../ui";
 import { ThumbFill } from "./ThumbFill";
 import { ChannelLink } from "./ChannelLink";
-import type { Video } from "../api/types";
+import type { LibraryVideo } from "../api/types";
 import {
   daysSince,
   formatAgo,
@@ -28,7 +28,7 @@ export function VideoCard({
   onRedownload,
   onOpenChannel,
 }: {
-  video: Video;
+  video: LibraryVideo;
   /** settings.retention_days — needed to compute "Expires in N days". */
   retentionDays: number;
   onOpen: (id: string) => void;
@@ -296,7 +296,7 @@ function Lifecycle({
   retentionDays,
   onRedownload,
 }: {
-  video: Video;
+  video: LibraryVideo;
   retentionDays: number;
   onRedownload?: (id: string) => void;
 }) {
@@ -363,7 +363,7 @@ function Redownload({
   video,
   onRedownload,
 }: {
-  video: Video;
+  video: LibraryVideo;
   onRedownload?: (id: string) => void;
 }) {
   if (!onRedownload) return null;

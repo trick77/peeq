@@ -235,7 +235,7 @@ ON CONFLICT(id) DO UPDATE SET
 }
 
 // videoColumns is the column list shared by every whole-Video reader (Get,
-// List, NextUnclassified, SweepCandidates), in the order scanVideo expects.
+// GetMany, NextUnclassified, SweepCandidates), in the order scanVideo expects.
 // Columns are qualified "v." because these queries LEFT JOIN the channels
 // table (aliased "ch") to resolve the display channel name — see below.
 //
@@ -326,6 +326,43 @@ func scanVideo(rs rowScanner) (Video, error) {
 	return v, nil
 }
 
+// cardColumns is what a grid card or a joined list row shows of a video, in the
+// order scanCard expects. It is deliberately not videoColumns: the description
+// and the analysis text are most of a row's bytes, and a list that carried them
+// for every video shipped megabytes the grid never read.
+const cardColumns = `v.id, v.title, v.channel_id,
+	COALESCE(NULLIF(v.channel_name, ''), NULLIF(ch.name, ''), v.channel_id) AS channel_name,
+	v.duration_seconds, v.published_at,
+	(SELECT COALESCE(strftime('%s', t.updated_at), '0') FROM video_thumbnails t INDEXED BY idx_video_thumbnails_version WHERE t.video_id = v.id) AS thumbnail_version,
+	v.media_path, v.status, v.watched, v.watched_at, v.resume_position_seconds,
+	v.favorite, v.downloaded_at, v.category`
+
+// scanCard scans one row in the cardColumns order. Every Video field outside
+// that list is left at its zero value.
+func scanCard(rs rowScanner) (Video, error) {
+	var v Video
+	var duration sql.NullInt64
+	var publishedAt, watchedAt, downloadedAt, thumbnailVersion sql.NullString
+	var watched, favorite int
+	err := rs.Scan(
+		&v.ID, &v.Title, &v.ChannelID, &v.ChannelName, &duration, &publishedAt,
+		&thumbnailVersion, &v.MediaPath, &v.Status, &watched, &watchedAt, &v.ResumePositionSeconds,
+		&favorite, &downloadedAt, &v.Category,
+	)
+	if err != nil {
+		return Video{}, err
+	}
+	v.DurationSeconds = duration.Int64
+	v.PublishedAt = publishedAt.String
+	v.HasThumbnail = thumbnailVersion.Valid
+	v.ThumbnailVersion = thumbnailVersion.String
+	v.Watched = watched != 0
+	v.WatchedAt = watchedAt.String
+	v.Favorite = favorite != 0
+	v.DownloadedAt = downloadedAt.String
+	return v, nil
+}
+
 // Get returns the video row for id, or (nil, nil) if there is none.
 func (s *Store) Get(id string) (*Video, error) {
 	row := s.db.QueryRowContext(context.Background(),
@@ -347,11 +384,21 @@ func (s *Store) Get(id string) (*Video, error) {
 const getManyChunk = 500
 
 // GetMany reads the given videos in a few statements instead of one Get per
-// id, for the list endpoints that join job rows to titles. Ids with no row
-// are absent from the map; duplicates and an empty input cost nothing.
+// id. Ids with no row are absent from the map; duplicates and an empty input
+// cost nothing.
 func (s *Store) GetMany(ids []string) (map[string]*Video, error) {
+	return s.readMany(ids, videoColumns, scanVideo)
+}
+
+// Cards is GetMany for the list endpoints that join rows to a title and a
+// channel: the same lookup over cardColumns, so only those fields are set.
+func (s *Store) Cards(ids []string) (map[string]*Video, error) {
+	return s.readMany(ids, cardColumns, scanCard)
+}
+
+func (s *Store) readMany(ids []string, columns string, scan func(rowScanner) (Video, error)) (map[string]*Video, error) {
 	out := make(map[string]*Video, len(ids))
-	uniq := make([]string, 0, len(ids))
+	uniq := make([]any, 0, len(ids))
 	seen := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		if id != "" && !seen[id] {
@@ -360,36 +407,34 @@ func (s *Store) GetMany(ids []string) (map[string]*Video, error) {
 		}
 	}
 	for start := 0; start < len(uniq); start += getManyChunk {
-		end := min(start+getManyChunk, len(uniq))
-		chunk := uniq[start:end]
-		args := make([]any, len(chunk))
-		marks := make([]string, len(chunk))
-		for i, id := range chunk {
-			args[i] = id
-			marks[i] = "?"
+		chunk := uniq[start:min(start+getManyChunk, len(uniq))]
+		if err := s.readChunk(chunk, columns, scan, out); err != nil {
+			return nil, err
 		}
-		// The only non-constant spliced in is the placeholder list; every id
-		// travels as a bound argument.
-		query := "SELECT " + videoColumns + " " + videoFrom + " WHERE v.id IN (" + strings.Join(marks, ",") + ")" //nolint:gosec // placeholders only
-		rows, err := s.db.QueryContext(context.Background(), query, args...)
-		if err != nil {
-			return nil, fmt.Errorf("get videos: %w", err)
-		}
-		for rows.Next() {
-			v, err := scanVideo(rows)
-			if err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("get videos: scan: %w", err)
-			}
-			out[v.ID] = &v
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("get videos: iterate: %w", err)
-		}
-		_ = rows.Close()
 	}
 	return out, nil
+}
+
+func (s *Store) readChunk(ids []any, columns string, scan func(rowScanner) (Video, error), out map[string]*Video) error {
+	// The only non-constant spliced in is the placeholder list; every id
+	// travels as a bound argument.
+	query := "SELECT " + columns + " " + videoFrom + " WHERE v.id IN (" + store.Placeholders(len(ids)) + ")" //nolint:gosec // placeholders only
+	rows, err := s.db.QueryContext(context.Background(), query, ids...)
+	if err != nil {
+		return fmt.Errorf("get videos: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		v, err := scan(rows)
+		if err != nil {
+			return fmt.Errorf("get videos: scan: %w", err)
+		}
+		out[v.ID] = &v
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("get videos: iterate: %w", err)
+	}
+	return nil
 }
 
 // ListOptions narrows videos.Store.List. Every field is optional; the zero
@@ -525,9 +570,11 @@ func queryCond(query string) (cond string, arg any, ok bool) {
 	return `v.title LIKE ? ESCAPE '\'`, "%" + escapeLike(q) + "%", true
 }
 
-// List returns videos matching opts, ordered by opts.Sort. The status,
-// category, search, and channel dimensions are orthogonal: all that are set
-// apply together.
+// List returns the videos matching opts as CARDS, ordered by opts.Sort: only
+// the cardColumns fields are set, because every caller draws a grid and a grid
+// row never shows the rest (Get is the whole-video read). The status, category,
+// search, and channel dimensions are orthogonal: all that are set apply
+// together.
 //   - Filter: "unwatched" (downloaded and not watched), "watched" (seen and
 //     still here — tombstoned rows are excluded), "favorites", or anything
 //     else/"" (no further constraint). Every one of them also applies
@@ -582,7 +629,7 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 	}
 
 	rows, err := s.db.QueryContext(context.Background(),
-		"SELECT "+videoColumns+" "+videoFrom+" "+where+" ORDER BY "+order,
+		"SELECT "+cardColumns+" "+videoFrom+" "+where+" ORDER BY "+order,
 		args...,
 	)
 	if err != nil {
@@ -592,7 +639,7 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 
 	out := []Video{}
 	for rows.Next() {
-		v, err := scanVideo(rows)
+		v, err := scanCard(rows)
 		if err != nil {
 			return nil, fmt.Errorf("list videos (filter=%q category=%q sort=%q channel=%q): %w", opts.Filter, opts.Category, opts.Sort, opts.ChannelID, err)
 		}

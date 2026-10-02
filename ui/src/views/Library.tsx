@@ -10,7 +10,7 @@ import {
   redownload,
 } from "../api";
 import { useSettings } from "../settingsStore";
-import type { Video, VideoCounts, VideoFilter, VideoSort } from "../api/types";
+import type { LibraryVideo, VideoCounts, VideoFilter, VideoSort } from "../api/types";
 import { CATEGORIES } from "../categories";
 import { controlClass } from "../ui";
 
@@ -74,7 +74,7 @@ export const INBOX_SORT_OPTIONS = SORT_OPTIONS.filter(
 // reaches this function to be judged. Narrowing it would be equivalent, not a
 // fix — left alone because the extra states document what the filter means
 // ("play-eligible") independently of what the server happens to send.
-function matchesFilter(v: Video, filter: VideoFilter): boolean {
+function matchesFilter(v: LibraryVideo, filter: VideoFilter): boolean {
   switch (filter) {
     case "unwatched":
       // "Unwatched" means never opened: play-eligible, not watched, and the
@@ -162,7 +162,7 @@ export function Library({
   const [sort, setSort] = useState<VideoSort>("added_newest");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [counts, setCounts] = useState<VideoCounts | null>(null);
-  const [videos, setVideos] = useState<Video[]>([]);
+  const [videos, setVideos] = useState<LibraryVideo[]>([]);
   const { settings } = useSettings();
   const [error, setError] = useState<string | null>(null);
   // Each list has exactly one fetching effect, and the queue's refetch is a
@@ -261,7 +261,7 @@ export function Library({
     }
   }, [filter, counts, debouncedQuery]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function applyLocalUpdate(id: string, patch: Partial<Video>) {
+  function applyLocalUpdate(id: string, patch: Partial<LibraryVideo>) {
     setVideos((prev) =>
       prev.map((v) => (v.id === id ? { ...v, ...patch } : v)),
     );
@@ -348,7 +348,7 @@ export function Library({
   // categories that actually exist under the current top-level filter.
   const catCounts = counts?.categories[filter] ?? {};
 
-  function renderCard(video: Video) {
+  function renderCard(video: LibraryVideo) {
     return (
       <VideoCard
         key={video.id}

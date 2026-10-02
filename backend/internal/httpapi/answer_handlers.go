@@ -91,6 +91,17 @@ type answerVideo struct {
 	PublishedAt string `json:"published_at,omitempty"`
 }
 
+func toAnswerVideo(v *videos.Video) answerVideo {
+	return answerVideo{
+		ID: v.ID, Title: v.Title, ChannelID: v.ChannelID,
+		ChannelName: v.ChannelName, DurationSeconds: v.DurationSeconds,
+		HasThumbnail:     v.HasThumbnail,
+		ThumbnailVersion: v.ThumbnailVersion,
+		Status:           v.Status,
+		PublishedAt:      v.PublishedAt,
+	}
+}
+
 // traceStage is one step of the pipeline, as the answer panel reports it.
 //
 // KEY, NOT PROSE. The label a reader sees ("Turned the question into numbers")
@@ -723,14 +734,7 @@ func (s *server) buildAnswerContext(lookup *videoLookup, hits []rag.Hit, compare
 		chosen = append(chosen, c.hit)
 		if !seenVideo[c.hit.VideoID] {
 			seenVideo[c.hit.VideoID] = true
-			vids = append(vids, answerVideo{
-				ID: c.video.ID, Title: c.video.Title, ChannelID: c.video.ChannelID,
-				ChannelName: c.video.ChannelName, DurationSeconds: c.video.DurationSeconds,
-				HasThumbnail:     c.video.HasThumbnail,
-				ThumbnailVersion: c.video.ThumbnailVersion,
-				Status:           c.video.Status,
-				PublishedAt:      c.video.PublishedAt,
-			})
+			vids = append(vids, toAnswerVideo(c.video))
 		}
 
 		n := len(sources) + 1
@@ -868,14 +872,7 @@ func (s *server) coverageVideos(lookup *videoLookup, hits []rag.Hit, relevant ma
 		if v == nil {
 			continue
 		}
-		out = append(out, answerVideo{
-			ID: v.ID, Title: v.Title, ChannelID: v.ChannelID,
-			ChannelName: v.ChannelName, DurationSeconds: v.DurationSeconds,
-			HasThumbnail:     v.HasThumbnail,
-			ThumbnailVersion: v.ThumbnailVersion,
-			Status:           v.Status,
-			PublishedAt:      v.PublishedAt,
-		})
+		out = append(out, toAnswerVideo(v))
 	}
 	return out
 }

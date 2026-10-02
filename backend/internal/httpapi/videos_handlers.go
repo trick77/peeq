@@ -222,11 +222,55 @@ func (s *server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, err, "list videos failed")
 		return
 	}
-	out := make([]videoDTO, 0, len(all))
+	out := make([]videoCardDTO, 0, len(all))
 	for i := range all {
-		out = append(out, toVideoDTO(&all[i]))
+		out = append(out, toVideoCardDTO(&all[i]))
 	}
 	writeJSON(w, out)
+}
+
+// videoCardDTO is one row of the video list: what a grid card draws, and no
+// more. The whole video (description, summary, chapters, media facts) is
+// GET /api/videos/{id}, which the Player asks for when a card is opened.
+type videoCardDTO struct {
+	ID                    string  `json:"id"`
+	Title                 string  `json:"title"`
+	ChannelID             string  `json:"channel_id"`
+	ChannelName           string  `json:"channel_name"`
+	DurationSeconds       int64   `json:"duration_seconds,omitempty"`
+	PublishedAt           string  `json:"published_at,omitempty"`
+	HasThumbnail          bool    `json:"has_thumbnail"`
+	ThumbnailVersion      string  `json:"thumbnail_version,omitempty"`
+	HasMedia              bool    `json:"has_media"`
+	Status                string  `json:"status"`
+	Watched               bool    `json:"watched"`
+	WatchedAt             string  `json:"watched_at,omitempty"`
+	ResumePositionSeconds float64 `json:"resume_position_seconds"`
+	Favorite              bool    `json:"favorite"`
+	DownloadedAt          string  `json:"downloaded_at,omitempty"`
+	Category              string  `json:"category"`
+}
+
+// toVideoCardDTO maps a row read with videos.Store.List or Cards.
+func toVideoCardDTO(v *videos.Video) videoCardDTO {
+	return videoCardDTO{
+		ID:                    v.ID,
+		Title:                 v.Title,
+		ChannelID:             v.ChannelID,
+		ChannelName:           v.ChannelName,
+		DurationSeconds:       v.DurationSeconds,
+		PublishedAt:           v.PublishedAt,
+		HasThumbnail:          v.HasThumbnail,
+		ThumbnailVersion:      v.ThumbnailVersion,
+		HasMedia:              v.MediaPath != "",
+		Status:                v.Status,
+		Watched:               v.Watched,
+		WatchedAt:             v.WatchedAt,
+		ResumePositionSeconds: v.ResumePositionSeconds,
+		Favorite:              v.Favorite,
+		DownloadedAt:          v.DownloadedAt,
+		Category:              v.Category,
+	}
 }
 
 // handleVideoCounts answers the Library's chip row: how many videos each
