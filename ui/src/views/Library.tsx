@@ -7,7 +7,12 @@ import { useVideoToggles } from "../hooks/useVideoToggles";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useSettings } from "../settingsStore";
-import type { LibraryVideo, VideoCounts, VideoFilter, VideoSort } from "../api/types";
+import type {
+  LibraryVideo,
+  VideoCounts,
+  VideoFilter,
+  VideoSort,
+} from "../api/types";
 import { CATEGORIES } from "../categories";
 import { controlClass } from "../ui";
 
@@ -262,11 +267,10 @@ export function Library({
     setCountsTick((t) => t + 1);
   }
 
-  const { toggleFavorite, toggleWatched } = useVideoToggles(
-    videos,
-    setVideos,
-    { onError: setError, onSettled: refreshCounts },
-  );
+  const { toggleFavorite, toggleWatched } = useVideoToggles(videos, setVideos, {
+    onError: setError,
+    onSettled: refreshCounts,
+  });
 
   // Stable, like the toggles: VideoCard is memoised, and a handler made fresh
   // on every render would defeat that for every card in the grid.

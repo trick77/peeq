@@ -43,8 +43,20 @@ describe("Library re-renders", () => {
     posterRenders.count = 0;
     vi.mocked(listVideos).mockResolvedValue([card("a"), card("b"), card("c")]);
     vi.mocked(getVideoCounts).mockResolvedValue({
-      filters: { all: 3, unwatched: 3, in_progress: 0, watched: 0, favorites: 0 },
-      categories: { all: {}, unwatched: {}, in_progress: {}, watched: {}, favorites: {} },
+      filters: {
+        all: 3,
+        unwatched: 3,
+        in_progress: 0,
+        watched: 0,
+        favorites: 0,
+      },
+      categories: {
+        all: {},
+        unwatched: {},
+        in_progress: {},
+        watched: {},
+        favorites: {},
+      },
     });
   });
 
@@ -53,7 +65,13 @@ describe("Library re-renders", () => {
     // callbacks each time. With hundreds of cards on screen, each of those
     // used to re-run every card.
     const { rerender } = render(
-      <Library onOpenVideo={() => {}} onOpenChannel={() => {}} search="" onSearchChange={() => {}} queueSignal="" />,
+      <Library
+        onOpenVideo={() => {}}
+        onOpenChannel={() => {}}
+        search=""
+        onSearchChange={() => {}}
+        queueSignal=""
+      />,
     );
     await screen.findByText("Video a");
     const settled = posterRenders.count;
@@ -61,7 +79,13 @@ describe("Library re-renders", () => {
 
     for (let i = 0; i < 5; i += 1) {
       rerender(
-        <Library onOpenVideo={() => {}} onOpenChannel={() => {}} search="" onSearchChange={() => {}} queueSignal="" />,
+        <Library
+          onOpenVideo={() => {}}
+          onOpenChannel={() => {}}
+          search=""
+          onSearchChange={() => {}}
+          queueSignal=""
+        />,
       );
     }
     expect(posterRenders.count).toBe(settled);

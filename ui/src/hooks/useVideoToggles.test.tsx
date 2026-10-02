@@ -32,8 +32,12 @@ function setup(onError = vi.fn(), onSettled = vi.fn()) {
 
 describe("useVideoToggles", () => {
   beforeEach(() => {
-    vi.mocked(setFavorite).mockReset().mockResolvedValue(undefined as never);
-    vi.mocked(setWatched).mockReset().mockResolvedValue(undefined as never);
+    vi.mocked(setFavorite)
+      .mockReset()
+      .mockResolvedValue(undefined as never);
+    vi.mocked(setWatched)
+      .mockReset()
+      .mockResolvedValue(undefined as never);
   });
 
   it("keeps both callbacks' identity while the list changes", async () => {

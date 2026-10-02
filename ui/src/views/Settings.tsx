@@ -180,7 +180,8 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
   async function save(patch: SettingsPatch) {
     if (!settings) return;
     const keys = Object.keys(patch) as (keyof SettingsPatch)[];
-    if (keys.every((k) => settings[k as keyof SettingsType] === patch[k])) return;
+    if (keys.every((k) => settings[k as keyof SettingsType] === patch[k]))
+      return;
     const sending = JSON.stringify(patch);
     if (inFlight.current.has(sending)) return;
     inFlight.current.add(sending);
@@ -451,9 +452,9 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
           )}
         </h2>
         <p className="desc">
-          Lets the Peeq browser extension send your YouTube cookie automatically,
-          so you never paste a cookie by hand. The token can only write the
-          cookie — it cannot read your library.
+          Lets the Peeq browser extension send your YouTube cookie
+          automatically, so you never paste a cookie by hand. The token can only
+          write the cookie — it cannot read your library.
         </p>
 
         {freshToken ? (

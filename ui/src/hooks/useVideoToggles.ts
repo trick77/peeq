@@ -21,7 +21,10 @@ export function useVideoToggles(
     /** Called once the server has taken a change. */
     onSettled?: () => void;
   },
-): { toggleFavorite: (id: string) => void; toggleWatched: (id: string) => void } {
+): {
+  toggleFavorite: (id: string) => void;
+  toggleWatched: (id: string) => void;
+} {
   const videosRef = useRef(videos);
   videosRef.current = videos;
   const handlersRef = useRef(handlers);
@@ -37,7 +40,9 @@ export function useVideoToggles(
       const current = videosRef.current.find((v) => v.id === id);
       if (!current) return;
       const apply = (p: Partial<LibraryVideo>) =>
-        setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...p } : v)));
+        setVideos((prev) =>
+          prev.map((v) => (v.id === id ? { ...v, ...p } : v)),
+        );
       apply(patch(current));
       try {
         await send(current);

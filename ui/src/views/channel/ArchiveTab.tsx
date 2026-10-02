@@ -48,11 +48,9 @@ export function ArchiveTab({
   }, [channelId, debouncedQuery, category, sort]);
 
   const openVideo = useStableCallback(onOpenVideo);
-  const { toggleFavorite, toggleWatched } = useVideoToggles(
-    videos,
-    setVideos,
-    { onError: setError },
-  );
+  const { toggleFavorite, toggleWatched } = useVideoToggles(videos, setVideos, {
+    onError: setError,
+  });
 
   return (
     <>
