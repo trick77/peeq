@@ -5,6 +5,7 @@ import { SearchField } from "../components/SearchField";
 import { listVideos, getVideoCounts, redownload } from "../api";
 import { useVideoToggles } from "../hooks/useVideoToggles";
 import { useStableCallback } from "../hooks/useStableCallback";
+import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { useSettings } from "../settingsStore";
 import type { LibraryVideo, VideoCounts, VideoFilter, VideoSort } from "../api/types";
 import { CATEGORIES } from "../categories";
@@ -156,7 +157,8 @@ export function Library({
   const [filter, setFilter] = useState<VideoFilter>("unwatched");
   const [category, setCategory] = useState<string>("all");
   const [sort, setSort] = useState<VideoSort>("added_newest");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  // Debounced so typing "abyss" fires one request, not five.
+  const debouncedQuery = useDebouncedValue(search, 250, "");
   const [counts, setCounts] = useState<VideoCounts | null>(null);
   const [videos, setVideos] = useState<LibraryVideo[]>([]);
   const { settings } = useSettings();
@@ -206,12 +208,6 @@ export function Library({
     };
     // queueSignal: a download finishing changes the numbers — see below.
   }, [debouncedQuery, countsTick, queueSignal]);
-
-  // Debounce the search box so typing "abyss" fires one request, not five.
-  useEffect(() => {
-    const id = setTimeout(() => setDebouncedQuery(search), 250);
-    return () => clearTimeout(id);
-  }, [search]);
 
   // The chip's own filtered list, refetched whenever the active chip,
   // search query, or sort changes.

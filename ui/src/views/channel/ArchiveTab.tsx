@@ -3,6 +3,7 @@ import { VideoCard } from "../../components/VideoCard";
 import { listVideos } from "../../api/videos";
 import { useVideoToggles } from "../../hooks/useVideoToggles";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { CATEGORIES } from "../../categories";
 import { SORT_OPTIONS } from "../Library";
 import { controlClass } from "../../ui";
@@ -19,7 +20,7 @@ export function ArchiveTab({
   const [videos, setVideos] = useState<LibraryVideo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 250, "");
   const [category, setCategory] = useState("all");
   const [sort, setSort] = useState<VideoSort>("added_newest");
   // 0 until the settings land or if they never do: a window of nothing badges
@@ -30,11 +31,6 @@ export function ArchiveTab({
   // The Archive tab keeps its own search/category/sort state rather than
   // sharing the Library's: visiting a channel must never change what the
   // Library shows when the user goes back to it.
-  useEffect(() => {
-    const id = setTimeout(() => setDebouncedQuery(query), 250);
-    return () => clearTimeout(id);
-  }, [query]);
-
   const loadSeq = useRef(0);
 
   useEffect(() => {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, memo } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../icons";
 import { Button, Spinner, iconActionClass } from "../ui";
-import { AUTO_SKIP, Scrubber, categoryLabel } from "../components/Scrubber";
+import { Scrubber, findAutoSkip, skippedLabel } from "../components/Scrubber";
 import { SleepTimer } from "../components/SleepTimer";
 import { RowMenu, type RowMenuAction } from "../components/RowMenu";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -32,7 +32,6 @@ import { formatDuration, gradientClassFor } from "../format";
 // copying all moved into components/TranscriptCard with the markup.
 import { transcriptFilenameBase } from "../vtt";
 import { centerCuesRef } from "../captions";
-import { DOT } from "../sep";
 import { ContentsCard } from "./player/ContentsCard";
 import { TranscriptCard } from "../components/TranscriptCard";
 import { UnfetchedVideo } from "./player/UnfetchedVideo";
@@ -922,19 +921,12 @@ function PlayerImpl({
     // recaps, non-music sections) are drawn on the scrubber but play — cutting
     // them without being asked removes video the viewer may well want. A video
     // with no segments makes this a no-op.
-    for (const seg of segments) {
-      if (!AUTO_SKIP.has(seg.category)) continue;
-      if (el.currentTime >= seg.start_time && el.currentTime < seg.end_time) {
-        el.currentTime = seg.end_time;
-        if (visible) setCurrentTime(seg.end_time);
-        positionRef.current = seg.end_time;
-        showToast(
-          `Skipped ${categoryLabel(seg.category)}${DOT}${formatDuration(seg.end_time - seg.start_time)}`,
-          "skipForward",
-          "info",
-        );
-        break;
-      }
+    const skip = findAutoSkip(segments, el.currentTime);
+    if (skip) {
+      el.currentTime = skip.end_time;
+      if (visible) setCurrentTime(skip.end_time);
+      positionRef.current = skip.end_time;
+      showToast(skippedLabel(skip), "skipForward", "info");
     }
 
     throttledPing(video.id, el.currentTime);

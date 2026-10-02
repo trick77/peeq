@@ -1,5 +1,6 @@
 import type { MouseEvent } from "react";
 import { formatDuration } from "../format";
+import { DOT } from "../sep";
 
 import type { SponsorblockSegment } from "../api/types";
 
@@ -29,6 +30,26 @@ const CATEGORY_LABELS: Record<string, string> = {
   filler: "filler",
   music_offtopic: "non-music section",
 };
+
+// findAutoSkip returns the AUTO_SKIP segment the playhead is inside, if any.
+// Both players ask this on every timeupdate and jump to its end; segments
+// outside AUTO_SKIP are drawn on the bar but play.
+export function findAutoSkip(
+  segments: SponsorblockSegment[],
+  seconds: number,
+): SponsorblockSegment | undefined {
+  return segments.find(
+    (s) =>
+      AUTO_SKIP.has(s.category) &&
+      seconds >= s.start_time &&
+      seconds < s.end_time,
+  );
+}
+
+// skippedLabel is the toast for a segment just skipped: "Skipped ad · 0:42".
+export function skippedLabel(seg: SponsorblockSegment): string {
+  return `Skipped ${categoryLabel(seg.category)}${DOT}${formatDuration(seg.end_time - seg.start_time)}`;
+}
 
 export function categoryLabel(category: string): string {
   return CATEGORY_LABELS[category] ?? category;
