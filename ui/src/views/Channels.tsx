@@ -240,16 +240,25 @@ export function Channels({
   // counts and the review band. Called on mount and again after anything
   // that could change it — subscribe, unsubscribe, dismiss, resubscribe,
   // delete — never on a chip click, which only narrows what is held.
+  //
+  // loadFailure is the message a failed load put on screen, so a later load
+  // that succeeds can take down exactly that line. `error` is shared with
+  // every row action and with the tombstone fetch, and their messages are not
+  // this function's to clear.
+  const loadFailure = useRef<string | null>(null);
   function loadAll() {
     const seq = ++allSeq.current;
     listChannels("all")
       .then((cs) => {
         if (seq !== allSeq.current) return; // a newer fetch superseded this one
         setAllChannels(cs);
-        setError(null);
+        const failed = loadFailure.current;
+        loadFailure.current = null;
+        if (failed !== null) setError((e) => (e === failed ? null : e));
       })
       .catch((e: Error) => {
         if (seq !== allSeq.current) return;
+        loadFailure.current = e.message;
         setError(e.message);
       });
   }

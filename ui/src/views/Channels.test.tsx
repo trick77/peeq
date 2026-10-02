@@ -314,6 +314,17 @@ describe("Channels", () => {
     expect(listChannels).toHaveBeenCalledTimes(2);
   });
 
+  it("a successful list load leaves someone else's error on screen", async () => {
+    // The error line is shared with the row actions and the tombstone fetch.
+    // A list that loads fine has nothing to say about those.
+    vi.mocked(listAutoUnsubscribedChannels).mockRejectedValue(
+      new Error("tombstones down"),
+    );
+    render(<Channels />);
+    expect(await screen.findByText("Subbed Channel")).toBeInTheDocument();
+    expect(await screen.findByText("tombstones down")).toBeInTheDocument();
+  });
+
   it("refetches when a scan lands, and not for a scan already in the buffer", async () => {
     const scan = (id: number) => ({
       id,

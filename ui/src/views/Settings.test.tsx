@@ -167,6 +167,28 @@ describe("Settings", () => {
     expect(updateSettings).toHaveBeenCalledTimes(1);
   });
 
+  it("sends a value put back to its old self while its save is still in flight", async () => {
+    // Judged against the last ANSWER, the second release looks like no change
+    // (14 is what the server last said) and the server would keep 30.
+    let answer: (s: SettingsType) => void = () => {};
+    vi.mocked(updateSettings).mockImplementationOnce(
+      () => new Promise<SettingsType>((resolve) => (answer = resolve)),
+    );
+    render(<Settings />);
+    const slider = await screen.findByLabelText("Retention days");
+    fireEvent.change(slider, { target: { value: "30" } });
+    fireEvent.mouseUp(slider);
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(slider, { target: { value: "14" } });
+    fireEvent.mouseUp(slider);
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenLastCalledWith({ retention_days: 14 }),
+    );
+    expect(updateSettings).toHaveBeenCalledTimes(2);
+    answer({ ...baseSettings, retention_days: 30 });
+  });
+
   it("renders the current min_video_duration_seconds value and saves it on blur", async () => {
     const user = userEvent.setup();
     render(<Settings />);

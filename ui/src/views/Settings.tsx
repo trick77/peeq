@@ -174,23 +174,32 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
   // and the retention slider on release, so without this merely tabbing
   // through the page PUT every field back unchanged — and the slider PUT twice
   // per touch, because a touch ends with both `touchend` and the mouse event
-  // the browser synthesises after it. inFlight covers that second case: the
-  // two land before either answer is back.
-  const inFlight = useRef(new Set<string>());
+  // the browser synthesises after it.
+  //
+  // "Nothing" is judged against what the server WILL hold, not what it last
+  // said: `sent` carries the values of saves still in flight. Without it the
+  // second of those two events would be sent again, and — worse — a value put
+  // back to its old self while its save was still on the wire would be taken
+  // for unchanged and never sent.
+  const sent = useRef<SettingsPatch>({});
   async function save(patch: SettingsPatch) {
     if (!settings) return;
-    const keys = Object.keys(patch) as (keyof SettingsPatch)[];
-    if (keys.every((k) => settings[k as keyof SettingsType] === patch[k]))
-      return;
-    const sending = JSON.stringify(patch);
-    if (inFlight.current.has(sending)) return;
-    inFlight.current.add(sending);
+    const expected: Record<string, unknown> = { ...settings, ...sent.current };
+    const incoming: Record<string, unknown> = patch;
+    if (Object.keys(incoming).every((k) => expected[k] === incoming[k])) return;
+    sent.current = { ...sent.current, ...patch };
     try {
       adoptSettings(await updateSettings(patch));
     } catch (err) {
       setError((err as Error).message);
     } finally {
-      inFlight.current.delete(sending);
+      // Forget only what this save put there: a later save of the same field
+      // has replaced the value, and its own answer is still to come.
+      const pending: Record<string, unknown> = { ...sent.current };
+      for (const k of Object.keys(incoming)) {
+        if (pending[k] === incoming[k]) delete pending[k];
+      }
+      sent.current = pending as SettingsPatch;
     }
   }
 
