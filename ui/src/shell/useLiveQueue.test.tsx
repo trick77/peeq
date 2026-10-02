@@ -4,7 +4,7 @@ import { useLiveQueue } from "./useLiveQueue";
 import {
   listDownloads,
   listSummaries,
-  listPending,
+  countPending,
   cookieHealth,
   downloadsStatus,
   cancelDownload,
@@ -18,7 +18,7 @@ import { useProgressByJobId, resetProgressForTests } from "./progressStore";
 vi.mock("../api", () => ({
   listDownloads: vi.fn(),
   listSummaries: vi.fn(),
-  listPending: vi.fn(),
+  countPending: vi.fn(),
   cookieHealth: vi.fn(),
   downloadsStatus: vi.fn(),
   cancelDownload: vi.fn(),
@@ -50,7 +50,7 @@ beforeEach(() => {
   resetProgressForTests();
   vi.mocked(listDownloads).mockReset().mockResolvedValue([]);
   vi.mocked(listSummaries).mockReset().mockResolvedValue([]);
-  vi.mocked(listPending).mockReset().mockResolvedValue([]);
+  vi.mocked(countPending).mockReset().mockResolvedValue(0);
   vi.mocked(cookieHealth)
     .mockReset()
     .mockResolvedValue({ status: "valid", present: true });
@@ -77,12 +77,12 @@ describe("useLiveQueue", () => {
   });
 
   it("reads the inbox count once when enabled, not on every render", async () => {
-    vi.mocked(listPending).mockResolvedValue([{ video_id: "p1" } as never]);
+    vi.mocked(countPending).mockResolvedValue(1);
     const { result, rerender } = renderHook(() => useLiveQueue(true));
     await waitFor(() => expect(result.current.pendingCount).toBe(1));
     rerender();
     rerender();
-    expect(listPending).toHaveBeenCalledTimes(1);
+    expect(countPending).toHaveBeenCalledTimes(1);
   });
 
   it("loads both lanes and the status lights once enabled", async () => {
@@ -157,7 +157,7 @@ describe("useLiveQueue", () => {
   });
 
   it("an activity frame is buffered and refreshes the pending count", async () => {
-    vi.mocked(listPending).mockResolvedValue([{ video_id: "p1" } as never]);
+    vi.mocked(countPending).mockResolvedValue(1);
     const { result } = renderHook(() => useLiveQueue(true));
     await waitFor(() => expect(pushFrame).not.toBeNull());
 
@@ -232,12 +232,12 @@ describe("useLiveQueue", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(connects).toBe(1);
       expect(listDownloads).toHaveBeenCalledTimes(1);
-      expect(listPending).toHaveBeenCalledTimes(1);
+      expect(countPending).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1000);
       expect(connects).toBe(2);
       expect(listDownloads).toHaveBeenCalledTimes(2);
       expect(listSummaries).toHaveBeenCalledTimes(2);
-      expect(listPending).toHaveBeenCalledTimes(2);
+      expect(countPending).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

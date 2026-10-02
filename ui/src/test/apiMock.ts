@@ -15,6 +15,7 @@ export function apiMock() {
       .mockResolvedValue({ paused: false, low_disk: false }),
     resumeYoutube: vi.fn().mockResolvedValue(undefined),
     listPending: vi.fn().mockResolvedValue([]),
+    countPending: vi.fn().mockResolvedValue(0),
     listSummaries: vi.fn().mockResolvedValue([]),
     cancelDownload: vi.fn().mockResolvedValue(undefined),
     // Never resolves: a closed stream now reconnects and re-lists, which would

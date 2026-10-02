@@ -5,7 +5,7 @@ import {
   downloadsStatus,
   cancelDownload as cancelDownloadApi,
   streamDownloads,
-  listPending,
+  countPending,
   listSummaries,
 } from "../api";
 import { getYtdlpVersion, type YtdlpVersion } from "../api/ytdlp";
@@ -60,7 +60,7 @@ const ACTIVITY_BUFFER = 50;
 // session check answers, and everything is torn down when the user leaves.
 export function useLiveQueue(enabled: boolean): LiveQueue {
   const [jobs, setJobs] = useState<Job[]>([]);
-  // undefined until the first listPending() lands. The rail greys Inbox out on
+  // undefined until the first countPending() lands. The rail greys Inbox out on
   // a real 0, so a 0 default would flash the item dim on every cold load.
   const [pendingCount, setPendingCount] = useState<number | undefined>(
     undefined,
@@ -160,8 +160,8 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
   // the user sits on another page, and the rail greys Inbox out when the count
   // is 0 — a stale 0 would claim there is nothing to decide when there is.
   const refreshPending = useCallback(() => {
-    listPending()
-      .then((p) => setPendingCount(p.length))
+    countPending()
+      .then((n) => setPendingCount(n))
       .catch(() => {});
   }, []);
 
