@@ -34,10 +34,13 @@ export function PillStrip({
   const update = useCallback(() => {
     const el = ref.current;
     if (!el) return;
-    setEdges({
-      left: el.scrollLeft > 1,
-      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
-    });
+    const left = el.scrollLeft > 1;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    // Same object back when nothing moved: this runs on every scroll event and
+    // every parent render, and a fresh object each time re-rendered the strip.
+    setEdges((prev) =>
+      prev.left === left && prev.right === right ? prev : { left, right },
+    );
   }, []);
 
   // Observe size once. `update` is stable (useCallback []), so this sets up the

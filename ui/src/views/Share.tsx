@@ -186,7 +186,10 @@ export function Share({ token }: { token: string | null }) {
   // account, and the public routes are read-only by design.
   function handleTimeUpdate() {
     const el = videoRef.current;
-    if (!el) return;
+    // Nothing reads the time without segments: the scrubber is only drawn for
+    // them, and setting state four times a second re-rendered the whole page
+    // for every viewer of a video that has none.
+    if (!el || segments.length === 0) return;
     setCurrentTime(el.currentTime);
     for (const seg of segments) {
       if (!AUTO_SKIP.has(seg.category)) continue;

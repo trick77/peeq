@@ -6040,6 +6040,17 @@ details.tomb-sect[open] > summary svg {
   opacity: 0.45;
   filter: saturate(0.85);
 }
+/* The channel list draws the artwork as a lazy <img> inside the banner box
+   rather than as its background; it fills the box the same way. */
+.chan-banner > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  border-radius: inherit;
+}
 /* The gradient does the legibility work, not a low opacity: it stays nearly
    clear on the right (where there is no text) and thickens to solid panel on
    the left, under the avatar, name, and description. That way the artwork is

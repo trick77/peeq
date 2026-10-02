@@ -478,19 +478,25 @@ export function Channels({
         {visibleChannels.map((c) => (
           <div key={c.id} className="channel-row chan-artrow sect">
             {c.has_banner ? (
-              <div
-                className="chan-banner"
-                style={{
-                  backgroundImage: `url(${channelBannerUrl(c.id, c.banner_version)})`,
-                }}
-                aria-hidden="true"
-              />
+              // An <img>, not a CSS background: a background is fetched the
+              // moment the row exists, and this list has one wide banner per
+              // channel. Lazy images wait until their row is near the screen.
+              <div className="chan-banner" aria-hidden="true">
+                <img
+                  src={channelBannerUrl(c.id, c.banner_version)}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
             ) : null}
             {c.has_avatar ? (
               <img
                 className="chan-av"
                 src={channelAvatarUrl(c.id, c.avatar_version)}
                 alt=""
+                loading="lazy"
+                decoding="async"
               />
             ) : (
               <div
