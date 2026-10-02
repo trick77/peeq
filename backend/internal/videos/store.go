@@ -784,17 +784,24 @@ type ChannelRef struct {
 // nothing. A channel is real, for this purpose, when something of its is on the
 // shelf.
 //
+// The name is resolved the way videoColumns resolves it: the row's own
+// channel_name, else the channels cache. Only the add-by-URL path writes the
+// former, so reading it alone left out every channel whose videos arrived
+// through a scan — which is to say every subscribed one.
+//
 // The handle comes from `channels` by an outer join — same database, and the
 // alternative is making the caller stitch two lists together to answer one
 // question. Rows recorded before channel ids were carry an empty id and are
 // still returned, because the filter has a by-name arm for exactly them.
 func (s *Store) ChannelDirectory() ([]ChannelRef, error) {
 	rows, err := s.db.QueryContext(context.Background(), `
-		SELECT DISTINCT v.channel_id, v.channel_name, COALESCE(c.handle, '')
+		SELECT DISTINCT v.channel_id,
+		       COALESCE(NULLIF(v.channel_name, ''), c.name) AS name,
+		       COALESCE(c.handle, '')
 		FROM videos v
 		LEFT JOIN channels c ON c.id = v.channel_id
-		WHERE v.channel_name <> ''
-		ORDER BY v.channel_name`)
+		WHERE COALESCE(NULLIF(v.channel_name, ''), NULLIF(c.name, '')) IS NOT NULL
+		ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("channel directory: %w", err)
 	}

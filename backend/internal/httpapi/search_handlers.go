@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -215,8 +214,10 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	k := defaultSearchK
 	if raw := r.URL.Query().Get("k"); raw != "" {
+		// Clamped to what retrieval can return at all: k sized a slice below
+		// before it was bounded, and a caller could ask for gigabytes.
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
-			k = n
+			k = min(n, searchCandidates)
 		}
 	}
 
@@ -227,27 +228,13 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		hits = s.retrieveFind(r, q)
 	}
 
-	// One read for the videos the loop can reach, instead of one per distinct
-	// video inside it. At most k videos are emitted (each carries at least one
-	// of the k moments), so the first k distinct ids in hit order cover the
-	// common case; anything past them is read lazily, as before.
-	preloadIDs := make([]string, 0, k)
-	for _, h := range hits {
-		if len(preloadIDs) >= k {
-			break
-		}
-		if !slices.Contains(preloadIDs, h.VideoID) {
-			preloadIDs = append(preloadIDs, h.VideoID)
-		}
-	}
-	videosByID, err := s.videos.GetMany(preloadIDs)
+	// One read for every video the hits name, instead of one per distinct video
+	// inside the loop. Retrieval returns at most searchCandidates hits, and
+	// GetMany drops the duplicates.
+	videosByID, err := s.videos.GetMany(idsOf(hits, func(h rag.Hit) string { return h.VideoID }))
 	if err != nil {
 		serverError(w, r, err, "search failed")
 		return
-	}
-	preloaded := make(map[string]bool, len(preloadIDs))
-	for _, id := range preloadIDs {
-		preloaded[id] = true
 	}
 
 	order := make([]string, 0)
@@ -263,12 +250,6 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		g, ok := byVideo[h.VideoID]
 		if !ok {
 			v := videosByID[h.VideoID]
-			if v == nil && !preloaded[h.VideoID] {
-				if v, err = s.videos.Get(h.VideoID); err != nil {
-					serverError(w, r, err, "search failed")
-					return
-				}
-			}
 			if v == nil {
 				continue
 			}
