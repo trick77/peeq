@@ -282,16 +282,11 @@ func (s *Store) ListPending() ([]Entry, error) {
 	return s.listPending("")
 }
 
-// listPending is the Inbox query behind ListPending and ListPendingForChannel,
-// which differ only in whether one channel is named. channelID "" means all.
-func (s *Store) listPending(channelID string) ([]Entry, error) {
-	where, args := `cv.state = 'pending'`, []any{}
-	if channelID != "" {
-		where += ` AND cv.channel_id = ?`
-		args = append(args, channelID)
-	}
-	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
+// The Inbox query, shared by ListPending and ListPendingForChannel, which
+// differ only in whether one channel is named. Assembled from constants so no
+// statement is ever built from a runtime value.
+const (
+	pendingSelect = `SELECT ` + pendingColumns + `, COALESCE(c.name, '') AS channel_name,
        COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
        COALESCE((SELECT j.state FROM summary_jobs j WHERE j.video_id = cv.video_id ORDER BY j.id DESC LIMIT 1) = 'failed', 0),
        EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id),
@@ -299,8 +294,21 @@ func (s *Store) listPending(channelID string) ([]Entry, error) {
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
 LEFT JOIN videos v ON v.id = cv.video_id
-WHERE `+where+`
-ORDER BY COALESCE(cv.published_at, date(cv.discovered_at)) DESC, cv.discovered_at DESC, cv.video_id DESC`, args...)
+WHERE cv.state = 'pending'`
+	pendingOrder = `
+ORDER BY COALESCE(cv.published_at, date(cv.discovered_at)) DESC, cv.discovered_at DESC, cv.video_id DESC`
+
+	listPendingAll        = pendingSelect + pendingOrder
+	listPendingForChannel = pendingSelect + ` AND cv.channel_id = ?` + pendingOrder
+)
+
+// listPending runs the Inbox query; channelID "" means every channel.
+func (s *Store) listPending(channelID string) ([]Entry, error) {
+	query, args := listPendingAll, []any{}
+	if channelID != "" {
+		query, args = listPendingForChannel, []any{channelID}
+	}
+	rows, err := s.db.QueryContext(context.Background(), query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list pending channel videos (channel=%q): %w", channelID, err)
 	}
