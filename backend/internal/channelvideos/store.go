@@ -279,6 +279,17 @@ func (s *Store) CountPending() (int, error) {
 // the channel row is somehow absent) — the Pending UI shows the name rather
 // than the raw UCID. The join keeps this a single query (no N+1).
 func (s *Store) ListPending() ([]Entry, error) {
+	return s.listPending("")
+}
+
+// listPending is the Inbox query behind ListPending and ListPendingForChannel,
+// which differ only in whether one channel is named. channelID "" means all.
+func (s *Store) listPending(channelID string) ([]Entry, error) {
+	where, args := `cv.state = 'pending'`, []any{}
+	if channelID != "" {
+		where += ` AND cv.channel_id = ?`
+		args = append(args, channelID)
+	}
 	rows, err := s.db.QueryContext(context.Background(),
 		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
        COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
@@ -288,10 +299,10 @@ func (s *Store) ListPending() ([]Entry, error) {
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
 LEFT JOIN videos v ON v.id = cv.video_id
-WHERE cv.state = 'pending'
-ORDER BY COALESCE(cv.published_at, date(cv.discovered_at)) DESC, cv.discovered_at DESC, cv.video_id DESC`)
+WHERE `+where+`
+ORDER BY COALESCE(cv.published_at, date(cv.discovered_at)) DESC, cv.discovered_at DESC, cv.video_id DESC`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list pending channel videos: %w", err)
+		return nil, fmt.Errorf("list pending channel videos (channel=%q): %w", channelID, err)
 	}
 	defer func() { _ = rows.Close() }()
 	return scanPendingEntries(rows)
@@ -314,22 +325,7 @@ func (s *Store) CountPendingForChannel(channelID string) (int, error) {
 // ListPendingForChannel is ListPending scoped to one channel. The
 // idx_channel_videos_channel index already supports this predicate.
 func (s *Store) ListPendingForChannel(channelID string) ([]Entry, error) {
-	rows, err := s.db.QueryContext(context.Background(),
-		`SELECT `+pendingColumns+`, COALESCE(c.name, '') AS channel_name,
-       COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
-       COALESCE((SELECT j.state FROM summary_jobs j WHERE j.video_id = cv.video_id ORDER BY j.id DESC LIMIT 1) = 'failed', 0),
-       EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id),
-       (SELECT COALESCE(strftime('%s', pt.updated_at), '0') FROM pending_thumbnails pt INDEXED BY idx_pending_thumbnails_version WHERE pt.video_id = cv.video_id)
-FROM channel_videos cv
-LEFT JOIN channels c ON c.id = cv.channel_id
-LEFT JOIN videos v ON v.id = cv.video_id
-WHERE cv.state = 'pending' AND cv.channel_id = ?
-ORDER BY COALESCE(cv.published_at, date(cv.discovered_at)) DESC, cv.discovered_at DESC, cv.video_id DESC`, channelID)
-	if err != nil {
-		return nil, fmt.Errorf("list pending for channel %s: %w", channelID, err)
-	}
-	defer func() { _ = rows.Close() }()
-	return scanPendingEntries(rows)
+	return s.listPending(channelID)
 }
 
 // ListUnavailableForChannel returns every row for a channel parked as
