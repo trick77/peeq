@@ -87,6 +87,10 @@ type Subscription struct {
 	// as "" here, so callers must treat empty as "not scheduled" rather than as
 	// an instant.
 	NextMetaRefreshAt string
+	// StreamsMissingAt is when a scan was last told this channel has no
+	// /streams tab, or "" when the tab answered or was never asked for. The
+	// scan skips the tab while this is recent — see migration 0033.
+	StreamsMissingAt string
 }
 
 // ListItem is a channel joined with its (optional) subscription state, plus
@@ -667,7 +671,8 @@ UPDATE channels SET keep_reads = ? WHERE id = ? RETURNING keep_reads`, on, chann
 // plain SELECT is sufficient — no atomic claim (state flip) is needed.
 func (s *Store) ClaimDue(now string) (*Subscription, error) {
 	row := s.db.QueryRowContext(context.Background(), `
-SELECT channel_id, autodownload, format_override, baselined_at, last_scanned_at, next_scan_at, created_at, scan_requested_at
+SELECT channel_id, autodownload, format_override, baselined_at, last_scanned_at, next_scan_at, created_at, scan_requested_at,
+       COALESCE(streams_missing_at, '')
 FROM subscriptions
 WHERE next_scan_at <= ?
 ORDER BY next_scan_at ASC
@@ -678,6 +683,7 @@ LIMIT 1`, now)
 	err := row.Scan(
 		&sub.ChannelID, &sub.Autodownload, &sub.FormatOverride,
 		&baselinedAt, &lastScannedAt, &sub.NextScanAt, &sub.CreatedAt, &scanRequestedAt,
+		&sub.StreamsMissingAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -689,6 +695,20 @@ LIMIT 1`, now)
 	sub.LastScannedAt = lastScannedAt.String
 	sub.ScanRequestedAt = scanRequestedAt.String
 	return &sub, nil
+}
+
+// SetStreamsMissing records when a scan was told the channel has no /streams
+// tab; at "" clears it, for a tab that answered.
+func (s *Store) SetStreamsMissing(channelID, at string) error {
+	var v any
+	if at != "" {
+		v = at
+	}
+	if _, err := s.db.ExecContext(context.Background(),
+		`UPDATE subscriptions SET streams_missing_at = ? WHERE channel_id = ?`, v, channelID); err != nil {
+		return fmt.Errorf("set streams missing %s: %w", channelID, err)
+	}
+	return nil
 }
 
 // DueChannel is one upcoming scheduled channel task for the Activity page's

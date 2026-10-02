@@ -690,10 +690,11 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 	// Read the baseline flag BEFORE listing: a first pass needs a complete
 	// snapshot, so listChannel is stricter about a half-listed channel there.
 	baseline := sub.BaselinedAt == ""
-	entries, streamCount, err := s.listChannel(ctx, sub.ChannelID, baseline)
+	entries, streamCount, streams, err := s.listChannel(ctx, sub.ChannelID, baseline, s.streamsTabKnownMissing(sub, baseline))
 	if err != nil {
 		return err
 	}
+	s.noteStreamsTab(sub, streams)
 	// Tally for the Activity record: how many genuinely-new uploads were queued
 	// automatically vs left for a manual decision, and (on the first pass) how
 	// many the baseline snapshot recorded.
@@ -1029,7 +1030,11 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 // answers "does this channel publish through livestreams?" — deliberately not
 // the post-dedup number, which would read 0 for a channel whose streams happen
 // to also surface on /videos.
-func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline bool) ([]ytdlp.ChannelEntry, int, error) {
+//
+// skipStreams leaves the /streams call out for a channel recently told it has
+// no such tab (see streamsTabKnownMissing). It is ignored when /videos is the
+// tab that turns out to be missing: then /streams is all there is to read.
+func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline, skipStreams bool) ([]ytdlp.ChannelEntry, int, streamsTab, error) {
 	// answered records whether EITHER tab actually returned a listing. A
 	// swallowed missing-tab error is not an answer: it says the tab could not be
 	// read, which on its own is indistinguishable from the tab being empty.
@@ -1046,18 +1051,24 @@ func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline bool)
 	default:
 		// Return before spending a second throttled call on a channel whose
 		// first call already failed.
-		return nil, 0, fmt.Errorf("scan: list %s: %w", ucid, err)
+		return nil, 0, streamsNotAsked, fmt.Errorf("scan: list %s: %w", ucid, err)
 	}
+	if skipStreams && err == nil {
+		return uploads, 0, streamsNotAsked, nil
+	}
+	tab := streamsNotAsked
 	streams, serr := s.d.Lister.ChannelStreams(ctx, ucid, s.d.listSize)
 	switch {
 	case serr == nil:
 		answered = true
+		tab = streamsAnswered
 	case errors.Is(serr, ytdlp.ErrBlocked), errors.Is(serr, ytdlp.ErrCookieExpired):
-		return nil, 0, fmt.Errorf("scan: list streams %s: %w", ucid, serr)
+		return nil, 0, streamsNotAsked, fmt.Errorf("scan: list streams %s: %w", ucid, serr)
 	case ytdlp.IsMissingTab(serr):
 		s.d.Logger.Debug("scan: channel has no streams tab", "channel_id", ucid)
+		tab = streamsMissing
 	case baseline:
-		return nil, 0, fmt.Errorf("scan: baseline list streams %s: %w", ucid, serr)
+		return nil, 0, streamsNotAsked, fmt.Errorf("scan: baseline list streams %s: %w", ucid, serr)
 	default:
 		s.d.Logger.Warn("scan: listing streams failed, using uploads only",
 			"channel_id", ucid, "err", serr)
@@ -1084,11 +1095,11 @@ func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline bool)
 	// Only the first pass is guarded. Later passes have a baseline to judge
 	// against, so a blind one there costs a delay rather than a wrong verdict.
 	if baseline && !answered {
-		return nil, 0, fmt.Errorf("scan: baseline list %s: neither tab could be read", ucid)
+		return nil, 0, streamsNotAsked, fmt.Errorf("scan: baseline list %s: neither tab could be read", ucid)
 	}
 
 	if len(streams) == 0 {
-		return uploads, 0, nil
+		return uploads, 0, tab, nil
 	}
 	// Built fresh rather than appended onto uploads: the slice came from the
 	// lister and is not ours to grow into.
@@ -1105,7 +1116,54 @@ func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline bool)
 		seen[e.ID] = struct{}{}
 		merged = append(merged, e)
 	}
-	return merged, len(streams), nil
+	return merged, len(streams), tab, nil
+}
+
+// streamsTab is what one pass learned about a channel's /streams tab.
+type streamsTab int
+
+const (
+	// streamsNotAsked: the call was skipped, or failed in a way that says
+	// nothing about whether the tab exists.
+	streamsNotAsked streamsTab = iota
+	streamsAnswered
+	streamsMissing
+)
+
+// streamsTabRecheck is how long a "no streams tab" answer is trusted. It is
+// the longest a channel's first-ever stream can go unnoticed, traded against
+// one throttled yt-dlp call per channel per scan.
+const streamsTabRecheck = 7 * 24 * time.Hour
+
+// streamsTabKnownMissing reports whether this pass may skip the /streams call.
+// Never on a baseline pass, which has to see the channel whole, and never on a
+// "Scan now": a scan somebody asked for looks at everything.
+func (s *Scheduler) streamsTabKnownMissing(sub *channels.Subscription, baseline bool) bool {
+	if baseline || sub.ScanRequestedAt != "" || sub.StreamsMissingAt == "" {
+		return false
+	}
+	at, err := time.Parse(store.TimeLayout, sub.StreamsMissingAt)
+	if err != nil {
+		return false
+	}
+	return s.d.Now().UTC().Sub(at) < streamsTabRecheck
+}
+
+// noteStreamsTab stores what the pass learned. Best-effort: a failed write
+// costs one extra call next scan, never the scan itself.
+func (s *Scheduler) noteStreamsTab(sub *channels.Subscription, tab streamsTab) {
+	var at string
+	switch {
+	case tab == streamsMissing:
+		at = s.d.Now().UTC().Format(store.TimeLayout)
+	case tab == streamsAnswered && sub.StreamsMissingAt != "":
+		at = ""
+	default:
+		return
+	}
+	if err := s.d.Channels.SetStreamsMissing(sub.ChannelID, at); err != nil {
+		s.d.Logger.Warn("scan: could not record the streams tab state", "channel_id", sub.ChannelID, "err", err)
+	}
 }
 
 // isBackCatalogue reports whether an entry was published before the channel was
