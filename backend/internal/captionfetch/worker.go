@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/logx"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/videos"
@@ -71,6 +72,7 @@ type Ledger interface {
 	NextCaptionCandidate() (*channelvideos.CaptionCandidate, error)
 	RecordCaptionAttempt(videoID string, delaySeconds int) error
 	ReturnCaptionAttempt(videoID string) error
+	SetCaptionLastError(videoID, msg string) error
 	MarkCaptionSettled(videoID string) error
 }
 
@@ -190,14 +192,23 @@ func (w *Worker) pass(ctx context.Context) {
 			return
 		}
 		w.d.Logger.Warn("captionfetch: fetch failed", "video_id", c.VideoID, "attempt", c.Attempts+1, "err", err)
+		// The log does not survive a restart and a settled row is never tried
+		// again, so the reason goes on the row. Redacted: the text leaves the
+		// log handler's reach here.
+		w.recordOutcome(c.VideoID, logx.RedactErr(err).Error())
 		if last {
 			w.settleWithout(c)
 		}
 		return
 	}
+	// The call ran cleanly, whatever it found: an earlier failure is no longer
+	// the latest outcome.
+	w.recordOutcome(c.VideoID, "")
 
 	if relPath == "" {
-		w.d.Logger.Debug("captionfetch: no captions yet", "video_id", c.VideoID, "attempt", c.Attempts+1)
+		// Info, not Debug: with the failure branch above this is the only trace
+		// of an attempt, and at most five are ever written per video.
+		w.d.Logger.Info("captionfetch: no captions yet", "video_id", c.VideoID, "attempt", c.Attempts+1)
 		if last {
 			w.settleWithout(c)
 		}
@@ -223,6 +234,9 @@ func (w *Worker) pass(ctx context.Context) {
 	// the analysis it gets is deliberately truncated.
 	if err := w.storeTranscript(c.VideoID, relPath); err != nil {
 		w.d.Logger.Error("captionfetch: save transcript failed", "video_id", c.VideoID, "err", err)
+		// The call was clean but the attempt was not: without this the row
+		// would read "no track found" for captions that were found and lost.
+		w.recordOutcome(c.VideoID, logx.RedactErr(err).Error())
 		return
 	}
 	// The language the captions are in still has to be recorded: the next
@@ -231,6 +245,7 @@ func (w *Worker) pass(ctx context.Context) {
 	// took away.
 	if err := w.d.Videos.SetAudioLanguage(c.VideoID, w.d.DefaultSubLang); err != nil {
 		w.d.Logger.Error("captionfetch: save audio language failed", "video_id", c.VideoID, "err", err)
+		w.recordOutcome(c.VideoID, logx.RedactErr(err).Error())
 		return
 	}
 	if err := w.d.Ledger.MarkCaptionSettled(c.VideoID); err != nil {
@@ -243,6 +258,15 @@ func (w *Worker) pass(ctx context.Context) {
 		return
 	}
 	w.d.Logger.Info("captionfetch: queued for summary", "video_id", c.VideoID, "title", c.Title)
+}
+
+// recordOutcome stores how this attempt ended. Best-effort: the fetch has
+// already been spent, and failing to note its outcome must not change what
+// happens to the video.
+func (w *Worker) recordOutcome(videoID, msg string) {
+	if err := w.d.Ledger.SetCaptionLastError(videoID, msg); err != nil {
+		w.d.Logger.Error("captionfetch: record outcome failed", "video_id", videoID, "err", err)
+	}
 }
 
 // ensureRow creates or refreshes the videos row for a candidate. A fresh row
