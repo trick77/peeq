@@ -1,7 +1,6 @@
-// Command peeq is the all-in-one server: API + embedded SPA, backed by
-// SQLite. This is the Task-5 boot milestone: config, DB, and auth are wired
-// end to end (dev auto-login or OIDC) in front of an empty video library; the
-// actual YouTube archiving pipeline arrives in later tasks.
+// Command peeq is the all-in-one server: the JSON API and the embedded SPA,
+// backed by SQLite, with the scan, download, summarize and upkeep workers
+// running beside it in the same process.
 package main
 
 import (
@@ -294,7 +293,7 @@ func run() error {
 		MediaDir:       cfg.MediaDir,
 		SummaryJobs:    summaryJobsStore,
 		DefaultSubLang: cfg.DefaultSubLang,
-		YoutubePaused:  func() bool { p, _, _ := settingsStore.YoutubePaused(context.Background()); return p },
+		YoutubePaused:  func() bool { return settingsStore.Paused(context.Background()) },
 		FailMonitor:    failMonitor,
 		Activity:       activityStore,
 		OnProgress: func(jobID int64, p ytdlp.Progress) {
@@ -330,9 +329,9 @@ func run() error {
 		Settings:       settingsStore,
 		Lister:         runner,
 		Prober:         runner,
-		CookieStatus:   func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
+		CookieStatus:   settingsStore.CookieStatus,
 		AllowAnonymous: cfg.AllowAnonymousYoutube,
-		YoutubePaused:  func(ctx context.Context) bool { p, _, _ := settingsStore.YoutubePaused(ctx); return p },
+		YoutubePaused:  settingsStore.Paused,
 		FailMonitor:    failMonitor,
 		Activity:       activityStore,
 		MediaDir:       cfg.MediaDir,
@@ -383,9 +382,9 @@ func run() error {
 	}
 	metaWorker := channelmeta.NewWorker(channelmeta.Deps{
 		Refresher:      metaRefresher,
-		CookieStatus:   func(ctx context.Context) string { return settingsStore.CookieStatus(ctx) },
+		CookieStatus:   settingsStore.CookieStatus,
 		AllowAnonymous: cfg.AllowAnonymousYoutube,
-		YoutubePaused:  func(ctx context.Context) bool { p, _, _ := settingsStore.YoutubePaused(ctx); return p },
+		YoutubePaused:  settingsStore.Paused,
 		Activity:       activityStore,
 	})
 

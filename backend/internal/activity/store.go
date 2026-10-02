@@ -33,10 +33,8 @@ const (
 	KindSummary     = "summary"
 	KindRetention   = "retention"
 	KindYtdlp       = "ytdlp"
-	// KindAccess is RESERVED, not yet emitted. Cookie/access-transition rows are
-	// a deferred follow-up (recording them cleanly means detecting the change
-	// inside settings.SetCookie, old→new). The value is declared here and in the
-	// 0007 CHECK now so wiring it later needs no migration to widen the enum.
+	// KindAccess is a cookie/access transition, recorded by settings.SetCookie
+	// when the status changes.
 	KindAccess = "access"
 
 	OutcomeOK   = "ok"

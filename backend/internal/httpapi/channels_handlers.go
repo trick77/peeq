@@ -1452,10 +1452,8 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 	serveStoredImage(w, r, t.Mime, t.Bytes, t.UpdatedAt)
 }
 
-// handleChannelAvatar and handleChannelBanner serve a cached channel image
-// off local disk. Like video thumbnails, the stored path never reaches the
-// browser — only these endpoints do — and it is resolved through
-// media.SafeMediaPath so a crafted stored value cannot escape the media dir.
+// handleChannelAvatar and handleChannelBanner serve a channel's stored
+// artwork from the database, like video thumbnails.
 func (s *server) handleChannelAvatar(w http.ResponseWriter, r *http.Request) {
 	s.serveChannelImage(w, r, channels.ImageAvatar)
 }

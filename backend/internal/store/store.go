@@ -72,8 +72,7 @@ func dsn(path string, busyTimeout time.Duration) string {
 }
 
 // VecLiteral encodes a float32 vector as the JSON-array text sqlite-vec
-// accepts. Unused until embeddings land in a later phase; kept exported for
-// callers in future store code.
+// accepts.
 func VecLiteral(v []float32) string {
 	var b strings.Builder
 	b.WriteByte('[')

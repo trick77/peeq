@@ -272,6 +272,13 @@ func (s *Store) YoutubePaused(ctx context.Context) (paused bool, reason string, 
 	return paused, reason, nil
 }
 
+// Paused is YoutubePaused for the polled gates, which want only the verdict:
+// paused, or unreadable and therefore treated as paused.
+func (s *Store) Paused(ctx context.Context) bool {
+	paused, _, _ := s.YoutubePaused(ctx)
+	return paused
+}
+
 // DirectStreamEnabled reports whether auth-free playback grant URLs are allowed,
 // without loading the rest of the settings row. The grant stream handler calls
 // this on EVERY request rather than reading the flag once at boot, which is what
