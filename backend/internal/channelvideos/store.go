@@ -270,7 +270,7 @@ func (s *Store) ListPending() ([]Entry, error) {
        COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
        COALESCE((SELECT j.state FROM summary_jobs j WHERE j.video_id = cv.video_id ORDER BY j.id DESC LIMIT 1) = 'failed', 0),
        EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id),
-       (SELECT COALESCE(strftime('%s', pt.updated_at), '0') FROM pending_thumbnails pt WHERE pt.video_id = cv.video_id)
+       (SELECT COALESCE(strftime('%s', pt.updated_at), '0') FROM pending_thumbnails pt INDEXED BY idx_pending_thumbnails_version WHERE pt.video_id = cv.video_id)
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
 LEFT JOIN videos v ON v.id = cv.video_id
@@ -305,7 +305,7 @@ func (s *Store) ListPendingForChannel(channelID string) ([]Entry, error) {
        COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
        COALESCE((SELECT j.state FROM summary_jobs j WHERE j.video_id = cv.video_id ORDER BY j.id DESC LIMIT 1) = 'failed', 0),
        EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id),
-       (SELECT COALESCE(strftime('%s', pt.updated_at), '0') FROM pending_thumbnails pt WHERE pt.video_id = cv.video_id)
+       (SELECT COALESCE(strftime('%s', pt.updated_at), '0') FROM pending_thumbnails pt INDEXED BY idx_pending_thumbnails_version WHERE pt.video_id = cv.video_id)
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
 LEFT JOIN videos v ON v.id = cv.video_id

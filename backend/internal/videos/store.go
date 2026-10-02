@@ -262,7 +262,7 @@ const videoColumns = `v.id, v.url, v.title, v.channel_id,
 	COALESCE(NULLIF(v.channel_name, ''), NULLIF(ch.name, ''), v.channel_id) AS channel_name,
 	v.duration_seconds, v.published_at,
 	v.description,
-	(SELECT COALESCE(strftime('%s', t.updated_at), '0') FROM video_thumbnails t WHERE t.video_id = v.id) AS thumbnail_version,
+	(SELECT COALESCE(strftime('%s', t.updated_at), '0') FROM video_thumbnails t INDEXED BY idx_video_thumbnails_version WHERE t.video_id = v.id) AS thumbnail_version,
 	v.media_path, v.filesize_bytes, v.format_used, v.requested_format,
 	v.availability, v.status, v.error_message, v.sponsorblock_segments,
 	v.watched, v.watched_at, v.resume_position_seconds, v.state_version, v.favorite, v.favorited_at,
@@ -623,59 +623,73 @@ type Counts struct {
 	Categories map[string]map[string]int `json:"categories"`
 }
 
-// Counts runs the same WHERE clauses List does, once per chip, and returns only
-// the numbers. It exists so the Library can populate its chips without loading
-// every row of the library for a client-side count.
+// Counts answers every chip in one pass: one row per category, with a
+// conditional sum per chip built from the same filterCond List uses, so a
+// chip's number and the grid it opens cannot disagree. It exists so the Library
+// can populate its chips without loading every row of the library.
+//
+// One statement on purpose. A query per chip walked the table five times, and
+// the columns it filters on sit behind the description and analysis text in the
+// row; idx_videos_counts (0032) covers this one, so it reads no row at all.
 func (s *Store) Counts(opts CountOptions) (Counts, error) {
 	out := Counts{
 		Filters:    make(map[string]int, len(CountFilters)),
 		Categories: make(map[string]map[string]int, len(CountFilters)),
 	}
 	for _, f := range CountFilters {
-		cats, total, err := s.countByCategory(f, opts.Query)
-		if err != nil {
-			return Counts{}, err
+		out.Filters[f] = 0
+		out.Categories[f] = map[string]int{}
+	}
+	query, args := countsQuery(opts.Query)
+	rows, err := s.db.QueryContext(context.Background(), query, args...)
+	if err != nil {
+		return Counts{}, fmt.Errorf("count videos: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var cat string
+	ns := make([]int, len(CountFilters))
+	dest := []any{&cat}
+	for i := range ns {
+		dest = append(dest, &ns[i])
+	}
+	for rows.Next() {
+		if err := rows.Scan(dest...); err != nil {
+			return Counts{}, fmt.Errorf("count videos: %w", err)
 		}
-		out.Filters[f] = total
-		out.Categories[f] = cats
+		for i, f := range CountFilters {
+			out.Filters[f] += ns[i]
+			if cat != "" && ns[i] > 0 {
+				out.Categories[f][cat] = ns[i]
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Counts{}, fmt.Errorf("count videos: %w", err)
 	}
 	return out, nil
 }
 
-func (s *Store) countByCategory(filter, query string) (map[string]int, int, error) {
-	conds := []string{notInFlight}
-	args := []any{}
-	if c := filterCond(filter); c != "" {
-		conds = append(conds, c)
+// countsQuery builds Counts' statement: the category, then one column per
+// CountFilters entry in that order. A function of its own so the query-plan test
+// can pin the exact statement to idx_videos_counts.
+func countsQuery(query string) (string, []any) {
+	var b strings.Builder
+	b.WriteString("SELECT COALESCE(v.category, '')")
+	for _, f := range CountFilters {
+		if c := filterCond(f); c != "" {
+			b.WriteString(", COALESCE(SUM(CASE WHEN " + c + " THEN 1 ELSE 0 END), 0)")
+		} else {
+			b.WriteString(", COUNT(*)")
+		}
 	}
+	b.WriteString(" FROM videos v WHERE " + notInFlight)
+	args := []any{}
 	if c, arg, ok := queryCond(query); ok {
-		conds = append(conds, c)
+		b.WriteString(" AND " + c)
 		args = append(args, arg)
 	}
-	const countHead = "SELECT COALESCE(v.category, ''), COUNT(*) FROM videos v WHERE "
-	countQuery := countHead + strings.Join(conds, " AND ") + " GROUP BY v.category" //nolint:gosec // only fixed SQL structure is interpolated (literal conditions, a ?-placeholder list, or a closed switch); every value is a bound ? parameter
-	rows, err := s.db.QueryContext(context.Background(), countQuery, args...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("count videos (%s): %w", filter, err)
-	}
-	defer func() { _ = rows.Close() }()
-	cats := map[string]int{}
-	total := 0
-	for rows.Next() {
-		var cat string
-		var n int
-		if err := rows.Scan(&cat, &n); err != nil {
-			return nil, 0, fmt.Errorf("count videos (%s): %w", filter, err)
-		}
-		total += n
-		if cat != "" {
-			cats[cat] = n
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("count videos (%s): %w", filter, err)
-	}
-	return cats, total, nil
+	b.WriteString(" GROUP BY v.category")
+	return b.String(), args
 }
 
 // ChannelRef is one channel as it appears in the library, for resolving a name

@@ -365,9 +365,9 @@ func (s *Store) Get(id string) (*Channel, error) {
 // Shared so a reader that joins channels (the metadata claims) cannot drift
 // from Get's column order, which scanChannel depends on.
 const channelColumns = `c.id, c.handle, c.name, c.description,
-       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i
+       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i INDEXED BY idx_channel_images_version
           WHERE i.channel_id = c.id AND i.kind = 'avatar') AS avatar_version,
-       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i
+       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i INDEXED BY idx_channel_images_version
           WHERE i.channel_id = c.id AND i.kind = 'banner') AS banner_version,
        c.subscriber_count, c.verified,
        COALESCE(c.resolved_at, ''), c.resolve_ok, COALESCE(c.added_at, ''), c.first_seen_at,
@@ -444,9 +444,9 @@ WITH lv AS (
   GROUP BY channel_id
 )
 SELECT c.id, c.handle, c.name, c.description,
-       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i
+       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i INDEXED BY idx_channel_images_version
           WHERE i.channel_id = c.id AND i.kind = 'avatar'),
-       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i
+       (SELECT COALESCE(strftime('%s', i.updated_at), '0') FROM channel_images i INDEXED BY idx_channel_images_version
           WHERE i.channel_id = c.id AND i.kind = 'banner'),
        COALESCE(c.resolved_at, ''), COALESCE(c.added_at, ''), c.first_seen_at,
        s.channel_id IS NOT NULL AS subscribed,
