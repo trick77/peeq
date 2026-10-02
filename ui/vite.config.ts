@@ -5,7 +5,22 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  build: { outDir: "../backend/web/dist", emptyOutDir: true },
+  build: {
+    outDir: "../backend/web/dist",
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // React and the icon set go in a chunk of their own. Assets are served
+        // immutable under a content hash, and the app's own code changes with
+        // every release while these change a few times a year: kept together,
+        // each deploy made every browser download React again.
+        manualChunks(id: string) {
+          if (/node_modules\/(react|react-dom|scheduler|lucide-react)\//.test(id))
+            return "vendor";
+        },
+      },
+    },
+  },
   server: { proxy: { "/api": "http://127.0.0.1:8080" } },
   // Task 14: view tests (Library/Player/Settings) render components and
   // fire DOM events (timeupdate, form submits) via @testing-library/react,
