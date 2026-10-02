@@ -120,6 +120,33 @@ describe("useLiveQueue", () => {
     expect(result.current.progress[7]).toBeUndefined();
   });
 
+  it("a re-list that says the same thing keeps the same arrays", async () => {
+    // The queue is polled every three seconds while work is in flight. A
+    // fresh array per poll re-rendered every card on the page for nothing.
+    vi.mocked(listDownloads).mockImplementation(async () => [
+      job(1, "running"),
+    ]);
+    const { result } = renderHook(() => useLiveQueue(true));
+    await waitFor(() => expect(result.current.jobs).toHaveLength(1));
+    await waitFor(() => expect(result.current.summariesLoaded).toBe(true));
+    const { jobs, summaries, downloadStatus } = result.current;
+
+    act(() => {
+      result.current.refreshQueue();
+      result.current.refreshSummaries();
+    });
+    await waitFor(() => expect(listDownloads).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    expect(result.current.jobs).toBe(jobs);
+    expect(result.current.summaries).toBe(summaries);
+    expect(result.current.downloadStatus).toBe(downloadStatus);
+
+    // A real change still lands.
+    vi.mocked(listDownloads).mockResolvedValue([job(1, "running"), job(2)]);
+    act(() => result.current.refreshQueue());
+    await waitFor(() => expect(result.current.jobs).toHaveLength(2));
+  });
+
   it("a progress frame for an unknown job re-lists the queue", async () => {
     const { result } = renderHook(() => useLiveQueue(true));
     await waitFor(() => expect(result.current.jobsLoaded).toBe(true));
