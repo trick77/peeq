@@ -47,17 +47,28 @@ func (s *Store) SetSummary(id, summary, chaptersJSON, keyPointsJSON string) erro
 	return nil
 }
 
-// ClearSummary wipes a video's stored analysis — prose summary, chapters and
-// key points — leaving summary_status alone so the caller decides the resulting
-// state. It is the counterpart of SetSummary for two cases: re-analysis that
-// found nothing to summarize, and a user-triggered re-summarize. The worker's
-// pipeline is resumable and skips the summary step when summary <> ”, so
-// without this a redo would silently keep the old text.
+// ClearSummary wipes a video's stored analysis — prose summary, in-depth
+// summary, chapters and key points — leaving summary_status alone so the caller
+// decides the resulting state. It is the counterpart of SetSummary for two
+// cases: re-analysis that found nothing to summarize, and a user-triggered
+// re-summarize. The worker's pipeline is resumable and skips the summary step
+// when summary <> ”, so without this a redo would silently keep the old text.
 func (s *Store) ClearSummary(id string) error {
-	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET summary='', chapters='', key_points='', summary_error='' WHERE id=?`, id)
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("clear video %s summary: begin: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE videos SET summary='', chapters='', key_points='', summary_error='' WHERE id=?`, id); err != nil {
 		return fmt.Errorf("clear video %s summary: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, deleteInDepthSQL, id); err != nil {
+		return fmt.Errorf("clear video %s in-depth summary: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("clear video %s summary: commit: %w", id, err)
 	}
 	return nil
 }
@@ -162,6 +173,9 @@ UPDATE videos
 		return fmt.Errorf("reset video %s for reprocess: rows affected: %w", id, err)
 	} else if n == 0 {
 		return fmt.Errorf("reset video %s for reprocess: %w", id, ErrNotFound)
+	}
+	if _, err := x.ExecContext(ctx, deleteInDepthSQL, id); err != nil {
+		return fmt.Errorf("reset video %s for reprocess: in-depth summary: %w", id, err)
 	}
 	return nil
 }

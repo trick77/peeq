@@ -23,7 +23,7 @@ type fakeCompleter struct {
 
 func (f *fakeCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	if len(m) > 0 {
-		sys := m[0].Content
+		sys := promptText(m)
 		if strings.Contains(sys, "cohesive summary") {
 			return f.replies[1], nil
 		}

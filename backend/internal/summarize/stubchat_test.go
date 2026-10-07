@@ -1,6 +1,7 @@
 package summarize
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/trick77/llmwire/llmwiretest"
@@ -27,6 +28,18 @@ func newStubChat(t *testing.T, reply string) (*llm.Client, *llmwiretest.Server) 
 		t.Fatal(err)
 	}
 	return client, srv
+}
+
+// promptText is every message of a call joined, for the step fakes. They route
+// on the phrase that names a step, and since the summary and the in-depth call
+// share their system message (prefix.go), that phrase sits in the task at the
+// end of the user message rather than in the system prompt.
+func promptText(m []llm.Message) string {
+	parts := make([]string, len(m))
+	for i, msg := range m {
+		parts[i] = msg.Content
+	}
+	return strings.Join(parts, "\n")
 }
 
 // systemPrompt returns the system message of a captured request, or "".

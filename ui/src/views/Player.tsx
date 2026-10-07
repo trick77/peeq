@@ -36,6 +36,7 @@ import { ContentsCard } from "./player/ContentsCard";
 import { TranscriptCard } from "../components/TranscriptCard";
 import { UnfetchedVideo } from "./player/UnfetchedVideo";
 import { SummaryCard, HighlightsCard } from "./player/SidebarPanels";
+import { InDepthCard } from "./player/InDepthCard";
 import { DetailsCard } from "./player/DetailsCard";
 import { MOBILE_QUERY, useMediaQuery } from "../shell/useMediaQuery";
 import { MetaHeader } from "./player/MetaHeader";
@@ -1605,6 +1606,17 @@ function PlayerImpl({
             video={video}
             seek={video.has_media ? seek : undefined}
           />
+          {/* Under Highlights: both are about the video's key points, and the
+              main column gives this text the measure the rail cannot. Absent
+              for a video analysed before the step existed. Keyed on the video
+              so the next one starts shut. */}
+          {video.in_depth ? (
+            <InDepthCard
+              key={video.id}
+              text={video.in_depth}
+              seek={video.has_media ? seek : undefined}
+            />
+          ) : null}
           {/* Above the transcript, below the chapters and highlights: those two
               are what people scroll down for, and the transcript is a long
               scroll that would bury anything under it. Not on a phone — that

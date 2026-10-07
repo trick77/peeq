@@ -366,12 +366,12 @@ describe("UpNext", () => {
       .closest(".ag-row") as HTMLElement;
     expect(within(row).getByText("Summarising")).toBeInTheDocument();
     expect(within(row).getByText("Embedding")).toBeInTheDocument();
-    // Four segments in the same slot the download bar uses, and the step is
-    // named in words rather than as a bare "4/4". Embedding is the LAST stage:
+    // Five segments in the same slot the download bar uses, and the step is
+    // named in words rather than as a bare "5/5". Embedding is the LAST stage:
     // it moved after key points so chapter chunks can be built from the
     // chapters that step writes.
-    expect(row.querySelectorAll(".un-step")).toHaveLength(4);
-    expect(row.querySelector(".ag-when")?.textContent).toBe("step 4 of 4");
+    expect(row.querySelectorAll(".un-step")).toHaveLength(5);
+    expect(row.querySelector(".ag-when")?.textContent).toBe("step 5 of 5");
     // The summarize lane offers no cancel — summaries run unattended.
     expect(within(row).queryByRole("button")).toBeNull();
   });
@@ -403,7 +403,7 @@ describe("UpNext", () => {
     const pending = screen
       .getByText("Still waiting")
       .closest(".ag-row") as HTMLElement;
-    expect(running.querySelector(".ag-when")?.textContent).toBe("step 1 of 4");
+    expect(running.querySelector(".ag-when")?.textContent).toBe("step 1 of 5");
     expect(pending.querySelector(".ag-when")?.textContent).toBe("waiting");
     expect(pending.querySelector(".un-steps")).toBeNull();
   });

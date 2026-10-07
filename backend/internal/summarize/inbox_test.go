@@ -103,7 +103,7 @@ func seedChannel(t *testing.T, h *workerHarness, channelID, videoID string, keep
 }
 
 // TestInboxVideoStopsAfterTheSummary is the cost promise. A video peeq read to
-// help decide whether to download it gets the prose and nothing else: no
+// help decide whether to download it gets the prose, short and in depth, and nothing else: no
 // classify call, no embeddings, no key points. Every one of those is an
 // investment in a video the library keeps, and this one may still be ignored.
 //
@@ -159,16 +159,17 @@ func TestInboxVideoStopsAfterTheSummary(t *testing.T) {
 	if embedder.calls != 0 {
 		t.Fatalf("embedder called %d times, want 0", embedder.calls)
 	}
-	// One call: the summary. Anything more means a deferred step ran anyway.
-	if completer.calls != 1 {
-		t.Fatalf("completer called %d times, want exactly 1 (the summary)", completer.calls)
+	// Two calls: the summary and the in-depth text, which the Inbox page offers.
+	// Anything more means a deferred step ran anyway.
+	if completer.calls != 2 {
+		t.Fatalf("completer called %d times, want exactly 2 (summary + in-depth)", completer.calls)
 	}
 }
 
 // TestInboxVideoOnAKeepReadsChannelIsIndexed is what the channel setting buys.
 // The same video on an opted-in channel is chunked and embedded as well as
-// summarized, so it is findable in Search — and it STILL costs exactly one LLM
-// call, because classify and key points remain deferred either way.
+// summarized, so it is findable in Search — and it STILL costs exactly two LLM
+// calls (summary + in-depth), because classify and key points remain deferred.
 func TestInboxVideoOnAKeepReadsChannelIsIndexed(t *testing.T) {
 	h := newWorkerHarness(t)
 	rel := writeInboxCaption(t, h, "inbox-keep")
@@ -219,8 +220,8 @@ func TestInboxVideoOnAKeepReadsChannelIsIndexed(t *testing.T) {
 	if v.KeyPoints != "" && v.KeyPoints != "[]" {
 		t.Fatalf("key_points = %q, want them still deferred", v.KeyPoints)
 	}
-	if completer.calls != 1 {
-		t.Fatalf("completer called %d times, want exactly 1 (the summary)", completer.calls)
+	if completer.calls != 2 {
+		t.Fatalf("completer called %d times, want exactly 2 (summary + in-depth)", completer.calls)
 	}
 }
 

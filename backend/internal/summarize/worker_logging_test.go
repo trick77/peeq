@@ -64,7 +64,7 @@ func findRec(recs []map[string]any, msg string) map[string]any {
 }
 
 // findStep returns the stage-done record for one step, or nil. The message
-// carries the stage ("stage 2/4 done"), so match on its shape plus the step.
+// carries the stage ("stage 2/5 done"), so match on its shape plus the step.
 func findStep(recs []map[string]any, step string) map[string]any {
 	return findStageRec(recs, step, "done")
 }
@@ -81,7 +81,7 @@ func findStageRec(recs []map[string]any, step, verb string) map[string]any {
 	return nil
 }
 
-// recStage pulls "2/4" out of a "summarize worker: stage 2/4 done" message.
+// recStage pulls "2/5" out of a "summarize worker: stage 2/5 done" message.
 func recStage(rec map[string]any) string {
 	msg, _ := rec["msg"].(string)
 	fields := strings.Fields(msg)
@@ -120,7 +120,7 @@ func (u *usageCompleter) Complete(ctx context.Context, m []llm.Message) (string,
 		// holds it there.
 		InferenceNanos: int64(250 * time.Millisecond)})
 
-	sys := m[0].Content
+	sys := promptText(m)
 	switch {
 	case strings.Contains(sys, "cohesive summary"):
 		return "Overall prose summary.", nil
@@ -148,7 +148,7 @@ func (u *usageCompleter) sawStep(step string) bool {
 type keypointsErrCompleter struct{}
 
 func (keypointsErrCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
-	sys := m[0].Content
+	sys := promptText(m)
 	switch {
 	case strings.Contains(sys, "cohesive summary"):
 		return "Overall prose summary.", nil
@@ -215,7 +215,7 @@ func TestWorkerLogsStartStepsAndTotals(t *testing.T) {
 	// Every stage announces itself before it runs and reports when it is done,
 	// both numbered, so the log says where a video is while it is still there.
 	for i, step := range pipelineStages {
-		stage := strconv.Itoa(i+1) + "/4"
+		stage := strconv.Itoa(i+1) + "/5"
 		start := findStageRec(recs, step, "started")
 		if start == nil {
 			t.Fatalf("stage %s (%s) never announced its start", stage, step)
@@ -396,7 +396,7 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	// A skipped stage keeps its own number, so the stages a resumed job does
 	// run are still numbered where a reader expects them.
 	for _, want := range []struct{ step, stage string }{
-		{"summary", "1/4"}, {"classify", "2/4"}} {
+		{"summary", "1/5"}, {"classify", "2/5"}} {
 		rec := findStageRec(recs, want.step, "skipped")
 		if rec == nil {
 			t.Fatalf("stage %s (%s) was not logged as skipped", want.stage, want.step)
@@ -409,8 +409,8 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	if kp == nil {
 		t.Fatal("key-points stage did not run on the resumed job")
 	}
-	if got := recStage(kp); got != "3/4" {
-		t.Errorf("keypoints ran as stage %s, want 3/4", got)
+	if got := recStage(kp); got != "4/5" {
+		t.Errorf("keypoints ran as stage %s, want 4/5", got)
 	}
 	// Embedding is NOT skipped here, however current embed_rev looked when the
 	// job was claimed: the key-points call that just ran rewrote the chapters
@@ -420,8 +420,8 @@ func TestWorkerLogsSkippedStepsOnResumedJob(t *testing.T) {
 	if emb == nil {
 		t.Fatal("embedding stage did not re-run after key points rewrote the chapters")
 	}
-	if got := recStage(emb); got != "4/4" {
-		t.Errorf("embedding ran as stage %s, want 4/4", got)
+	if got := recStage(emb); got != "5/5" {
+		t.Errorf("embedding ran as stage %s, want 5/5", got)
 	}
 }
 
@@ -597,7 +597,7 @@ func TestWorkerLogsNoTranscriptReason(t *testing.T) {
 
 func TestStageNumbering(t *testing.T) {
 	for i, step := range pipelineStages {
-		want := strconv.Itoa(i+1) + "/4"
+		want := strconv.Itoa(i+1) + "/5"
 		if got := stageOf(step); got != want {
 			t.Errorf("stageOf(%q) = %q, want %q", step, got, want)
 		}
@@ -611,7 +611,7 @@ func TestStageNumbering(t *testing.T) {
 	if got := stageMessage("not-a-stage", "done"); got != "summarize worker: stage not-a-stage done" {
 		t.Errorf("stageMessage of an unlisted stage = %q", got)
 	}
-	if got := stageMessage("classify", "started"); got != "summarize worker: stage 2/4 started" {
+	if got := stageMessage("classify", "started"); got != "summarize worker: stage 2/5 started" {
 		t.Errorf("stageMessage(classify) = %q", got)
 	}
 }

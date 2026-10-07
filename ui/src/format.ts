@@ -28,7 +28,7 @@ export function formatDuration(totalSeconds: number | undefined): string {
 // The summarize worker runs four stages in order (summarize → classify → embed
 // → key points), emitting a live phase for each on the "summary" SSE event.
 // SUMMARY_PHASES maps each phase string to its display label and 1-based step,
-// so the Queue can render "Key points 4/4" with a matching progress meter.
+// so the Queue can render "Key points 4/5" with a matching progress meter.
 // Anything unrecognised (or absent, before the first event) reads as the first
 // stage, "Summarizing".
 //
@@ -40,6 +40,7 @@ export function formatDuration(totalSeconds: number | undefined): string {
 const PHASE_LABELS: Record<SummaryPhase, string> = {
   summarizing: "Summarizing",
   classifying: "Classifying",
+  indepth: "In depth",
   embedding: "Embedding",
   keypoints: "Key points",
 };

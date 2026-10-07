@@ -64,9 +64,12 @@ type videoDTO struct {
 	DownloadedAt         string                   `json:"downloaded_at,omitempty"`
 	SponsorblockSegments []sponsorblockSegmentDTO `json:"sponsorblock_segments,omitempty"`
 	Summary              string                   `json:"summary"`
-	Chapters             json.RawMessage          `json:"chapters,omitempty"`
-	KeyPoints            json.RawMessage          `json:"key_points,omitempty"`
-	SummaryStatus        string                   `json:"summary_status"`
+	// InDepth is the in-depth summary, set by handleGetVideo only; "" when the
+	// video has none.
+	InDepth       string          `json:"in_depth,omitempty"`
+	Chapters      json.RawMessage `json:"chapters,omitempty"`
+	KeyPoints     json.RawMessage `json:"key_points,omitempty"`
+	SummaryStatus string          `json:"summary_status"`
 	// Indexed is whether search can currently find this video, derived from
 	// videos.Video.Indexed(). It is separate from SummaryStatus on purpose: an
 	// embedding failure leaves a finished, readable summary behind, so reporting
@@ -317,6 +320,16 @@ func (s *server) handleGetVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dto := toVideoDTO(v)
+	// Here and not in toVideoDTO: the text lives in its own table (0035), and
+	// the library list builds that DTO once per card for a field no card shows.
+	if v.SummaryStatus == videos.SummaryDone {
+		text, err := s.videos.InDepth(v.ID)
+		if err != nil {
+			serverError(w, r, err, "get video failed")
+			return
+		}
+		dto.InDepth = text
+	}
 	// Only the one state the reason explains, so every other video's page costs
 	// no extra query.
 	if s.ledger != nil && v.SummaryStatus == videos.SummaryNoTranscript && !v.HasTranscript {
