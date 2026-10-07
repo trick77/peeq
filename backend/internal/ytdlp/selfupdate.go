@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -37,55 +38,71 @@ type releaseDownloader func(ctx context.Context, destPath string) (version strin
 // network; production code leaves it at downloadLatestRelease.
 var downloader releaseDownloader = downloadLatestRelease
 
-// releaseAsset returns the yt-dlp GitHub release asset to download for a
-// platform.
-//
-// Linux takes the self-contained build, never the plain "yt-dlp" asset. That
-// one is a zipapp run by the system python, which has no curl_cffi, so yt-dlp
-// cannot impersonate a browser. It asks to for every caption download, and
-// without it YouTube answered some of them with HTTP 429 on every attempt. The
-// bundled build carries the curl_cffi its own release was tested with, so a
-// self-update can never leave the two out of step.
-func releaseAsset(goos, goarch string) string {
-	switch goos {
-	case "windows":
-		return "yt-dlp.exe"
-	case "darwin":
-		return "yt-dlp_macos"
-	}
-	if goarch == "arm64" {
-		return "yt-dlp_linux_aarch64"
-	}
-	return "yt-dlp_linux"
+// release says which yt-dlp GitHub release asset a platform runs and where it
+// lives inside the install directory.
+type release struct {
+	// asset is the GitHub release asset name.
+	asset string
+	// install is the entry the asset becomes in the install directory: the
+	// binary itself, or, for a .zip asset, the directory it unpacks into.
+	install string
+	// exe is the executable, relative to the install directory.
+	exe string
 }
 
-// installName is the file name the downloaded release is installed under.
-// On Linux it is "yt-dlp" whatever the asset is called, because that is the
-// name resolveYtdlpBin (cmd/peeq) looks for.
-func installName(goos string) string {
-	if goos == "linux" {
-		return "yt-dlp"
+// unpacked reports whether the asset is a zip of a self-contained directory.
+func (r release) unpacked() bool { return strings.HasSuffix(r.asset, ".zip") }
+
+// releaseFor returns the release a platform runs.
+//
+// Linux takes the UNPACKED self-contained build wherever yt-dlp publishes one:
+//   - never the plain "yt-dlp" zipapp: it runs on the system python, which has
+//     no curl_cffi, so yt-dlp cannot impersonate a browser. It asks to for
+//     every caption download, and without it YouTube answered some videos'
+//     captions with HTTP 429 on every attempt. The bundle carries the
+//     curl_cffi its own release was tested with, so a self-update can never
+//     leave the two out of step;
+//   - never the one-file "yt-dlp_linux": it unpacks ~100MB into TMPDIR on
+//     every run, which the container's noexec /tmp tmpfs refuses, and a
+//     killed run leaves its copy behind.
+//
+// Other platforms keep the asset they always ran.
+func releaseFor(goos, goarch string) release {
+	single := func(name string) release { return release{asset: name, install: name, exe: name} }
+	switch goos {
+	case "windows":
+		return single("yt-dlp.exe")
+	case "darwin":
+		return single("yt-dlp_macos")
+	case "linux":
+		suffix := map[string]string{"amd64": "", "arm64": "_aarch64", "arm": "_armv7l"}
+		if s, ok := suffix[goarch]; ok {
+			exe := "yt-dlp_linux" + s
+			return release{asset: exe + ".zip", install: "yt-dlp_linux", exe: "yt-dlp_linux/" + exe}
+		}
 	}
-	return releaseAsset(goos, "")
+	return single("yt-dlp")
+}
+
+// InstalledBin is the path the self-update installs this platform's yt-dlp
+// executable at inside dir. resolveYtdlpBin (cmd/peeq) runs it when present.
+func InstalledBin(dir string) string {
+	return filepath.Join(dir, filepath.FromSlash(releaseFor(runtime.GOOS, runtime.GOARCH).exe))
 }
 
 const latestReleaseBaseURL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/"
 
-// downloadLatestRelease downloads the latest yt-dlp release binary for the
-// current platform from GitHub and atomically replaces destPath with it.
-// It reports the new version by running the freshly downloaded binary
-// with --version.
-//
-// The download is written to a temp file in the same directory as
-// destPath (so the final rename is on the same filesystem and therefore
-// atomic), verified to have downloaded in full, made executable, and only
-// then renamed over destPath. If anything fails along the way — a
-// non-200 status, a short/interrupted body, a rename failure — the temp
-// file is removed and destPath (any pre-existing binary) is left
-// completely untouched. This avoids ever leaving a truncated or corrupt
-// binary in place after a failed self-update.
+// downloadLatestRelease downloads the latest yt-dlp release for the current
+// platform from GitHub and replaces destPath with it, reporting the new
+// version by running the freshly installed executable with --version. A
+// single binary goes through downloadReleaseFrom, an unpacked build through
+// downloadUnpackedFrom; both leave destPath untouched on any failure.
 func downloadLatestRelease(ctx context.Context, destPath string) (string, error) {
-	return downloadReleaseFrom(ctx, latestReleaseBaseURL+releaseAsset(runtime.GOOS, runtime.GOARCH), destPath)
+	r := releaseFor(runtime.GOOS, runtime.GOARCH)
+	if r.unpacked() {
+		return downloadUnpackedFrom(ctx, latestReleaseBaseURL+r.asset, destPath, path.Base(r.exe))
+	}
+	return downloadReleaseFrom(ctx, latestReleaseBaseURL+r.asset, destPath)
 }
 
 // downloadReleaseFrom downloads the yt-dlp binary at url and atomically
@@ -149,13 +166,13 @@ func downloadReleaseFrom(ctx context.Context, url, destPath string) (string, err
 	return Version(ctx, destPath)
 }
 
-// UpdateLatest downloads the latest yt-dlp release binary into dir (as
-// installName(runtime.GOOS)) and returns its version. The actual fetch is delegated to
+// UpdateLatest downloads the latest yt-dlp release into dir (at the platform's
+// release.install) and returns its version. The actual fetch is delegated to
 // the package-level downloader variable so tests can inject a fake that
 // writes a placeholder file and reports a version without any network
 // access.
 func UpdateLatest(ctx context.Context, dir string) (string, error) {
-	destPath := filepath.Join(dir, installName(runtime.GOOS))
+	destPath := filepath.Join(dir, releaseFor(runtime.GOOS, runtime.GOARCH).install)
 	version, err := downloader(ctx, destPath)
 	if err != nil {
 		return "", err

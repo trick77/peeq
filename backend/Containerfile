@@ -24,7 +24,45 @@ COPY backend/ ./
 COPY --from=ui /app/backend/web/dist ./web/dist
 RUN CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/trick77/peeq/internal/version.Version=${BACKEND_VERSION}" -o /out/peeq ./cmd/peeq
 
-# --- Stage 3: minimal runtime ---
+# --- Stage 3: unpack the self-contained yt-dlp build ---
+#
+# The unpacked yt-dlp_linux.zip, not the plain "yt-dlp" zipapp and not the
+# one-file "yt-dlp_linux":
+#   - the zipapp runs on a system python without curl_cffi, so it cannot
+#     impersonate a browser, and YouTube answered some of its caption downloads
+#     with HTTP 429 on every attempt;
+#   - the one-file build unpacks ~100MB into TMPDIR on every run, which the
+#     read-only container's noexec /tmp tmpfs refuses.
+# Same asset the self-update fetches (ytdlp.releaseFor), so the image and
+# /data/bin always run the same kind of build.
+#
+# "latest" is resolved when this layer is BUILT, and the layer cache then keeps
+# that answer for as long as the instruction text is unchanged — which was
+# forever. YTDLP_REFRESH is the cache key: the release workflow passes the ISO
+# week, so the image picks up a new yt-dlp at most a week late. (peeq also
+# updates yt-dlp at runtime into its data directory; this is the copy a fresh
+# container starts with.)
+FROM debian:13-slim AS ytdlp
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+ARG YTDLP_REFRESH=unset
+ARG TARGETARCH
+RUN echo "yt-dlp layer: ${YTDLP_REFRESH}" \
+    && case "${TARGETARCH}" in \
+         amd64) exe=yt-dlp_linux ;; \
+         arm64) exe=yt-dlp_linux_aarch64 ;; \
+         arm) exe=yt-dlp_linux_armv7l ;; \
+         *) echo "no self-contained yt-dlp build for ${TARGETARCH}" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL -o /tmp/yt-dlp.zip "https://github.com/yt-dlp/yt-dlp/releases/latest/download/${exe}.zip" \
+    && unzip -q /tmp/yt-dlp.zip -d /opt/yt-dlp \
+    && rm /tmp/yt-dlp.zip \
+    && ln -s "/opt/yt-dlp/${exe}" /opt/yt-dlp/yt-dlp
+
+# --- Stage 4: minimal runtime ---
 #
 # Deviation from loom: loom's runtime is gcr.io/distroless/static-debian12, a
 # scratch-like image with no shell, no package manager, and no dynamic libc —
@@ -38,27 +76,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
-# Fetch the yt-dlp standalone binary into /usr/local/bin. /data/bin (BACKEND_YTDLP_DIR)
-# is a separate, writable volume used later for self-update of yt-dlp at runtime
-# without needing to rebuild the image.
-# "latest" is resolved when this layer is BUILT, and the layer cache then keeps
-# that answer for as long as the instruction text is unchanged — which was
-# forever. YTDLP_REFRESH is the cache key: the release workflow passes the ISO
-# week, so the image picks up a new yt-dlp at most a week late. (peeq also
-# updates yt-dlp at runtime into its data directory; this is the copy a fresh
-# container starts with.)
-#
-# The self-contained yt-dlp_linux build, not the plain "yt-dlp" zipapp: that one
-# runs on a system python without curl_cffi, cannot impersonate a browser, and
-# YouTube answered some of its caption downloads with HTTP 429 on every try.
-# Same asset the self-update fetches (ytdlp.releaseAsset). The build fails if
-# Chrome impersonation is unavailable, so the 429s cannot come back silently.
-ARG YTDLP_REFRESH=unset
-ARG TARGETARCH
-RUN echo "yt-dlp layer: ${YTDLP_REFRESH}" \
-    && asset=yt-dlp_linux && if [ "${TARGETARCH}" = "arm64" ]; then asset=yt-dlp_linux_aarch64; fi \
-    && curl -fsSL -o /usr/local/bin/yt-dlp "https://github.com/yt-dlp/yt-dlp/releases/latest/download/${asset}" \
-    && chmod a+rx /usr/local/bin/yt-dlp \
+# yt-dlp on PATH. /data/bin (BACKEND_YTDLP_DIR) is a separate, writable volume
+# the self-update installs newer builds into without rebuilding the image; this
+# is the copy used until then. The build fails if Chrome impersonation is
+# unavailable, so the caption 429s cannot come back silently.
+COPY --from=ytdlp /opt/yt-dlp /opt/yt-dlp
+RUN ln -s /opt/yt-dlp/yt-dlp /usr/local/bin/yt-dlp \
     && yt-dlp --list-impersonate-targets | grep -i '^chrome' | grep -vq unavailable
 # yt-dlp must execute YouTube's player JavaScript to solve the sig and n
 # challenges. Without a runtime it falls back to a deprecated Python
@@ -71,7 +94,7 @@ RUN echo "yt-dlp layer: ${YTDLP_REFRESH}" \
 # job is executing code a third party controls, so the bytes must be exactly
 # the ones reviewed. To bump, change the tag AND the digest together.
 # yt-dlp-ejs (the JS that drives the runtime) is already bundled inside the
-# standalone yt-dlp binary above, so nothing is fetched at run time.
+# self-contained yt-dlp build above, so nothing is fetched at run time.
 COPY --from=denoland/deno:bin-2.9.3@sha256:eb93e70bd53efec4be113d9974107840756551bc1a59a8258892d7bbe5fb4ab0 \
      /deno /usr/local/bin/deno
 # Fail the build loudly if the runtime cannot execute, rather than shipping

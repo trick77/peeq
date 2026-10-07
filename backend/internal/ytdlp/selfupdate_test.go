@@ -30,29 +30,29 @@ func TestVersion_binMissing(t *testing.T) {
 	}
 }
 
-// TestReleaseAsset_linuxIsSelfContained pins Linux to the bundled build. The
-// plain "yt-dlp" asset runs on the system python without curl_cffi, so it
-// cannot impersonate a browser, and YouTube answers some of its caption
-// downloads with HTTP 429.
-func TestReleaseAsset_linuxIsSelfContained(t *testing.T) {
-	cases := []struct{ goos, goarch, want string }{
-		{"linux", "amd64", "yt-dlp_linux"},
-		{"linux", "arm64", "yt-dlp_linux_aarch64"},
-		{"darwin", "arm64", "yt-dlp_macos"},
-		{"windows", "amd64", "yt-dlp.exe"},
+// TestReleaseFor_linuxIsUnpackedBuild pins Linux to the unpacked self-contained
+// build. The plain "yt-dlp" asset runs on the system python without curl_cffi,
+// so it cannot impersonate a browser, and YouTube answers some of its caption
+// downloads with HTTP 429. The one-file "yt-dlp_linux" unpacks itself into
+// TMPDIR on every run, which the container's noexec tmpfs refuses.
+func TestReleaseFor_linuxIsUnpackedBuild(t *testing.T) {
+	cases := []struct {
+		goos, goarch string
+		want         release
+	}{
+		{"linux", "amd64", release{asset: "yt-dlp_linux.zip", install: "yt-dlp_linux", exe: "yt-dlp_linux/yt-dlp_linux"}},
+		{"linux", "arm64", release{asset: "yt-dlp_linux_aarch64.zip", install: "yt-dlp_linux", exe: "yt-dlp_linux/yt-dlp_linux_aarch64"}},
+		{"linux", "arm", release{asset: "yt-dlp_linux_armv7l.zip", install: "yt-dlp_linux", exe: "yt-dlp_linux/yt-dlp_linux_armv7l"}},
+		// No self-contained build: the plain zipapp, as before.
+		{"linux", "386", release{asset: "yt-dlp", install: "yt-dlp", exe: "yt-dlp"}},
+		{"freebsd", "amd64", release{asset: "yt-dlp", install: "yt-dlp", exe: "yt-dlp"}},
+		{"darwin", "arm64", release{asset: "yt-dlp_macos", install: "yt-dlp_macos", exe: "yt-dlp_macos"}},
+		{"windows", "amd64", release{asset: "yt-dlp.exe", install: "yt-dlp.exe", exe: "yt-dlp.exe"}},
 	}
 	for _, c := range cases {
-		if got := releaseAsset(c.goos, c.goarch); got != c.want {
-			t.Errorf("releaseAsset(%s, %s) = %q, want %q", c.goos, c.goarch, got, c.want)
+		if got := releaseFor(c.goos, c.goarch); got != c.want {
+			t.Errorf("releaseFor(%s, %s) = %+v, want %+v", c.goos, c.goarch, got, c.want)
 		}
-	}
-}
-
-// TestInstallName_linuxIsYtDlp: whichever asset is downloaded, it is installed
-// under the name resolveYtdlpBin looks for.
-func TestInstallName_linuxIsYtDlp(t *testing.T) {
-	if got := installName("linux"); got != "yt-dlp" {
-		t.Fatalf("installName(linux) = %q, want %q", got, "yt-dlp")
 	}
 }
 

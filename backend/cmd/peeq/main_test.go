@@ -17,6 +17,7 @@ import (
 	"github.com/trick77/peeq/internal/config"
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/sse"
+	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 // The hosts are llmwire's profiles' and the keys are llmwire's to read from
@@ -94,7 +95,10 @@ func TestResolveYtdlpBin_picksUpNewlyAppearedBinary(t *testing.T) {
 
 	// A non-executable file must NOT be picked up (present+executable is the
 	// bar), so a half-written download still falls back to PATH.
-	binPath := filepath.Join(dir, "yt-dlp")
+	binPath := ytdlp.InstalledBin(dir)
+	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0o644); err != nil {
 		t.Fatalf("write non-exec binary: %v", err)
 	}
@@ -109,6 +113,23 @@ func TestResolveYtdlpBin_picksUpNewlyAppearedBinary(t *testing.T) {
 	}
 	if got := resolveYtdlpBin(dir); got != binPath {
 		t.Fatalf("resolveYtdlpBin(installed) = %q, want %q", got, binPath)
+	}
+}
+
+// TestResolveYtdlpBin_ignoresLegacyZipapp: an earlier self-update left the
+// plain zipapp at dir/yt-dlp. It needs a python the image no longer ships, so
+// it must not shadow the image's binary until the new build is installed.
+func TestResolveYtdlpBin_ignoresLegacyZipapp(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "yt-dlp")
+	if ytdlp.InstalledBin(dir) == legacy {
+		t.Skip("this platform still installs the plain zipapp")
+	}
+	if err := os.WriteFile(legacy, []byte("#!/usr/bin/env python3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveYtdlpBin(dir); got != "yt-dlp" {
+		t.Fatalf("resolveYtdlpBin(legacy zipapp only) = %q, want PATH fallback %q", got, "yt-dlp")
 	}
 }
 

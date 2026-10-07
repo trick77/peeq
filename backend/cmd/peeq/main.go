@@ -517,8 +517,8 @@ func run() error {
 // version display/Update button need. dir is the yt-dlp install directory:
 // Version resolves the binary from it on every call and re-reads it whenever
 // the file changed (so an updated binary is reported without a restart), and
-// UpdateLatest downloads the new release into it (see resolveYtdlpBin —
-// dir/yt-dlp).
+// UpdateLatest downloads the new release into it (see resolveYtdlpBin and
+// ytdlp.InstalledBin).
 //
 // status is the shared cache the version-check ticker fills, so the same
 // endpoint can also report the newest published release without making a
@@ -674,22 +674,21 @@ func runYtdlpVersionCheckTicker(
 	}
 }
 
-// resolveYtdlpBin returns the path to the yt-dlp binary: <dir>/yt-dlp if it
-// exists there as an executable regular file, otherwise the bare "yt-dlp"
-// name so exec falls back to resolving it from PATH. It is called fresh on
-// every yt-dlp invocation (via RunnerConfig.BinResolver and ytdlpVersioner),
-// so once the self-update writes a binary into dir it is picked up without a
-// restart.
+// resolveYtdlpBin returns the path to the yt-dlp binary: the self-update's
+// install in dir (ytdlp.InstalledBin) if it exists there as an executable
+// regular file, otherwise the bare "yt-dlp" name so exec falls back to
+// resolving it from PATH. It is called fresh on every yt-dlp invocation (via
+// RunnerConfig.BinResolver and ytdlpVersioner), so once the self-update
+// installs into dir it is picked up without a restart.
 //
-// On Linux (the container target) the self-update writes exactly "yt-dlp"
-// (see ytdlp.installName), so this matches. On macOS the self-update writes
-// "yt-dlp_macos", so a dev box relies on the PATH binary rather than the
-// self-updated one — acceptable, as production runs on Linux.
+// On Linux that is dir/yt-dlp_linux/<exe>, the unpacked self-contained build.
+// A plain dir/yt-dlp an older self-update left behind is deliberately NOT
+// considered: it is a zipapp needing a python the image no longer has.
 func resolveYtdlpBin(dir string) string {
 	if dir == "" {
 		return "yt-dlp"
 	}
-	candidate := filepath.Join(dir, "yt-dlp")
+	candidate := ytdlp.InstalledBin(dir)
 	if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
 		return candidate
 	}
