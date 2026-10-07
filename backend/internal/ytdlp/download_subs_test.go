@@ -178,7 +178,7 @@ func TestDownload_cancelDuringSubtitlesDoesNotFinalize(t *testing.T) {
 		MediaDir: mediaDir,
 	})
 	// Prime: the gap is trailing, so both Download calls then wait on Sleep.
-	if err := r.throttle(context.Background()); err != nil {
+	if err := r.paceOnce(context.Background()); err != nil {
 		t.Fatalf("priming throttle: %v", err)
 	}
 	sleeps = 0

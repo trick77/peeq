@@ -136,7 +136,7 @@ func TestDeferredTimer_withStartHook_capSurvivesAPacerWait(t *testing.T) {
 				return nil
 			}
 			waits++
-			time.Sleep(60 * time.Millisecond)
+			time.Sleep(time.Second)
 			return nil
 		},
 		ThrottleFloor:  time.Hour,
@@ -158,7 +158,9 @@ func TestDeferredTimer_withStartHook_capSurvivesAPacerWait(t *testing.T) {
 	// A cap far shorter than the wait the second call now has to sit through.
 	// Armed on entry it would kill the call; armed on the hook it never gets
 	// close, because by then the waiting is over.
-	bound := NewDeferredTimer(25*time.Millisecond, cancel)
+	// Longer than the fake yt-dlp takes to run (a shell start, tens of ms; 25ms
+	// flaked), still far shorter than the wait above.
+	bound := NewDeferredTimer(400*time.Millisecond, cancel)
 	if _, err := r.Metadata(WithStartHook(ctx, bound.Start), "https://youtu.be/dQw4w9WgXcQ"); err != nil {
 		t.Fatalf("metadata: %v", err)
 	}

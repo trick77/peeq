@@ -67,7 +67,7 @@ func TestDownload_happyPath(t *testing.T) {
 	// The gap is trailing, so a call on an idle Runner correctly waits nothing.
 	// Prime it, so what this test measures is a download spaced behind a
 	// previous YouTube call — the case the floor actually governs.
-	if err := r.throttle(context.Background()); err != nil {
+	if err := r.paceOnce(context.Background()); err != nil {
 		t.Fatalf("priming throttle: %v", err)
 	}
 	throttleCalls = 0
