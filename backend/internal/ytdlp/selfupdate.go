@@ -123,7 +123,7 @@ func fetchToTemp(ctx context.Context, url, dir string) (string, error) {
 		return "", fmt.Errorf("ytdlp: download latest release: unexpected status %s", resp.Status)
 	}
 
-	tmp, err := os.CreateTemp(dir, ".yt-dlp-download-*")
+	tmp, err := os.CreateTemp(dir, downloadPrefix+"*")
 	if err != nil {
 		return "", fmt.Errorf("ytdlp: create temp download file: %w", err)
 	}

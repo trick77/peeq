@@ -111,8 +111,46 @@ func TestResolveYtdlpBin_picksUpNewlyAppearedBinary(t *testing.T) {
 	if err := os.Chmod(binPath, 0o755); err != nil {
 		t.Fatalf("chmod binary: %v", err)
 	}
-	if got := resolveYtdlpBin(dir); got != binPath {
-		t.Fatalf("resolveYtdlpBin(installed) = %q, want %q", got, binPath)
+	want, err := filepath.EvalSymlinks(binPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveYtdlpBin(dir); got != want {
+		t.Fatalf("resolveYtdlpBin(installed) = %q, want %q", got, want)
+	}
+}
+
+// TestResolveYtdlpBin_returnsTheReleaseTree: the install is a link to a
+// release tree, and the resolver must name the tree itself, so a link swapped
+// while yt-dlp starts cannot hand the run another release.
+func TestResolveYtdlpBin_returnsTheReleaseTree(t *testing.T) {
+	dir := t.TempDir()
+	bin := ytdlp.InstalledBin(dir)
+	rel, err := filepath.Rel(dir, bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	top := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]
+	if top == rel {
+		t.Skip("this platform installs a single binary, not a tree")
+	}
+	tree := filepath.Join(dir, ".tree-a")
+	inTree := filepath.Join(tree, strings.TrimPrefix(filepath.ToSlash(rel), top+"/"))
+	if err := os.MkdirAll(filepath.Dir(inTree), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(inTree, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".tree-a", filepath.Join(dir, top)); err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(inTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveYtdlpBin(dir); got != want {
+		t.Fatalf("resolveYtdlpBin = %q, want the tree path %q", got, want)
 	}
 }
 

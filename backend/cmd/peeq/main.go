@@ -681,14 +681,22 @@ func runYtdlpVersionCheckTicker(
 // RunnerConfig.BinResolver and ytdlpVersioner), so once the self-update
 // installs into dir it is picked up without a restart.
 //
-// On Linux that is dir/yt-dlp_linux/<exe>, the unpacked self-contained build.
-// A plain dir/yt-dlp an older self-update left behind is deliberately NOT
-// considered: it is a zipapp needing a python the image no longer has.
+// On the image's architectures that is dir/yt-dlp_linux/<exe>, the unpacked
+// self-contained build, so a plain dir/yt-dlp an older self-update left
+// behind is not considered: it is a zipapp needing a python the image no
+// longer has.
+//
+// The path returned is the real one, through the install link: it names the
+// release tree the run will use, so an update swapping the link while yt-dlp
+// starts cannot hand it another release's modules.
 func resolveYtdlpBin(dir string) string {
 	if dir == "" {
 		return "yt-dlp"
 	}
-	candidate := ytdlp.InstalledBin(dir)
+	candidate, err := filepath.EvalSymlinks(ytdlp.InstalledBin(dir))
+	if err != nil {
+		return "yt-dlp"
+	}
 	if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
 		return candidate
 	}

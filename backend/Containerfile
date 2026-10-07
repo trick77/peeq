@@ -66,10 +66,9 @@ RUN echo "yt-dlp layer: ${YTDLP_REFRESH}" \
 #
 # Deviation from loom: loom's runtime is gcr.io/distroless/static-debian12, a
 # scratch-like image with no shell, no package manager, and no dynamic libc —
-# it cannot host ffmpeg or the yt-dlp binary (both need a real userland and
-# glibc). peeq's
-# runtime instead needs to shell out to ffmpeg and yt-dlp for every download,
-# so it uses debian:13-slim (glibc, apt) and installs both directly.
+# it cannot host ffmpeg or the yt-dlp build (both need a real userland and
+# glibc). peeq shells out to ffmpeg and yt-dlp for every download, so it uses
+# debian:13-slim (glibc, apt) and installs both directly.
 FROM debian:13-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \

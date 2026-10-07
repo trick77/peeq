@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -19,10 +22,19 @@ const maxUnpackedBytes = 1 << 30
 // treePrefix names one unpacked release beside the install link.
 const treePrefix = ".yt-dlp-tree-"
 
-// treeKeep is how long a replaced tree is kept. A download has no total time
-// cap (only an inactivity watchdog), so how many updates it can outlive is
-// unbounded; how long it runs is not. A var so tests can expire trees.
+// treeKeep is how long a tree is kept after it stopped being the install. A
+// download has no total time cap (only an inactivity watchdog), so how many
+// updates it can outlive is unbounded; how long it runs is not. A var so
+// tests can expire trees.
 var treeKeep = 24 * time.Hour
+
+// downloadPrefix and linkPrefix name an update's temporary files. Updates
+// are serialized (UpdateLatest), so any found when one starts were left by a
+// process that died mid-update.
+const (
+	downloadPrefix = ".yt-dlp-download-"
+	linkPrefix     = ".yt-dlp-link-"
+)
 
 // downloadUnpackedFrom downloads the zipped self-contained build at url and
 // installs it so that destDir/exe runs it. It returns the version the new
@@ -36,13 +48,20 @@ var treeKeep = 24 * time.Hour
 // the new tree.
 //
 // A tree is never changed after it is installed, and that is what keeps a
-// running yt-dlp safe: PyInstaller resolves the real path of its executable at
-// start and loads modules from that tree for as long as it runs, so a long
-// download carries on from the tree it started in. A replaced tree is
-// therefore only removed once it is older than treeKeep; the current and the
-// previous one are always kept.
+// running yt-dlp safe: it is started by the tree's real path (resolveYtdlpBin)
+// and loads modules from that tree for as long as it runs, so a long download
+// carries on from the tree it started in. A replaced tree is therefore only
+// removed treeKeep after it was replaced; the current and the previous one
+// are always kept.
+//
+// Before anything is swapped the new build must report a version AND list
+// Chrome among its impersonation targets, the check the image build runs: a
+// release that lost curl_cffi would bring the caption 429s back. A release of
+// the version already installed is not swapped in at all, so pressing Update
+// repeatedly does not stack 100MB trees.
 func downloadUnpackedFrom(ctx context.Context, url, destDir, exe string) (string, error) {
 	parent := filepath.Dir(destDir)
+	removeCrashLeftovers(parent)
 
 	archivePath, err := fetchToTemp(ctx, url, parent)
 	if err != nil {
@@ -72,24 +91,50 @@ func downloadUnpackedFrom(ctx context.Context, url, destDir, exe string) (string
 	if err != nil {
 		return "", err
 	}
+	if err := checkImpersonation(ctx, bin); err != nil {
+		return "", err
+	}
+	if current, err := Version(ctx, filepath.Join(destDir, exe)); err == nil && current == version {
+		return version, nil
+	}
 
 	previous, err := swapLink(destDir, tree)
 	if err != nil {
 		return "", err
 	}
 	installed = true
-	removeStaleTrees(parent, time.Now(), tree, previous)
+	now := time.Now()
+	if previous != "" {
+		// Its age counts from now, when it stopped being the install: a run
+		// started from it moments ago must get the full treeKeep.
+		_ = os.Chtimes(previous, now, now)
+	}
+	removeStaleTrees(parent, now, tree, previous)
 	return version, nil
 }
 
+// checkImpersonation fails unless the build at bin can impersonate Chrome,
+// the same test the image build applies (backend/Containerfile).
+func checkImpersonation(ctx context.Context, bin string) error {
+	out, err := exec.CommandContext(ctx, bin, "--list-impersonate-targets").Output()
+	if err != nil {
+		return fmt.Errorf("ytdlp: list impersonate targets: %w", err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(strings.ToLower(line), "chrome") && !strings.Contains(line, "unavailable") {
+			return nil
+		}
+	}
+	return errors.New("ytdlp: downloaded release cannot impersonate Chrome; YouTube would answer its caption downloads with HTTP 429")
+}
+
 // swapLink points the symlink at link to tree and returns the tree it pointed
-// to before ("" if none). A plain directory found at link is first moved into
-// a tree of its own, so it is kept like any previous release, and moved back
-// if the link cannot be made.
+// to before ("" if none). Anything at link other than a symlink is refused:
+// nothing installs one there, and moving it aside would hand it to the
+// stale-tree sweep.
 func swapLink(link, tree string) (string, error) {
 	parent := filepath.Dir(link)
 	var previous string
-	movedPlain := false
 	switch info, err := os.Lstat(link); {
 	case err == nil && info.Mode()&os.ModeSymlink != 0:
 		// Unreadable means the tree in use is unknown, and removing trees
@@ -100,41 +145,30 @@ func swapLink(link, tree string) (string, error) {
 		}
 		previous = filepath.Join(parent, filepath.Base(target))
 	case err == nil:
-		previous = filepath.Join(parent, fmt.Sprintf("%s%d", treePrefix, time.Now().UnixNano()))
-		if err := os.Rename(link, previous); err != nil {
-			return "", fmt.Errorf("ytdlp: move installed release aside: %w", err)
-		}
-		movedPlain = true
+		return "", fmt.Errorf("ytdlp: %s is not an install link; remove it and update again", link)
 	case !errors.Is(err, os.ErrNotExist):
 		return "", fmt.Errorf("ytdlp: inspect installed release: %w", err)
 	}
-	restore := func() {
-		if movedPlain {
-			_ = os.Rename(previous, link)
-		}
-	}
 
-	next := filepath.Join(parent, fmt.Sprintf(".yt-dlp-link-%d", time.Now().UnixNano()))
+	next := filepath.Join(parent, fmt.Sprintf("%s%d", linkPrefix, time.Now().UnixNano()))
 	// Relative, so the link keeps working wherever the volume is mounted.
 	if err := os.Symlink(filepath.Base(tree), next); err != nil {
-		restore()
 		return "", fmt.Errorf("ytdlp: link downloaded release: %w", err)
 	}
 	if err := os.Rename(next, link); err != nil {
 		_ = os.Remove(next)
-		restore()
 		return "", fmt.Errorf("ytdlp: install downloaded release: %w", err)
 	}
 	return previous, nil
 }
 
-// removeStaleTrees deletes the unpacked releases in parent that are older
-// than treeKeep, other than keep. Best-effort: one that cannot be removed now
-// is tried again by the next update.
+// removeStaleTrees deletes the unpacked releases in parent that stopped being
+// the install more than treeKeep ago, other than keep. Best-effort: one that
+// cannot be removed now is tried again by the next update.
 func removeStaleTrees(parent string, now time.Time, keep ...string) {
 	matches, _ := filepath.Glob(filepath.Join(parent, treePrefix+"*"))
 	for _, m := range matches {
-		if isAny(m, keep) {
+		if slices.ContainsFunc(keep, func(k string) bool { return k != "" && filepath.Clean(k) == filepath.Clean(m) }) {
 			continue
 		}
 		if info, err := os.Stat(m); err == nil && now.Sub(info.ModTime()) >= treeKeep {
@@ -143,13 +177,15 @@ func removeStaleTrees(parent string, now time.Time, keep ...string) {
 	}
 }
 
-func isAny(p string, set []string) bool {
-	for _, s := range set {
-		if s != "" && filepath.Clean(s) == filepath.Clean(p) {
-			return true
+// removeCrashLeftovers deletes the temp archive and link a process that died
+// mid-update left behind.
+func removeCrashLeftovers(parent string) {
+	for _, prefix := range []string{downloadPrefix, linkPrefix} {
+		matches, _ := filepath.Glob(filepath.Join(parent, prefix+"*"))
+		for _, m := range matches {
+			_ = os.Remove(m)
 		}
 	}
-	return false
 }
 
 // unzipInto unpacks the archive at src into the empty directory dst. Only

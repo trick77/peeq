@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // zipEntry is one file in a test release archive.
@@ -52,13 +53,34 @@ func serveBytes(t *testing.T, status int, body []byte) string {
 	return srv.URL
 }
 
-func versionScript(v string) string { return "#!/bin/sh\necho " + v + "\n" }
+// fakeBuild is a stand-in yt-dlp: it reports version, and lists Chrome as an
+// impersonation target unless chrome is false.
+func fakeBuild(version string, chrome bool) string {
+	target := "Chrome-133      Macos-15     curl_cffi"
+	if !chrome {
+		target = "Chrome          -            curl_cffi (unavailable)"
+	}
+	return "#!/bin/sh\ncase \"$1\" in\n--version) echo " + version + " ;;\n--list-impersonate-targets) echo '" + target + "' ;;\nesac\n"
+}
 
 func goodRelease(t *testing.T, v string) []byte {
 	return releaseZip(t,
-		zipEntry{name: "yt-dlp_linux", body: versionScript(v), mode: 0o755},
+		zipEntry{name: "yt-dlp_linux", body: fakeBuild(v, true), mode: 0o755},
 		zipEntry{name: "_internal/lib.so", body: "lib-" + v, mode: 0o755},
 	)
+}
+
+func install(t *testing.T, dest, v string) {
+	t.Helper()
+	if _, err := downloadUnpackedFrom(context.Background(), serveBytes(t, http.StatusOK, goodRelease(t, v)), dest, "yt-dlp_linux"); err != nil {
+		t.Fatalf("install %s: %v", v, err)
+	}
+}
+
+func installedLib(t *testing.T, dest string) string {
+	t.Helper()
+	got, _ := os.ReadFile(filepath.Join(dest, "_internal", "lib.so"))
+	return string(got)
 }
 
 // leftovers lists the entries of dir other than the install itself.
@@ -92,7 +114,7 @@ func TestDownloadUnpackedFrom_installsTree(t *testing.T) {
 	if err != nil || info.Mode().Perm()&0o100 == 0 {
 		t.Fatalf("executable missing or not executable: %v %v", info, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(dest, "_internal", "lib.so")); string(got) != "lib-2099.01.01" {
+	if got := installedLib(t, dest); got != "lib-2099.01.01" {
 		t.Fatalf("_internal/lib.so = %q", got)
 	}
 	if info, err := os.Lstat(dest); err != nil || info.Mode()&os.ModeSymlink == 0 {
@@ -104,28 +126,26 @@ func TestDownloadUnpackedFrom_installsTree(t *testing.T) {
 }
 
 // TestDownloadUnpackedFrom_runningTreeSurvivesUpdates: a yt-dlp runs from the
-// real path of its tree and loads modules from it as it goes, so no update
-// may change or remove the tree a run started in, however many follow (the
-// Update button reinstalls even the same version). Only age expires a tree,
-// and never the current or previous one.
+// real path of its tree and loads modules from it as it goes, so no update may
+// change or remove the tree a run started in, however many follow. Age
+// expires a tree, counted from when it was replaced, never from when it was
+// unpacked, and never the current or previous one.
 func TestDownloadUnpackedFrom_runningTreeSurvivesUpdates(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "yt-dlp_linux")
-	ctx := context.Background()
-	install := func(v string) {
-		t.Helper()
-		if _, err := downloadUnpackedFrom(ctx, serveBytes(t, http.StatusOK, goodRelease(t, v)), dest, "yt-dlp_linux"); err != nil {
-			t.Fatalf("install %s: %v", v, err)
-		}
-	}
 
-	install("2099.01.01")
+	install(t, dest, "2099.01.01")
 	running, err := filepath.EvalSymlinks(dest) // where a run started now lives
 	if err != nil {
 		t.Fatal(err)
 	}
-	install("2099.01.01")
-	install("2099.01.01")
+	// Installed long ago: only the replacement may start its clock.
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(running, old, old); err != nil {
+		t.Fatal(err)
+	}
+	install(t, dest, "2099.02.02")
+	install(t, dest, "2099.03.03")
 
 	if got, _ := os.ReadFile(filepath.Join(running, "_internal", "lib.so")); string(got) != "lib-2099.01.01" {
 		t.Fatalf("the running tree changed or went away under its run: %q", got)
@@ -134,9 +154,9 @@ func TestDownloadUnpackedFrom_runningTreeSurvivesUpdates(t *testing.T) {
 	prev := treeKeep
 	treeKeep = 0
 	t.Cleanup(func() { treeKeep = prev })
-	install("2099.02.02")
+	install(t, dest, "2099.04.04")
 
-	if got, _ := os.ReadFile(filepath.Join(dest, "_internal", "lib.so")); string(got) != "lib-2099.02.02" {
+	if got := installedLib(t, dest); got != "lib-2099.04.04" {
 		t.Fatalf("installed release = %q, want the last one", got)
 	}
 	if l := leftovers(t, dir, "yt-dlp_linux"); len(l) != 2 {
@@ -144,37 +164,69 @@ func TestDownloadUnpackedFrom_runningTreeSurvivesUpdates(t *testing.T) {
 	}
 }
 
-// TestDownloadUnpackedFrom_plainDirectoryKept: an install that is a plain
-// directory, not a link, is kept as the previous tree like any other.
-func TestDownloadUnpackedFrom_plainDirectoryKept(t *testing.T) {
+// TestDownloadUnpackedFrom_sameVersionIsNotSwapped: pressing Update on the
+// version already installed must not stack another ~100MB tree.
+func TestDownloadUnpackedFrom_sameVersionIsNotSwapped(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "yt-dlp_linux")
+	install(t, dest, "2099.01.01")
+	before, err := filepath.EvalSymlinks(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	install(t, dest, "2099.01.01")
+	after, err := filepath.EvalSymlinks(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatalf("same version swapped in: %s -> %s", before, after)
+	}
+	if l := leftovers(t, dir, "yt-dlp_linux"); len(l) != 1 {
+		t.Fatalf("want only the installed tree, got %v", l)
+	}
+}
+
+// TestDownloadUnpackedFrom_removesCrashLeftovers: a process that died
+// mid-update leaves its temp archive and link; the next update removes them.
+func TestDownloadUnpackedFrom_removesCrashLeftovers(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "yt-dlp_linux")
+	for _, name := range []string{downloadPrefix + "123", linkPrefix + "456"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	install(t, dest, "2099.01.01")
+	if l := leftovers(t, dir, "yt-dlp_linux"); len(l) != 1 || !strings.HasPrefix(l[0], treePrefix) {
+		t.Fatalf("crash leftovers not removed: %v", l)
+	}
+}
+
+// TestDownloadUnpackedFrom_refusesNonLink: nothing installs anything but the
+// link at the install path, and moving something else aside would hand it to
+// the stale-tree sweep.
+func TestDownloadUnpackedFrom_refusesNonLink(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "yt-dlp_linux")
 	if err := os.MkdirAll(dest, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dest, "yt-dlp_linux"), []byte(versionScript("2024.01.01")), 0o755); err != nil {
-		t.Fatal(err)
+	if _, err := downloadUnpackedFrom(context.Background(), serveBytes(t, http.StatusOK, goodRelease(t, "2099.01.01")), dest, "yt-dlp_linux"); err == nil {
+		t.Fatal("expected an error for a plain directory at the install path")
 	}
-	if _, err := downloadUnpackedFrom(context.Background(), serveBytes(t, http.StatusOK, goodRelease(t, "2099.01.01")), dest, "yt-dlp_linux"); err != nil {
-		t.Fatal(err)
+	if info, err := os.Lstat(dest); err != nil || !info.IsDir() {
+		t.Fatalf("plain directory changed: %v %v", info, err)
 	}
-	if v, err := Version(context.Background(), filepath.Join(dest, "yt-dlp_linux")); err != nil || v != "2099.01.01" {
-		t.Fatalf("installed = %q %v", v, err)
-	}
-	var kept bool
-	for _, l := range leftovers(t, dir, "yt-dlp_linux") {
-		if v, err := Version(context.Background(), filepath.Join(dir, l, "yt-dlp_linux")); err == nil && v == "2024.01.01" {
-			kept = true
-		}
-	}
-	if !kept {
-		t.Fatal("the replaced plain directory was not kept")
+	if l := leftovers(t, dir, "yt-dlp_linux"); len(l) != 0 {
+		t.Fatalf("leftovers: %v", l)
 	}
 }
 
 // TestDownloadUnpackedFrom_failuresLeaveInstallIntact: a failed download, an
-// archive that escapes its directory, and a build that does not run must each
-// leave the working install untouched and nothing behind.
+// archive that escapes its directory, a build that does not run and a build
+// that cannot impersonate Chrome must each leave the working install
+// untouched and nothing behind.
 func TestDownloadUnpackedFrom_failuresLeaveInstallIntact(t *testing.T) {
 	cases := map[string]struct {
 		status int
@@ -184,7 +236,7 @@ func TestDownloadUnpackedFrom_failuresLeaveInstallIntact(t *testing.T) {
 		"not a zip":    {http.StatusOK, func(*testing.T) []byte { return []byte("plain text") }},
 		"path escape": {http.StatusOK, func(t *testing.T) []byte {
 			return releaseZip(t,
-				zipEntry{name: "yt-dlp_linux", body: versionScript("2099.01.01"), mode: 0o755},
+				zipEntry{name: "yt-dlp_linux", body: fakeBuild("2099.02.02", true), mode: 0o755},
 				zipEntry{name: "../evil", body: "x", mode: 0o644},
 			)
 		}},
@@ -194,27 +246,29 @@ func TestDownloadUnpackedFrom_failuresLeaveInstallIntact(t *testing.T) {
 		"build does not run": {http.StatusOK, func(t *testing.T) []byte {
 			return releaseZip(t, zipEntry{name: "yt-dlp_linux", body: "#!/bin/sh\nexit 1\n", mode: 0o755})
 		}},
+		"no chrome impersonation": {http.StatusOK, func(t *testing.T) []byte {
+			return releaseZip(t, zipEntry{name: "yt-dlp_linux", body: fakeBuild("2099.02.02", false), mode: 0o755})
+		}},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			parent := t.TempDir()
 			dir := filepath.Join(parent, "bin")
+			if err := os.MkdirAll(dir, 0o750); err != nil {
+				t.Fatal(err)
+			}
 			dest := filepath.Join(dir, "yt-dlp_linux")
-			if err := os.MkdirAll(filepath.Join(dest, "_internal"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dest, "yt-dlp_linux"), []byte(versionScript("2024.01.01")), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			install(t, dest, "2099.01.01")
+			before := leftovers(t, dir, "yt-dlp_linux")
 
 			if _, err := downloadUnpackedFrom(context.Background(), serveBytes(t, c.status, c.body(t)), dest, "yt-dlp_linux"); err == nil {
 				t.Fatal("expected an error")
 			}
-			if v, err := Version(context.Background(), filepath.Join(dest, "yt-dlp_linux")); err != nil || v != "2024.01.01" {
+			if v, err := Version(context.Background(), filepath.Join(dest, "yt-dlp_linux")); err != nil || v != "2099.01.01" {
 				t.Fatalf("existing install changed: %q %v", v, err)
 			}
-			if l := leftovers(t, dir, "yt-dlp_linux"); len(l) != 0 {
-				t.Fatalf("leftovers: %v", l)
+			if after := leftovers(t, dir, "yt-dlp_linux"); len(after) != len(before) {
+				t.Fatalf("leftovers: before %v, after %v", before, after)
 			}
 			if _, err := os.Stat(filepath.Join(parent, "evil")); err == nil {
 				t.Fatal("an archive entry escaped the install directory")
