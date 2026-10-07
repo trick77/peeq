@@ -158,9 +158,11 @@ type Runner struct {
 
 	// mu guards the queue below. It is never held across a sleep or an exec.
 	mu sync.Mutex
-	// busy is true while a caller holds the turn: from being handed it, through
-	// the gap, to its yt-dlp process exiting. See acquire.
-	busy bool
+	// busy is true while a caller holds the turn, until its yt-dlp process
+	// exits. dispatching is true while the gap after that exit runs out and
+	// nobody may start; the next caller is picked only when it has. See acquire.
+	busy        bool
+	dispatching bool
 	// lastEnd is when the last yt-dlp process exited, and gap how long the next
 	// one must wait after it (floor + jitter, drawn at that exit).
 	lastEnd time.Time
@@ -307,61 +309,68 @@ func (r *Runner) gates() (string, error) {
 // alongside another yt-dlp. A handler a person waits on can therefore wait as
 // long as the download in front of it.
 //
+// The next caller is picked when the gap has run out, not when the previous
+// process exits: a click arriving during the gap still goes before background
+// work that was already queued.
+//
 // Waiting is cancellable. A caller whose ctx ends while queued leaves the
-// queue; one that ends while sleeping out the gap already holds the turn and
-// hands it on. Either way acquire returns ctx.Err() and nothing is owed.
+// queue (if it was handed the turn at that very moment, it hands it on), and
+// acquire returns ctx.Err() with nothing owed.
 //
 // The returned release must be called (further calls do nothing). ran says
 // whether a yt-dlp process actually started: a call refused after its wait
 // made no YouTube request, so the next one is not spaced from it.
 func (r *Runner) acquire(ctx context.Context) (release func(ran bool), err error) {
 	r.mu.Lock()
-	if !r.busy {
+	free := !r.busy && !r.dispatching && len(r.interactive) == 0 && len(r.background) == 0
+	if free && !r.now().Before(r.lastEnd.Add(r.gap)) {
+		// Idle and the gap is long past: go at once. Sleep still runs (for
+		// nothing) so a cancelled ctx is honoured the same way on every path.
 		r.busy = true
 		r.mu.Unlock()
-	} else {
-		w := &waiter{ready: make(chan struct{})}
-		if IsInteractive(ctx) {
-			r.interactive = append(r.interactive, w)
-		} else {
-			r.background = append(r.background, w)
-		}
-		r.mu.Unlock()
-		select {
-		case <-w.ready:
-		case <-ctx.Done():
-			r.mu.Lock()
-			if !w.granted {
-				r.interactive = removeWaiter(r.interactive, w)
-				r.background = removeWaiter(r.background, w)
-				r.mu.Unlock()
-				return nil, ctx.Err()
-			}
-			r.mu.Unlock()
-			// Handed the turn as it gave up: pass it on.
+		if err := r.cfg.Sleep(ctx, 0); err != nil {
 			r.handOff(false)
+			return nil, err
+		}
+		return r.releaser(), nil
+	}
+	w := &waiter{ready: make(chan struct{})}
+	if IsInteractive(ctx) {
+		r.interactive = append(r.interactive, w)
+	} else {
+		r.background = append(r.background, w)
+	}
+	if !r.busy && !r.dispatching {
+		r.startDispatch()
+	}
+	r.mu.Unlock()
+
+	select {
+	case <-w.ready:
+		return r.releaser(), nil
+	case <-ctx.Done():
+		r.mu.Lock()
+		if !w.granted {
+			r.interactive = removeWaiter(r.interactive, w)
+			r.background = removeWaiter(r.background, w)
+			r.mu.Unlock()
 			return nil, ctx.Err()
 		}
-	}
-
-	r.mu.Lock()
-	due := r.lastEnd.Add(r.gap)
-	r.mu.Unlock()
-	wait := time.Duration(0)
-	if now := r.now(); due.After(now) {
-		wait = due.Sub(now)
-	}
-	if err := r.cfg.Sleep(ctx, wait); err != nil {
+		r.mu.Unlock()
+		// Handed the turn as it gave up: pass it on.
 		r.handOff(false)
-		return nil, err
+		return nil, ctx.Err()
 	}
+}
+
+func (r *Runner) releaser() func(ran bool) {
 	var once sync.Once
-	return func(ran bool) { once.Do(func() { r.handOff(ran) }) }, nil
+	return func(ran bool) { once.Do(func() { r.handOff(ran) }) }
 }
 
 // handOff gives the turn back. When a process ran, its exit starts the next
-// gap. The turn then goes to the longest-waiting interactive caller, else the
-// longest-waiting background one, else the Runner is free.
+// gap. If anyone is waiting, a dispatch picks the next caller once the gap has
+// run out; otherwise the Runner is free.
 func (r *Runner) handOff(ran bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -369,18 +378,43 @@ func (r *Runner) handOff(ran bool) {
 		r.lastEnd = r.now()
 		r.gap = r.effectiveThrottleFloor() + time.Duration(r.cfg.RandFloat64()*float64(r.cfg.ThrottleJitter))
 	}
-	var next *waiter
-	switch {
-	case len(r.interactive) > 0:
-		next, r.interactive = r.interactive[0], r.interactive[1:]
-	case len(r.background) > 0:
-		next, r.background = r.background[0], r.background[1:]
-	default:
-		r.busy = false
-		return
+	r.busy = false
+	if (len(r.interactive) > 0 || len(r.background) > 0) && !r.dispatching {
+		r.startDispatch()
 	}
-	next.granted = true
-	close(next.ready)
+}
+
+// startDispatch sleeps out the gap in the background and then hands the turn
+// to the longest-waiting interactive caller, else the longest-waiting
+// background one. Called with mu held.
+func (r *Runner) startDispatch() {
+	r.dispatching = true
+	due := r.lastEnd.Add(r.gap)
+	go func() {
+		wait := time.Duration(0)
+		if now := r.now(); due.After(now) {
+			wait = due.Sub(now)
+		}
+		// Not tied to any caller's ctx: a caller giving up only leaves the
+		// queue; the gap still has to pass before anyone else starts.
+		_ = r.cfg.Sleep(context.Background(), wait)
+
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.dispatching = false
+		var next *waiter
+		switch {
+		case len(r.interactive) > 0:
+			next, r.interactive = r.interactive[0], r.interactive[1:]
+		case len(r.background) > 0:
+			next, r.background = r.background[0], r.background[1:]
+		default:
+			return
+		}
+		r.busy = true
+		next.granted = true
+		close(next.ready)
+	}()
 }
 
 func removeWaiter(list []*waiter, w *waiter) []*waiter {
@@ -649,6 +683,18 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 	// running. See WithStartHook.
 	SignalStart(ctx)
 
+	// Every call but a download gets a ceiling. This process holds the one
+	// turn every YouTube call needs, so a hung one (a stuck JS-runtime child, a
+	// stalled socket) would otherwise stall all of peeq's YouTube work until a
+	// restart. A download (onLine set) is bounded by its caller's inactivity
+	// watchdog instead, since a long one can legitimately run past any fixed
+	// ceiling. Started here, after the wait, so queueing never counts.
+	if onLine == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, maxCallRuntime)
+		defer cancel()
+	}
+
 	fullArgs := args
 	if cookieFile != "" {
 		// The player-client override rides with the cookie rather than being
@@ -736,6 +782,11 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 
 // waitDelay is exec.Cmd.WaitDelay for every yt-dlp call.
 const waitDelay = 10 * time.Second
+
+// maxCallRuntime is the ceiling on a non-download yt-dlp call (scan listing,
+// metadata, captions, channel resolve), which normally takes seconds. A var so
+// a test can shorten it.
+var maxCallRuntime = 10 * time.Minute
 
 // scanLinesCR is a bufio.SplitFunc like bufio.ScanLines but also splits on
 // bare '\r' (yt-dlp overwrites its progress line with '\r', not '\n').

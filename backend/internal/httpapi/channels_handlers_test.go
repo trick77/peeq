@@ -3046,9 +3046,9 @@ func (p *pacingResolver) ResolveChannel(ctx context.Context, _ string) (ytdlp.Ch
 	return p.info, nil
 }
 
-// THE REGRESSION, on the interactive path. WithInteractive skips the background
-// reservation queue but NOT the throttle, so a user-triggered refresh still
-// waits — and a cap armed on entry counted that wait as though yt-dlp were
+// THE REGRESSION, on the interactive path. WithInteractive goes ahead of queued
+// background work but still waits for the running call and the gap, so a
+// user-triggered refresh still waits — and a cap armed on entry counted that wait as though yt-dlp were
 // already hung, landing in the failure path that stamps resolve_ok = 0.
 //
 // Queueing (120ms) outlasts the whole cap (60ms); the work (10ms) is well

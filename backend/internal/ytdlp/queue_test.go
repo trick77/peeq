@@ -209,24 +209,81 @@ func TestQueue_cancelledWaiterLeavesTheQueue(t *testing.T) {
 	}
 }
 
-// TestQueue_cancelDuringGapPassesTheTurnOn: a caller cancelled while sleeping
-// out the gap already holds the turn, and must hand it on rather than leave
-// the queue stuck.
-func TestQueue_cancelDuringGapPassesTheTurnOn(t *testing.T) {
-	c := newClock()
-	r := noJitterRunner(c, func(_ context.Context, d time.Duration) error {
-		if d > 0 {
-			return context.Canceled
+// gapGate is a Sleep that blocks a non-zero wait (the gap) until open is
+// closed, so a test can act while the gap is running out.
+type gapGate struct {
+	open    chan struct{}
+	waiting chan struct{}
+}
+
+func newGapGate() *gapGate {
+	return &gapGate{open: make(chan struct{}), waiting: make(chan struct{}, 8)}
+}
+
+func (g *gapGate) sleep(_ context.Context, d time.Duration) error {
+	if d > 0 {
+		g.waiting <- struct{}{}
+		<-g.open
+	}
+	return nil
+}
+
+// TestQueue_clickDuringTheGapGoesFirst: the next caller is picked when the gap
+// has run out, not when the previous process exits, so a click arriving during
+// the gap still goes before background work queued earlier. Handing the turn
+// over at exit would make that click wait for the whole background call.
+func TestQueue_clickDuringTheGapGoesFirst(t *testing.T) {
+	g := newGapGate()
+	r := noJitterRunner(newClock(), g.sleep)
+	release, err := r.acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	order := make(chan string, 2)
+	go func() {
+		if rel, err := r.acquire(context.Background()); err == nil {
+			order <- "download"
+			rel(true)
 		}
-		return nil
-	})
+	}()
+	waitQueued(t, r, 1)
+	release(true) // the gap starts
+	<-g.waiting
+	go func() {
+		if rel, err := r.acquire(WithInteractive(context.Background())); err == nil {
+			order <- "click"
+			rel(true)
+		}
+	}()
+	waitQueued(t, r, 2)
+	close(g.open) // the gap is over
+
+	if first := <-order; first != "click" {
+		t.Fatalf("first after the gap = %s, want the click that arrived during it", first)
+	}
+	<-order
+}
+
+// TestQueue_cancelDuringTheGapLeavesNothingStuck: a caller that gives up while
+// the gap runs out leaves the queue, and the Runner is free once it has.
+func TestQueue_cancelDuringTheGapLeavesNothingStuck(t *testing.T) {
+	g := newGapGate()
+	c := newClock()
+	r := noJitterRunner(c, g.sleep)
 	if err := r.paceOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// The gap is owed now, so this caller's sleep fails.
-	if _, err := r.acquire(context.Background()); !errors.Is(err, context.Canceled) {
+	ctx, cancel := context.WithCancel(context.Background())
+	gaveUp := make(chan error, 1)
+	go func() { _, err := r.acquire(ctx); gaveUp <- err }()
+	<-g.waiting
+	cancel()
+	if err := <-gaveUp; !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
+	close(g.open)
+
 	c.Add(time.Minute)
 	done := make(chan error, 1)
 	go func() { done <- r.paceOnce(context.Background()) }()
@@ -236,7 +293,7 @@ func TestQueue_cancelDuringGapPassesTheTurnOn(t *testing.T) {
 			t.Fatal(err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("a caller cancelled in the gap kept the turn")
+		t.Fatal("the Runner stayed busy after the only waiter gave up during the gap")
 	}
 }
 
@@ -256,6 +313,34 @@ func TestQueue_callThatNeverRanOwesNoGap(t *testing.T) {
 	}
 	if waited != 0 {
 		t.Fatalf("wait after a call that never ran = %v, want 0", waited)
+	}
+}
+
+// TestQueue_hungCallIsCutOff: a non-download call that never exits holds the
+// one turn every YouTube call needs; the ceiling ends it so the queue moves on.
+func TestQueue_hungCallIsCutOff(t *testing.T) {
+	prev := maxCallRuntime
+	maxCallRuntime = 200 * time.Millisecond
+	t.Cleanup(func() { maxCallRuntime = prev })
+
+	bin := filepath.Join(t.TempDir(), "yt-dlp")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil { //nolint:gosec // test stand-in for an executable
+		t.Fatal(err)
+	}
+	r := New(RunnerConfig{
+		Bin:            bin,
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	start := time.Now()
+	if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err == nil {
+		t.Fatal("a hung call returned no error")
+	}
+	if took := time.Since(start); took > 15*time.Second {
+		t.Fatalf("hung call took %v, want it cut off near the ceiling", took)
+	}
+	if r.queued() != 0 {
+		t.Fatal("the queue did not move on")
 	}
 }
 

@@ -251,9 +251,7 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 	)
 
 	// Name this call for the logger, so a warning on stderr can be tied to the
-	// video it belongs to. The pacer deliberately lets an interactive call run
-	// alongside a background one, so two yt-dlp processes really can be writing
-	// at the same time.
+	// video it belongs to.
 	ctx = withCallLabel(ctx, req.VideoID)
 
 	onLine := func(line string) {
@@ -317,7 +315,11 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 //
 // A gate refusal (paused, no cookie) made no call and is swallowed with the rest.
 func (r *Runner) downloadSubtitles(ctx context.Context, videoID, watchURL, subLang, dir string) error {
-	_, err := r.exec(ctx, subtitleArgs(dir, subLang, watchURL)...)
+	// Interactive: this finishes a download already under way, and its wait for
+	// a turn counts against the download watchdog armed by the media call (a
+	// second SignalStart does not re-arm it). Queued behind background work it
+	// could outwait the watchdog, which would discard the downloaded media.
+	_, err := r.exec(WithInteractive(ctx), subtitleArgs(dir, subLang, watchURL)...)
 	switch {
 	case err == nil:
 		return nil

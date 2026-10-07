@@ -638,8 +638,7 @@ func TestDownload_logsStderrFromASuccessfulRun(t *testing.T) {
 			t.Fatalf("log missing stderr line %q\n%s", want, out)
 		}
 	}
-	// Attributed, because the pacer lets a background call run alongside an
-	// interactive one — two processes can be writing at the same time.
+	// Attributed, so a warning names its video without leaning on timestamps.
 	if !strings.Contains(out, "video_id=dQw4w9WgXcQ") {
 		t.Fatalf("stderr line not attributed to its video\n%s", out)
 	}
