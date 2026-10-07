@@ -39,7 +39,11 @@ func fakeYtdlpBin(t *testing.T, version string) string {
 	t.Helper()
 	dir := t.TempDir()
 	script := "#!/bin/sh\necho " + version + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "yt-dlp"), []byte(script), 0o755); err != nil {
+	bin := ytdlp.InstalledBin(dir)
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake yt-dlp: %v", err)
 	}
 	return dir
@@ -140,7 +144,7 @@ func TestYtdlpVersionCheck_recordsBothVersions(t *testing.T) {
 // a check that finds a newer release must leave the binary on disk untouched.
 func TestYtdlpVersionCheck_neverInstalls(t *testing.T) {
 	dir := fakeYtdlpBin(t, "2026.07.01")
-	binPath := filepath.Join(dir, "yt-dlp")
+	binPath := ytdlp.InstalledBin(dir)
 	before, err := os.ReadFile(binPath)
 	if err != nil {
 		t.Fatalf("read fake binary: %v", err)

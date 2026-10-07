@@ -30,9 +30,11 @@ type ytdlpVersionResponse struct {
 // page can tell "already on the latest build" apart from a real upgrade —
 // with only the resulting version to go on, the two are indistinguishable.
 //
-// Updated describes the VERSION, not the download: UpdateLatest always
-// fetches and reinstalls the latest release, so Updated=false means the
-// version did not change, never that the download was skipped.
+// Updated describes the VERSION: Updated=false means the version did not
+// change. UpdateLatest skips the download when the install already reports
+// the latest release tag, and on Linux discards a fetched release of the
+// installed version rather than swapping it in, so the button does not
+// repair a damaged install that still answers --version.
 type ytdlpUpdateResponse struct {
 	Version         string `json:"version"`
 	PreviousVersion string `json:"previous_version"`

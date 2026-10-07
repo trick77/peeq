@@ -2,6 +2,7 @@ package ytdlp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -27,6 +28,32 @@ func TestVersion_parsesBinOutput(t *testing.T) {
 func TestVersion_binMissing(t *testing.T) {
 	if _, err := Version(context.Background(), filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
 		t.Fatal("expected error for missing binary")
+	}
+}
+
+// TestReleaseFor_linuxIsUnpackedBuild pins Linux to the unpacked self-contained
+// build. The plain "yt-dlp" asset runs on the system python without curl_cffi,
+// so it cannot impersonate a browser, and YouTube answers some of its caption
+// downloads with HTTP 429. The one-file "yt-dlp_linux" unpacks itself into
+// TMPDIR on every run, which the container's noexec tmpfs refuses.
+func TestReleaseFor_linuxIsUnpackedBuild(t *testing.T) {
+	cases := []struct {
+		goos, goarch string
+		want         release
+	}{
+		{"linux", "amd64", release{asset: "yt-dlp_linux.zip", install: "yt-dlp_linux", exe: "yt-dlp_linux"}},
+		{"linux", "arm64", release{asset: "yt-dlp_linux_aarch64.zip", install: "yt-dlp_linux", exe: "yt-dlp_linux_aarch64"}},
+		{"linux", "arm", release{asset: "yt-dlp_linux_armv7l.zip", install: "yt-dlp_linux", exe: "yt-dlp_linux_armv7l"}},
+		// No self-contained build: the plain zipapp, as before.
+		{"linux", "386", release{asset: "yt-dlp", install: "yt-dlp"}},
+		{"freebsd", "amd64", release{asset: "yt-dlp", install: "yt-dlp"}},
+		{"darwin", "arm64", release{asset: "yt-dlp_macos", install: "yt-dlp_macos"}},
+		{"windows", "amd64", release{asset: "yt-dlp.exe", install: "yt-dlp.exe"}},
+	}
+	for _, c := range cases {
+		if got := releaseFor(c.goos, c.goarch); got != c.want {
+			t.Errorf("releaseFor(%s, %s) = %+v, want %+v", c.goos, c.goarch, got, c.want)
+		}
 	}
 }
 
@@ -62,6 +89,57 @@ func TestUpdateLatest_usesInjectedDownloader(t *testing.T) {
 	}
 	if _, err := os.Stat(gotDest); err != nil {
 		t.Fatalf("expected downloaded file to exist: %v", err)
+	}
+}
+
+// TestUpdateLatest_waitingCallerHonoursCtx: an update waiting for another to
+// finish gives up when its request goes away instead of queueing forever.
+func TestUpdateLatest_waitingCallerHonoursCtx(t *testing.T) {
+	updateSlot <- struct{}{} // another update is running
+	t.Cleanup(func() { <-updateSlot })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := UpdateLatest(ctx, t.TempDir()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+// TestUpdateLatest_skipsDownloadWhenCurrent: the release tag is a few KB of
+// JSON; the build is a ~40MB download. When the installed build already is
+// the latest release there is nothing to fetch.
+func TestUpdateLatest_skipsDownloadWhenCurrent(t *testing.T) {
+	dir := t.TempDir()
+	bin := InstalledBin(dir)
+	if err := os.MkdirAll(filepath.Dir(bin), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 2099.01.01\n"), 0o755); err != nil { //nolint:gosec // test stand-in for an executable
+		t.Fatal(err)
+	}
+
+	prevDL, prevTag := downloader, latestTag
+	t.Cleanup(func() { downloader, latestTag = prevDL, prevTag })
+	downloads := 0
+	downloader = func(context.Context, string) (string, error) {
+		downloads++
+		return "2099.02.02", nil
+	}
+
+	latestTag = func(context.Context) (string, error) { return "2099.01.01", nil }
+	if v, err := UpdateLatest(context.Background(), dir); err != nil || v != "2099.01.01" || downloads != 0 {
+		t.Fatalf("current: version %q err %v downloads %d, want 2099.01.01 and no download", v, err, downloads)
+	}
+
+	latestTag = func(context.Context) (string, error) { return "2099.02.02", nil }
+	if v, err := UpdateLatest(context.Background(), dir); err != nil || v != "2099.02.02" || downloads != 1 {
+		t.Fatalf("behind: version %q err %v downloads %d, want 2099.02.02 and one download", v, err, downloads)
+	}
+
+	// An unanswered release lookup must not block the update.
+	latestTag = func(context.Context) (string, error) { return "", errors.New("github down") }
+	if _, err := UpdateLatest(context.Background(), dir); err != nil || downloads != 2 {
+		t.Fatalf("lookup failed: err %v downloads %d, want a download anyway", err, downloads)
 	}
 }
 
