@@ -1810,6 +1810,32 @@ describe("Player", () => {
       expect(screen.queryByText("Prose one.")).toBeNull();
     });
 
+    // The server dropped the in-depth text with the rest; the card must go
+    // too, not sit beside the "Summarizing" placeholder.
+    it("drops the In depth card on success", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({
+          summary_status: "done",
+          summary: "Prose one.",
+          in_depth: "Lead.\n\n### A point [0:10]\n\nBody.",
+          has_subtitles: true,
+        }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      // Exactly one: the card once shared its key with TranscriptCard, and
+      // React left stale copies of it behind on every re-render.
+      expect(
+        await screen.findAllByRole("button", { name: /In depth/ }),
+      ).toHaveLength(1);
+      await openMenu();
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: /Reprocess video/i }),
+      );
+      await waitFor(() => expect(reprocess).toHaveBeenCalledWith("v1"));
+      expect(await screen.findByText(/Summarizing/i)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /In depth/ })).toBeNull();
+    });
+
     it("toasts when the reprocess request fails, and keeps the video playing", async () => {
       vi.mocked(getVideo).mockResolvedValue(
         makeVideo({ summary_status: "error", has_subtitles: true }),

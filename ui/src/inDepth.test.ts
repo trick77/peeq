@@ -36,6 +36,22 @@ describe("parseInDepth", () => {
     });
   });
 
+  // The drift a model actually produces: a trailing period, bold markers,
+  // round brackets, no space after the hashes. Each still reads as a heading
+  // with a seekable stamp, and no markup leaks into the text.
+  it.each([
+    ["### Prices rise 20% [3:05].", "Prices rise 20%"],
+    ["### **Prices rise 20%** [3:05]", "Prices rise 20%"],
+    ["### Prices rise 20% (3:05)", "Prices rise 20%"],
+    ["###Prices rise 20% [3:05]", "Prices rise 20%"],
+    ["### [3:05] Prices rise 20%", "Prices rise 20%"],
+  ])("reads %j as a stamped heading", (line, heading) => {
+    const got = parseInDepth(`Lead.\n\n${line}\n\nBody.`);
+    expect(got.sections).toEqual([
+      { heading, stamp: "3:05", seconds: 185, body: ["Body."] },
+    ]);
+  });
+
   // A model that ignored the format: everything reads as the lead, which is
   // the short summary's look.
   it("renders unformatted text as plain paragraphs", () => {

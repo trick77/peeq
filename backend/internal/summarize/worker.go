@@ -311,7 +311,8 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// summary was still running.
 	if video.Category == "" || video.Category == videos.UncategorizedCategory {
 		// Surface the classify step as a live phase (summarizing → classifying →
-		// embedding). It sits before the "done" emit below, so it is safe for the
+		// in depth → key points → embedding). It sits before the "done" emit
+		// below, so it is safe for the
 		// Player, which treats "done" as terminal.
 		w.emit(video.ID, videos.SummaryRunning, PhaseClassifying)
 		cctx, done := run.step("classify")
@@ -442,7 +443,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// would replace the summary it just rendered with the "Summarizing" spinner
 	// until this step finished. Same shape as the keypoints emit above: a
 	// terminal status carrying a live phase, so the Queue meter still advances
-	// to step 4/4 (it reads phase, falling back to status).
+	// to step 5/5 (it reads phase, falling back to status).
 	w.emit(video.ID, videos.SummaryDone, PhaseEmbedding)
 	ectx, edone := run.step("embedding")
 	if err := w.embedAndStore(ectx, video.ID, parsed, summary, chapters); err != nil {

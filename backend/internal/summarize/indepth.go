@@ -129,13 +129,10 @@ func inDepthWordTarget(durationSeconds int) int {
 	return min(900, max(150, durationSeconds*25/60))
 }
 
-// finalizeInDepth trims the reply and rejects an empty one, for the reason
-// finalizeSummary does: a blank text must retry, not be stored.
+// finalizeInDepth is finalizeProse for this call's stages: a blank text must
+// not be stored.
 func finalizeInDepth(raw, stage string) (string, error) {
-	if s := strings.TrimSpace(raw); s != "" {
-		return s, nil
-	}
-	return "", fmt.Errorf("in-depth %s: model returned an empty text", stage)
+	return finalizeProse(raw, "in-depth "+stage)
 }
 
 // formatClockCues renders the cue index with the stamps the reader will see,

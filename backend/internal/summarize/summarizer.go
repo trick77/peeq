@@ -353,10 +353,17 @@ func (s *Summarizer) SummarizeVideo(ctx context.Context, title string, durationS
 // key-points against empty input, and a resume would re-summarize anyway).
 // Returning an error instead lets the job retry.
 func finalizeSummary(raw, stage string) (string, error) {
+	return finalizeProse(raw, "summarize "+stage)
+}
+
+// finalizeProse is the trim-and-reject-empty guard every prose call shares,
+// the summary's and the in-depth text's, so a rule it learns reaches both.
+// label names the call in the error.
+func finalizeProse(raw, label string) (string, error) {
 	if s := strings.TrimSpace(raw); s != "" {
 		return s, nil
 	}
-	return "", fmt.Errorf("summarize %s: model returned an empty summary", stage)
+	return "", fmt.Errorf("%s: model returned an empty text", label)
 }
 
 // keyPointRules is the tail of BOTH key-points prompts (with and without

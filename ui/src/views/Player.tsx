@@ -1200,6 +1200,9 @@ function PlayerImpl({
               ...prev,
               summary_status: "pending",
               summary: "",
+              // The server deleted it too; left here, the old In depth card
+              // would sit beside the "Summarizing" placeholder.
+              in_depth: undefined,
               chapters: [],
               key_points: [],
               indexed: false,
@@ -1609,10 +1612,12 @@ function PlayerImpl({
           {/* Under Highlights: both are about the video's key points, and the
               main column gives this text the measure the rail cannot. Absent
               for a video analysed before the step existed. Keyed on the video
-              so the next one starts shut. */}
+              so the next one starts shut — prefixed, because TranscriptCard
+              below is keyed on the bare id in this same child list, and two
+              siblings sharing a key make React leave stale copies behind. */}
           {video.in_depth ? (
             <InDepthCard
-              key={video.id}
+              key={`indepth-${video.id}`}
               text={video.in_depth}
               seek={video.has_media ? seek : undefined}
             />

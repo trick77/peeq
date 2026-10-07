@@ -20,12 +20,23 @@ import { togglePlayback, visibleVideo } from "../videoHost";
 export function useSpaceToPlay() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code !== "Space" || e.repeat) return;
+      // By the character, as "/" and Escape are: a virtual keyboard can send
+      // key " " with no physical code.
+      if (e.key !== " " || e.repeat) return;
       if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
       if (e.defaultPrevented) return;
       if (e.target !== document.body && e.target !== document.documentElement)
         return;
       if (overlayOwnsKeys(e.target)) return;
+      // Stricter than "/": ANY open menu or popover stands Space down, not
+      // only one holding focus. A click on a menu's padding drops focus to
+      // <body> with the menu still open, and toggling the video behind it
+      // reads as the menu having done something. Every one of them renders
+      // only while open, so presence is the test.
+      if (document.querySelector('[role="menu"],[role="dialog"]')) return;
+      // Fullscreen, the browser's own media controls answer Space already;
+      // taking it as well toggles twice, which looks like nothing happened.
+      if (document.fullscreenElement) return;
       const el = visibleVideo();
       if (!el) return;
       e.preventDefault();
