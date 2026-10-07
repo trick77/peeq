@@ -452,21 +452,11 @@ type interactiveKey struct{}
 // it (see acquire). Use it for the handlers a person waits on with a spinner
 // in front of them.
 //
-// "Never for worker calls" is the wrong rule, and used to be stated here. What
-// matters is whether a PERSON asked for the work, not which goroutine carries
-// it out: approving an Inbox item is a click, and it happens to run on the
-// download worker. That worker marks a job interactive when its priority is
-// above the scheduler's automatic 0. Scan-driven downloads, metadata refreshes
-// and every other self-scheduled call stay on the background lane — which is
-// what the old wording was actually protecting.
-//
-// The trade-off, stated plainly: an approved download shares the priority lane
-// with true clicks, first come first served, so a click can queue behind an
-// approved download's calls (its metadata preflight, then the download). That
-// is bounded by how many approved calls are queued at once, not by how many
-// videos were approved: enqueuing ten rows is not ten waiters. Worth watching
-// rather than pre-solving; the fix, if it bites, is a third tier — true clicks
-// ahead of approved downloads ahead of scans.
+// Not for downloads, approved ones included: the download worker keeps every
+// job on the background lane (download/process.go). A download holds the turn
+// for its whole run, so on this lane a run of approved videos would starve
+// every scan and caption fetch until it drained. The one exception is a
+// download's own subtitle call, which finishes work already under way.
 func WithInteractive(ctx context.Context) context.Context {
 	return context.WithValue(ctx, interactiveKey{}, true)
 }
@@ -502,7 +492,7 @@ type startKey struct{}
 // when the call never reaches exec: a pause gate, a missing cookie, or a
 // context cancelled during the throttle wait all return early. That is the
 // point — there is no process to bound, and a user Cancel during the pre-call
-// wait is already handled by throttle's own cancellation.
+// wait is already handled by the queue wait's own cancellation.
 //
 // A context carrying no hook is the normal case and costs a nil check.
 func WithStartHook(ctx context.Context, fn func()) context.Context {
@@ -605,7 +595,7 @@ func (r *Runner) now() time.Time {
 // ctx is cancelled first, in which case it returns ctx.Err() immediately
 // instead of blocking for the full duration.
 func defaultSleep(ctx context.Context, d time.Duration) error {
-	// A zero or negative wait is reachable: on an idle Runner throttle grants
+	// A zero or negative wait is reachable: on an idle Runner acquire grants
 	// the current instant. sched.Sleep checks ctx before arming a timer, so a
 	// cancelled caller never proceeds on an already-due slot.
 	if !sched.Sleep(ctx, d) {
@@ -627,10 +617,10 @@ func (r *Runner) exec(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 // execWithProgress is exec's superset: it goes through the exact same
-// cookie-temp-file and throttle choke point, but when onLine is non-nil
+// cookie-temp-file and queue choke point, but when onLine is non-nil
 // it streams stdout line by line (for --newline progress parsing) instead
 // of buffering it silently. Download uses this so it shares the identical
-// cookie gate / throttle path as Metadata rather than a parallel one.
+// cookie gate / queue path as Metadata rather than a parallel one.
 func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args ...string) ([]byte, error) {
 	// First pass: refuse early. A call that is paused or has no usable cookie
 	// must not take a pacer slot or sit through the sleep just to be refused
@@ -689,6 +679,7 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 	// restart. A download (onLine set) is bounded by its caller's inactivity
 	// watchdog instead, since a long one can legitimately run past any fixed
 	// ceiling. Started here, after the wait, so queueing never counts.
+	callerCtx := ctx
 	if onLine == nil {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, maxCallRuntime)
@@ -722,6 +713,12 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 		// which is the conservative direction.
 		ran = true
 		if runErr := cmd.Run(); runErr != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) && callerCtx.Err() == nil {
+				// The ceiling fired, not the caller: say so, since this is the
+				// event the ceiling exists for and the stderr dump goes to debug.
+				r.cfg.Logger.Warn("yt-dlp call hit its runtime ceiling; killed so the queue moves on",
+					"video_id", callLabel(ctx), "after", maxCallRuntime)
+			}
 			return nil, r.failed(ctx, stderr.String(), runErr)
 		}
 		r.logStderr(ctx, stderr.String())
@@ -735,10 +732,11 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
+	// Before Start, as on the buffered path: a failed start owes a gap too.
+	ran = true
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("ytdlp: start: %w", err)
 	}
-	ran = true
 
 	scanner := bufio.NewScanner(stdoutPipe)
 	// yt-dlp progress lines carry carriage returns and can be long; grow

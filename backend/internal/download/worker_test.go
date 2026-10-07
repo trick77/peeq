@@ -1405,7 +1405,7 @@ func laneHarness(t *testing.T, priority int) bool {
 // holds the turn for a whole download, so on the interactive lane a run of
 // approved videos would starve every scan and caption fetch until it drained.
 func TestProcess_downloadsTakeTheBackgroundLane(t *testing.T) {
-	for _, priority := range []int{10, autoDownloadPriority} {
+	for _, priority := range []int{10, 0} { // a person's enqueue, and the scheduler's
 		if laneHarness(t, priority) {
 			t.Fatalf("a priority-%d job reached yt-dlp on the interactive lane", priority)
 		}

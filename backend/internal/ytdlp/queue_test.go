@@ -1,8 +1,10 @@
 package ytdlp
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -319,6 +321,7 @@ func TestQueue_callThatNeverRanOwesNoGap(t *testing.T) {
 // TestQueue_hungCallIsCutOff: a non-download call that never exits holds the
 // one turn every YouTube call needs; the ceiling ends it so the queue moves on.
 func TestQueue_hungCallIsCutOff(t *testing.T) {
+	var logs bytes.Buffer
 	prev := maxCallRuntime
 	maxCallRuntime = 200 * time.Millisecond
 	t.Cleanup(func() { maxCallRuntime = prev })
@@ -331,6 +334,7 @@ func TestQueue_hungCallIsCutOff(t *testing.T) {
 		Bin:            bin,
 		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
 		Sleep:          func(context.Context, time.Duration) error { return nil },
+		Logger:         slog.New(slog.NewTextHandler(&logs, nil)),
 	})
 	start := time.Now()
 	if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err == nil {
@@ -341,6 +345,9 @@ func TestQueue_hungCallIsCutOff(t *testing.T) {
 	}
 	if r.queued() != 0 {
 		t.Fatal("the queue did not move on")
+	}
+	if !strings.Contains(logs.String(), "runtime ceiling") {
+		t.Fatalf("a ceiling kill was not logged at warn:\n%s", logs.String())
 	}
 }
 
