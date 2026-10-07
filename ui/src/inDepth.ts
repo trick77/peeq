@@ -14,7 +14,29 @@ export type InDepthSection = {
 
 export type InDepth = { lead: string[]; sections: InDepthSection[] };
 
-const HEADING = /^###\s+(.*?)\s*(?:\[(\d{1,2}(?::\d{2}){1,2})\])?\s*$/;
+// A heading line: "###" and its text. The space after the hashes is optional
+// — models drop it often enough to matter.
+const HEADING = /^###\s*(.+)$/;
+
+// The stamp, in square or round brackets, anywhere in the heading — models
+// move it to the front or glue a period after it.
+const STAMP = /[[(](\d{1,2}(?::\d{2}){1,2})[\])]/;
+
+// readHeading splits a heading's text into its words and its stamp, dropping
+// the markup models add although the prompt forbids it: bold markers and the
+// punctuation left behind once the stamp is cut out.
+function readHeading(raw: string): { heading: string; stamp: string | null } {
+  const m = STAMP.exec(raw);
+  const text = m
+    ? raw.slice(0, m.index) + raw.slice(m.index + m[0].length)
+    : raw;
+  const heading = text
+    .replace(/\*\*|__/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[\s.:–—-]+|[\s.:–—-]+$/g, "");
+  return { heading, stamp: m ? m[1] : null };
+}
 
 function paragraphs(lines: string[]): string[] {
   return lines
@@ -35,7 +57,7 @@ export function parseInDepth(text: string): InDepth {
   for (const line of text.split("\n")) {
     const m = HEADING.exec(line.trim());
     if (m) {
-      sections.push({ heading: m[1], stamp: m[2] ?? null, lines: [] });
+      sections.push({ ...readHeading(m[1]), lines: [] });
     } else if (sections.length > 0) {
       sections[sections.length - 1].lines.push(line);
     } else {

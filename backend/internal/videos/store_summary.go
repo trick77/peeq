@@ -169,8 +169,23 @@ func (s *Store) ResetAndEnqueueSummary(id string) (jobID int64, err error) {
 }
 
 // ResetForReprocess is the reset half of ResetAndEnqueueSummary on its own.
+// In a transaction: the reset is two statements (the row, and the in-depth
+// text in its own table), and a reset that kept the old in-depth row would
+// have the worker skip that step against the new summary.
 func (s *Store) ResetForReprocess(id string) error {
-	return resetForReprocessTx(context.Background(), s.db, id)
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("reset video %s for reprocess: begin: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := resetForReprocessTx(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("reset video %s for reprocess: commit: %w", id, err)
+	}
+	return nil
 }
 
 func resetForReprocessTx(ctx context.Context, x store.DBTX, id string) error {

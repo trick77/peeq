@@ -129,8 +129,10 @@ export function visibleVideo(): HTMLVideoElement | null {
 // togglePlayback is the one play/pause every control shares: the dock's button
 // and the Space shortcut. play() rejects under the autoplay policy and returns
 // nothing at all under jsdom, and neither is worth surfacing from a transport
-// control.
-export function togglePlayback(el: HTMLVideoElement) {
+// control. Takes the lookup's result as is, so a caller with no video has
+// nothing to check.
+export function togglePlayback(el: HTMLVideoElement | null) {
+  if (!el) return;
   if (el.paused) void el.play()?.catch(() => {});
   else el.pause();
 }

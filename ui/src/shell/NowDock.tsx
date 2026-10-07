@@ -104,10 +104,7 @@ function NowDockImpl({
     el.currentTime = Math.min(Math.max(el.currentTime + by, 0), max);
   }, []);
 
-  const toggle = useCallback(() => {
-    const el = hostedVideo();
-    if (el) togglePlayback(el);
-  }, []);
+  const toggle = useCallback(() => togglePlayback(hostedVideo()), []);
 
   // The element's own duration when it has one, the stored metadata until
   // then, so the line is proportioned correctly before the media loads.

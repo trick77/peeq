@@ -161,6 +161,48 @@ describe("useSpaceToPlay", () => {
     expect(e.defaultPrevented).toBe(false);
   });
 
+  // A click on a menu's padding can drop focus to <body> with the menu still
+  // open; Space must not toggle the video behind it.
+  it.each(["menu", "dialog"])(
+    "leaves Space alone while a %s popover is open",
+    (role) => {
+      mountVideo("stage");
+      const pop = document.createElement("div");
+      pop.setAttribute("role", role);
+      document.body.appendChild(pop);
+      const e = space();
+      expect(play).not.toHaveBeenCalled();
+      expect(e.defaultPrevented).toBe(false);
+    },
+  );
+
+  // Fullscreen, the browser's own media controls take Space; answering it
+  // here too toggles twice.
+  it("leaves Space to the browser in fullscreen", () => {
+    mountVideo("stage");
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => video,
+    });
+    try {
+      space();
+      expect(play).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(document, "fullscreenElement", {
+        configurable: true,
+        get: () => null,
+      });
+    }
+  });
+
+  // Matched by the character, like every other shortcut here: a virtual
+  // keyboard can send key " " with no code.
+  it("answers a space with no physical key code", () => {
+    mountVideo("stage");
+    space(document.body, { code: "" });
+    expect(play).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores Space with a modifier, and key repeat", () => {
     mountVideo("stage");
     space(document.body, { shiftKey: true });
