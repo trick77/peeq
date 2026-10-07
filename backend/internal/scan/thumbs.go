@@ -18,11 +18,16 @@ import (
 // it (QueueThumbnail).
 const prefetchQueueSize = 64
 
-// thumbRetryAfter is how long a poster whose fetch failed is left alone. The
+// thumbRetryAfter is how long a poster the CDN said it does not have (a 4xx,
+// a non-image body) is left alone, and thumbTransientRetry how long one is
+// after a failure that may clear (a 5xx, a network error, a timeout). The
 // inbox asks for every uncached poster on every load, and each attempt costs
-// up to two turns in the YouTube queue; a poster YouTube does not serve must
-// not cost them on every visit.
-const thumbRetryAfter = 6 * time.Hour
+// up to two turns in the YouTube queue; neither kind may cost them on every
+// visit.
+const (
+	thumbRetryAfter     = 6 * time.Hour
+	thumbTransientRetry = 30 * time.Minute
+)
 
 // thumbJob is one pending video whose poster the drainer should cache.
 type thumbJob struct {
@@ -55,23 +60,23 @@ func (s *Scheduler) QueueThumbnail(videoID, url string) {
 	select {
 	case s.thumbs <- thumbJob{videoID: videoID, url: url}:
 	default:
-		s.thumbDone(videoID, false)
+		s.thumbDone(videoID, 0)
 	}
 }
 
 // markWaiting claims videoID for the queue, reporting false when it is
-// already waiting or failed within thumbRetryAfter. Failures older than that
-// are pruned on the way, so the map does not grow for the life of the process.
+// already waiting or a failure has it backing off. Expired back-offs are
+// pruned on the way, so the map does not grow for the life of the process.
 func (s *Scheduler) markWaiting(videoID string) bool {
 	s.thumbMu.Lock()
 	defer s.thumbMu.Unlock()
 	now := s.d.Now()
-	for id, at := range s.thumbFailed {
-		if now.Sub(at) >= thumbRetryAfter {
-			delete(s.thumbFailed, id)
+	for id, at := range s.thumbRetryAt {
+		if !now.Before(at) {
+			delete(s.thumbRetryAt, id)
 		}
 	}
-	if _, failed := s.thumbFailed[videoID]; failed || s.thumbWaiting[videoID] {
+	if _, backingOff := s.thumbRetryAt[videoID]; backingOff || s.thumbWaiting[videoID] {
 		return false
 	}
 	s.thumbWaiting[videoID] = true
@@ -101,27 +106,28 @@ func (s *Scheduler) queueThumbnail(videoID, url string) {
 	// lets them be fetched, which an operator at the default level should see.
 	select {
 	case dropped := <-s.thumbs:
-		s.thumbDone(dropped.videoID, false)
+		s.thumbDone(dropped.videoID, 0)
 		s.d.Logger.Info("scan: thumbnail prefetch queue full; dropping the oldest", "video_id", dropped.videoID)
 	default:
 	}
 	select {
 	case s.thumbs <- job:
 	default:
-		s.thumbDone(videoID, false)
+		s.thumbDone(videoID, 0)
 		s.d.Logger.Info("scan: thumbnail prefetch queue full; dropping it", "video_id", videoID)
 	}
 }
 
-// thumbDone takes videoID off the waiting set and, when failed, remembers when.
-func (s *Scheduler) thumbDone(videoID string, failed bool) {
+// thumbDone takes videoID off the waiting set and, for a backoff > 0, keeps
+// it from being queued again until that has passed.
+func (s *Scheduler) thumbDone(videoID string, backoff time.Duration) {
 	s.thumbMu.Lock()
 	defer s.thumbMu.Unlock()
 	delete(s.thumbWaiting, videoID)
-	if failed {
-		s.thumbFailed[videoID] = s.d.Now()
+	if backoff > 0 {
+		s.thumbRetryAt[videoID] = s.d.Now().Add(backoff)
 	} else {
-		delete(s.thumbFailed, videoID)
+		delete(s.thumbRetryAt, videoID)
 	}
 }
 
@@ -142,8 +148,8 @@ func (s *Scheduler) drainThumbnails(ctx context.Context) {
 }
 
 // prefetchPendingThumbnail fetches one pending video's thumbnail and caches it
-// on its ledger row. Best-effort: a failure is logged and the poster is left
-// alone for thumbRetryAfter. A fetch cut short by shutdown, or refused because
+// on its ledger row. Best-effort: a failure is logged and the poster backs off
+// (thumbRetryAfter, or thumbTransientRetry for one that may clear). A fetch cut short by shutdown, or refused because
 // YouTube calls are paused or the cookie is not valid, is not a failure of
 // this poster: it is logged at debug and may be asked for again at once.
 //
@@ -157,8 +163,8 @@ func (s *Scheduler) drainThumbnails(ctx context.Context) {
 // No timeout of its own: the wait for a turn can last as long as the download
 // in front of it, and each request is bounded by FetchImageBytes' own.
 func (s *Scheduler) prefetchPendingThumbnail(ctx context.Context, j thumbJob) {
-	failed := false
-	defer func() { s.thumbDone(j.videoID, failed) }()
+	var backoff time.Duration
+	defer func() { s.thumbDone(j.videoID, backoff) }()
 
 	entry, err := s.d.Ledger.Get(j.videoID)
 	if err != nil || entry == nil || entry.State != channelvideos.StatePending {
@@ -177,9 +183,12 @@ func (s *Scheduler) prefetchPendingThumbnail(ctx context.Context, j thumbJob) {
 		return
 	}
 	if err != nil {
-		// Only the CDN saying this url has no image (4xx, non-image body) is
-		// remembered; a 5xx, a network blip or a timeout may work next time.
-		failed = media.IsCDNRefusal(err)
+		// The CDN saying this url has no image (4xx, non-image body) holds for
+		// hours; a 5xx, a network blip or a timeout may clear much sooner.
+		backoff = thumbTransientRetry
+		if media.IsCDNRefusal(err) {
+			backoff = thumbRetryAfter
+		}
 		s.d.Logger.Warn("scan: prefetch pending thumbnail failed", "video_id", j.videoID, "err", err)
 		return
 	}

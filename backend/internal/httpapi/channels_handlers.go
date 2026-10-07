@@ -579,7 +579,7 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 
 	// WithInteractive so this user-initiated refresh goes ahead of queued
 	// background work. WithoutCancel, not r.Context() straight through: a refresh
-	// can take minutes (the call running now, the gap, then two image turns), and
+	// can take minutes (waiting for the call running now, then the gap), and
 	// cancelling it because the reader closed the tab would land in the FAILURE
 	// path, which stamps resolve_ok = 0. The channel would then claim "last
 	// refresh failed" — the one state peeq uses to mean "this needs your
@@ -587,9 +587,9 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	// either way; only the response is lost.
 	//
 	// The cap runs from when yt-dlp starts rather than from here, for the same
-	// reason: "yt-dlp's throttle, then two image fetches" says outright that
-	// most of the elapsed time can be wait rather than work, and counting the
-	// wait against the process lands in that same resolve_ok = 0 path.
+	// reason: most of the elapsed time can be waiting for a turn rather than
+	// work, and counting the wait against the process lands in that same
+	// resolve_ok = 0 path.
 	//
 	// The artwork is not fetched on the request: each image is a turn in the
 	// YouTube queue, so it goes to the background, as on channel add.
@@ -620,10 +620,9 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 		upstreamError(w, r, err, "refresh failed")
 		return
 	}
-	// No onChannelResolved here: that hook exists so a test can await the
-	// BACKGROUND goroutine (see Deps.OnChannelResolved). This path is
-	// synchronous, so the response itself is the signal, and firing it would
-	// hand waiting tests a second, unrelated wakeup.
+	// The resolve itself fires no onChannelResolved: it is synchronous, so the
+	// response is the signal. The background art fetch started above does fire
+	// it when done (see Deps.OnChannelResolved).
 	writeJSON(w, map[string]any{"status": "ok"})
 }
 

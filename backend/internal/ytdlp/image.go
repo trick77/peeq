@@ -30,6 +30,10 @@ func (r *Runner) FetchImage(ctx context.Context, url string) (string, []byte, er
 	}
 	ran := false
 	defer func() { release(ran) }()
+	// Handed the turn as the caller gave up: request nothing, owe no gap.
+	if err := ctx.Err(); err != nil {
+		return "", nil, err
+	}
 	if _, err := r.gates(); err != nil {
 		return "", nil, &RefusedError{Err: err}
 	}

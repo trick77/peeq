@@ -32,7 +32,7 @@ func TestQueueThumbnail_skipsWaitingAndRecentlyFailed(t *testing.T) {
 	}
 
 	<-s.thumbs
-	s.thumbDone("v1", true)
+	s.thumbDone("v1", thumbRetryAfter)
 	s.QueueThumbnail("v1", "u")
 	if n := len(s.thumbs); n != 0 {
 		t.Fatal("a poster that just failed was queued again")
