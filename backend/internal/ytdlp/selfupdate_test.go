@@ -105,6 +105,44 @@ func TestUpdateLatest_waitingCallerHonoursCtx(t *testing.T) {
 	}
 }
 
+// TestUpdateLatest_skipsDownloadWhenCurrent: the release tag is a few KB of
+// JSON; the build is a ~40MB download. When the installed build already is
+// the latest release there is nothing to fetch.
+func TestUpdateLatest_skipsDownloadWhenCurrent(t *testing.T) {
+	dir := t.TempDir()
+	bin := InstalledBin(dir)
+	if err := os.MkdirAll(filepath.Dir(bin), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 2099.01.01\n"), 0o755); err != nil { //nolint:gosec // test stand-in for an executable
+		t.Fatal(err)
+	}
+
+	prevDL, prevTag := downloader, latestTag
+	t.Cleanup(func() { downloader, latestTag = prevDL, prevTag })
+	downloads := 0
+	downloader = func(context.Context, string) (string, error) {
+		downloads++
+		return "2099.02.02", nil
+	}
+
+	latestTag = func(context.Context) (string, error) { return "2099.01.01", nil }
+	if v, err := UpdateLatest(context.Background(), dir); err != nil || v != "2099.01.01" || downloads != 0 {
+		t.Fatalf("current: version %q err %v downloads %d, want 2099.01.01 and no download", v, err, downloads)
+	}
+
+	latestTag = func(context.Context) (string, error) { return "2099.02.02", nil }
+	if v, err := UpdateLatest(context.Background(), dir); err != nil || v != "2099.02.02" || downloads != 1 {
+		t.Fatalf("behind: version %q err %v downloads %d, want 2099.02.02 and one download", v, err, downloads)
+	}
+
+	// An unanswered release lookup must not block the update.
+	latestTag = func(context.Context) (string, error) { return "", errors.New("github down") }
+	if _, err := UpdateLatest(context.Background(), dir); err != nil || downloads != 2 {
+		t.Fatalf("lookup failed: err %v downloads %d, want a download anyway", err, downloads)
+	}
+}
+
 func TestUpdateLatest_propagatesDownloaderError(t *testing.T) {
 	prev := downloader
 	t.Cleanup(func() { downloader = prev })

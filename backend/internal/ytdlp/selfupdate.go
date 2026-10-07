@@ -178,7 +178,7 @@ func downloadReleaseFrom(ctx context.Context, url, destPath string) (string, err
 // Updates are serialized: two Update clicks must not interleave their swaps.
 // A caller waiting its turn gives up when its ctx ends.
 //
-// Once an unpacked build is installed, a plain dir/yt-dlp an older peeq
+// On platforms with an unpacked build, a plain dir/yt-dlp an older peeq
 // installed is removed: it is a python zipapp nothing resolves any more.
 func UpdateLatest(ctx context.Context, dir string) (string, error) {
 	select {
@@ -189,15 +189,23 @@ func UpdateLatest(ctx context.Context, dir string) (string, error) {
 	defer func() { <-updateSlot }()
 
 	r := releaseFor(runtime.GOOS, runtime.GOARCH)
-	version, err := downloader(ctx, filepath.Join(dir, r.install))
-	if err != nil {
-		return "", err
-	}
 	if r.unpacked() {
 		removeLegacyZipapp(filepath.Join(dir, "yt-dlp"))
 	}
-	return version, nil
+	// Ask GitHub for the latest tag (a few KB) before fetching the build
+	// (~40MB): an install that already is the latest has nothing to gain. An
+	// unanswered lookup falls through to the download, as before.
+	if installed, err := Version(ctx, InstalledBin(dir)); err == nil {
+		if latest, err := latestTag(ctx); err == nil && latest == installed {
+			return installed, nil
+		}
+	}
+	return downloader(ctx, filepath.Join(dir, r.install))
 }
+
+// latestTag is the release lookup UpdateLatest compares against; a var so
+// tests never reach GitHub.
+var latestTag = LatestVersion
 
 // removeLegacyZipapp deletes the python zipapp an older self-update installed
 // at p, and nothing else: a binary someone put there themselves stays.
