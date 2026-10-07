@@ -13,6 +13,37 @@ import (
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
+// TestQueueThumbnail_skipsWaitingAndRecentlyFailed: the inbox asks for every
+// uncached poster on every load, and each fetch costs turns in the YouTube
+// queue. A poster already waiting is not queued twice, and one that failed is
+// left alone for thumbRetryAfter.
+func TestQueueThumbnail_skipsWaitingAndRecentlyFailed(t *testing.T) {
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	s := New(Deps{
+		Images: media.FetchImageBytes,
+		Now:    func() time.Time { return now },
+	})
+
+	s.QueueThumbnail("v1", "u")
+	s.QueueThumbnail("v1", "u")
+	if n := len(s.thumbs); n != 1 {
+		t.Fatalf("queued %d jobs for one poster, want 1", n)
+	}
+
+	<-s.thumbs
+	s.thumbDone("v1", true)
+	s.QueueThumbnail("v1", "u")
+	if n := len(s.thumbs); n != 0 {
+		t.Fatal("a poster that just failed was queued again")
+	}
+
+	now = now.Add(thumbRetryAfter)
+	s.QueueThumbnail("v1", "u")
+	if n := len(s.thumbs); n != 1 {
+		t.Fatalf("a poster that failed %v ago was not queued again", thumbRetryAfter)
+	}
+}
+
 // TestScan_runAbandonsInFlightPrefetchOnCancel: a thumbnail fetch in flight
 // when the loop is cancelled is abandoned promptly — Run returns, and the
 // prefetch writes nothing afterwards. It used to be a detached goroutine on a

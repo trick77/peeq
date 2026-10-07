@@ -175,9 +175,10 @@ type Deps struct {
 	// settings flag.
 	OnResumeYoutube func()
 
-	// OnChannelResolved fires after a background channel-metadata resolve
-	// settles, successfully or not. Test-only: it exists so a test can wait
-	// for the goroutine instead of sleeping. nil in production.
+	// OnChannelResolved fires after a background channel goroutine settles,
+	// successfully or not: a metadata resolve, or the art fetch after adding a
+	// channel. Test-only: it exists so a test can wait for the goroutine
+	// instead of sleeping. nil in production.
 	OnChannelResolved func(channelID string)
 
 	// ResolveCap bounds a channel metadata resolve once yt-dlp has started.

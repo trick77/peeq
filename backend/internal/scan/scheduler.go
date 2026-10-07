@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/trick77/peeq/internal/activity"
@@ -121,6 +122,11 @@ type Scheduler struct {
 	rand         func() float64
 	// thumbs feeds the thumbnail drainer Run owns; see thumbs.go.
 	thumbs chan thumbJob
+	// thumbMu guards waiting (posters queued or being fetched) and failed
+	// (when a poster last failed), which keep repeat asks from re-queueing.
+	thumbMu      sync.Mutex
+	thumbWaiting map[string]bool
+	thumbFailed  map[string]time.Time
 	// gate is the per-pass cookie and kill-switch check, built from Deps.
 	gate ytgate.Gate
 }
@@ -141,6 +147,7 @@ func New(d Deps) *Scheduler {
 	}
 	return &Scheduler{
 		d: d, rand: sched.PseudoRand(), thumbs: make(chan thumbJob, prefetchQueueSize),
+		thumbWaiting: map[string]bool{}, thumbFailed: map[string]time.Time{},
 		gate: ytgate.Gate{CookieStatus: d.CookieStatus, AllowAnonymous: d.AllowAnonymous, Paused: d.YoutubePaused},
 	}
 }

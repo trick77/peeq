@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -64,9 +65,22 @@ func FetchPendingThumbnail(ctx context.Context, fetch ImageFetcher, videoID, rec
 		if ctx.Err() != nil {
 			return "", nil, ctx.Err()
 		}
+		// Only an answer about THIS url (a status, or a body that is not an
+		// image) is a reason to try the next one. A refusal (paused, no
+		// cookie) or a network failure would meet the fallback the same way.
+		if !answeredFor(err) {
+			break
+		}
 	}
 
 	// candidates always holds at least the hqdefault url (videoID is non-empty
 	// past the guard above), so the loop ran and lastErr is set.
 	return "", nil, fmt.Errorf("pending thumbnail %s: %w", videoID, lastErr)
+}
+
+// answeredFor reports whether err is the CDN's answer about one url — a status
+// or a non-image body — rather than a failure that would recur for any url.
+func answeredFor(err error) bool {
+	var se *FetchStatusError
+	return errors.As(err, &se) || errors.Is(err, ErrUnsupportedContentType)
 }

@@ -3234,6 +3234,10 @@ func TestPendingThumbnail_queuesOnMiss(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want the placeholder 404", rec.Code)
 	}
+	// Not cached: the next page load must ask again and get the poster.
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", cc)
+	}
 	if len(queued) != 1 || queued[0] != "pt9 "+srv.URL {
 		t.Fatalf("queued %v, want the poster queued once", queued)
 	}

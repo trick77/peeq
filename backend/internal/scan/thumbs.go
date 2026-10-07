@@ -2,9 +2,12 @@ package scan
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/media"
+	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 // prefetchQueueSize bounds how many newly-pending thumbnails can wait for the
@@ -14,6 +17,12 @@ import (
 // of the inbox, and a dropped poster is queued again when the inbox asks for
 // it (QueueThumbnail).
 const prefetchQueueSize = 64
+
+// thumbRetryAfter is how long a poster whose fetch failed is left alone. The
+// inbox asks for every uncached poster on every load, and each attempt costs
+// up to two turns in the YouTube queue; a poster YouTube does not serve must
+// not cost them on every visit.
+const thumbRetryAfter = 6 * time.Hour
 
 // thumbJob is one pending video whose poster the drainer should cache.
 type thumbJob struct {
@@ -25,7 +34,8 @@ type thumbJob struct {
 // the background. The inbox's poster endpoint calls it for a poster it does
 // not have, instead of fetching on the request: every poster request is a
 // turn in the YouTube queue, and a page of uncached cards would otherwise hold
-// a request open per card for as long as the queue takes.
+// a request open per card for as long as the queue takes. A poster already
+// waiting, or one that failed within thumbRetryAfter, is not queued again.
 func (s *Scheduler) QueueThumbnail(videoID, url string) {
 	if s.d.Images == nil {
 		return
@@ -39,6 +49,15 @@ func (s *Scheduler) QueueThumbnail(videoID, url string) {
 // uploads burst parallel requests at i.ytimg.com and a shutdown could leave a
 // prefetch writing to a database that main had already closed.
 func (s *Scheduler) queueThumbnail(videoID, url string) {
+	s.thumbMu.Lock()
+	failedAt, failed := s.thumbFailed[videoID]
+	if s.thumbWaiting[videoID] || (failed && s.d.Now().Sub(failedAt) < thumbRetryAfter) {
+		s.thumbMu.Unlock()
+		return
+	}
+	s.thumbWaiting[videoID] = true
+	s.thumbMu.Unlock()
+
 	job := thumbJob{videoID: videoID, url: url}
 	select {
 	case s.thumbs <- job:
@@ -50,13 +69,27 @@ func (s *Scheduler) queueThumbnail(videoID, url string) {
 	// lets them be fetched, which an operator at the default level should see.
 	select {
 	case dropped := <-s.thumbs:
+		s.thumbDone(dropped.videoID, false)
 		s.d.Logger.Info("scan: thumbnail prefetch queue full; dropping the oldest", "video_id", dropped.videoID)
 	default:
 	}
 	select {
 	case s.thumbs <- job:
 	default:
+		s.thumbDone(videoID, false)
 		s.d.Logger.Info("scan: thumbnail prefetch queue full; dropping it", "video_id", videoID)
+	}
+}
+
+// thumbDone takes videoID off the waiting set and, when failed, remembers when.
+func (s *Scheduler) thumbDone(videoID string, failed bool) {
+	s.thumbMu.Lock()
+	defer s.thumbMu.Unlock()
+	delete(s.thumbWaiting, videoID)
+	if failed {
+		s.thumbFailed[videoID] = s.d.Now()
+	} else {
+		delete(s.thumbFailed, videoID)
 	}
 }
 
@@ -77,9 +110,10 @@ func (s *Scheduler) drainThumbnails(ctx context.Context) {
 }
 
 // prefetchPendingThumbnail fetches one pending video's thumbnail and caches it
-// on its ledger row. Best-effort: a failure is logged and the poster is asked
-// for again when the inbox next shows the card. A fetch cut short by shutdown
-// is not logged as a failure and writes nothing.
+// on its ledger row. Best-effort: a failure is logged and the poster is left
+// alone for thumbRetryAfter. A fetch cut short by shutdown, or refused because
+// YouTube calls are paused or the cookie is not valid, is not a failure of
+// this poster: it is logged at debug and may be asked for again at once.
 //
 // The row is re-read first. A job can sit in the queue for a while, and the
 // world moves meanwhile: the user may have ignored or queued the video (which
@@ -91,6 +125,9 @@ func (s *Scheduler) drainThumbnails(ctx context.Context) {
 // No timeout of its own: the wait for a turn can last as long as the download
 // in front of it, and each request is bounded by FetchImageBytes' own.
 func (s *Scheduler) prefetchPendingThumbnail(ctx context.Context, j thumbJob) {
+	failed := false
+	defer func() { s.thumbDone(j.videoID, failed) }()
+
 	entry, err := s.d.Ledger.Get(j.videoID)
 	if err != nil || entry == nil || entry.State != channelvideos.StatePending {
 		return
@@ -102,7 +139,13 @@ func (s *Scheduler) prefetchPendingThumbnail(ctx context.Context, j thumbJob) {
 	if ctx.Err() != nil {
 		return
 	}
+	var refused *ytdlp.RefusedError
+	if errors.As(err, &refused) {
+		s.d.Logger.Debug("scan: prefetch pending thumbnail refused", "video_id", j.videoID, "err", err)
+		return
+	}
 	if err != nil {
+		failed = true
 		s.d.Logger.Warn("scan: prefetch pending thumbnail failed", "video_id", j.videoID, "err", err)
 		return
 	}

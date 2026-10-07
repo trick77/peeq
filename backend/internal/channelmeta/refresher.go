@@ -173,7 +173,11 @@ func (f *Refresher) storeImage(ctx context.Context, channelID, kind, url string)
 	if url == "" || f.Images == nil {
 		return
 	}
-	mime, data, err := f.Images(ctx, url)
+	// Uncapped: each image is a turn of its own in the YouTube queue, after
+	// the resolve; a cap armed for the resolve must not spend itself waiting
+	// for these turns, or a running download silently costs the channel its
+	// art.
+	mime, data, err := f.Images(ytdlp.Uncapped(ctx), url)
 	if err != nil {
 		f.logger().Warn("channel image fetch failed", "channel_id", channelID, "kind", kind, "err", err)
 		return

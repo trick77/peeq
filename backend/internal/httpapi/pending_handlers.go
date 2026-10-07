@@ -402,13 +402,12 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 		// an item the prefetch missed or lost — queued, not fetched here: every
 		// poster is a turn in the YouTube queue, and a page of uncached cards
 		// would hold a request open per card for as long as that takes. The UI
-		// renders its gradient placeholder on the 404 meanwhile, and the poster
-		// shows once the miss cache (cacheImageMissing) lets the browser ask
-		// again.
+		// renders its gradient placeholder on the uncached 404 meanwhile, and
+		// the poster shows on the next page load after it has arrived.
 		if s.queueThumb != nil {
 			s.queueThumb(id, e.ThumbnailURL)
 		}
-		notFoundCached(w, r)
+		notFoundPending(w, r)
 		return
 	}
 	imageOwnedDay.apply(w, r)
