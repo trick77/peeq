@@ -18,7 +18,9 @@ import (
 // background context that could store its result after main closed the
 // database.
 func TestScan_runAbandonsInFlightPrefetchOnCancel(t *testing.T) {
-	entered := make(chan struct{})
+	// Buffered: the scheduler can reach the server before the test is waiting
+	// on entered, and an unbuffered non-blocking send would drop the signal.
+	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		select {
