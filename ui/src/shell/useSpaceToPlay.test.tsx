@@ -113,6 +113,24 @@ describe("useSpaceToPlay", () => {
         return d;
       },
     ],
+    ["a disclosure <summary>", () => document.createElement("summary")],
+    [
+      "an open menu's container",
+      () => {
+        const d = document.createElement("div");
+        d.setAttribute("role", "menu");
+        d.tabIndex = -1;
+        return d;
+      },
+    ],
+    [
+      "a focusable scroller",
+      () => {
+        const d = document.createElement("div");
+        d.tabIndex = 0;
+        return d;
+      },
+    ],
   ])("leaves Space to %s", (_name, make) => {
     mountVideo("stage");
     const el = make();
@@ -128,6 +146,19 @@ describe("useSpaceToPlay", () => {
     mountVideo("stage");
     space(video);
     expect(play).not.toHaveBeenCalled();
+  });
+
+  // A scrim click can leave focus on <body> with the dialog still open; the
+  // video behind it is not what Space is for then.
+  it("leaves Space alone while a modal dialog is open", () => {
+    mountVideo("dock");
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    document.body.appendChild(dialog);
+    const e = space();
+    expect(play).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
   });
 
   it("ignores Space with a modifier, and key repeat", () => {
