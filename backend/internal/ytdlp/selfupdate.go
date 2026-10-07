@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // Version runs `<bin> --version` and returns the trimmed version string
@@ -171,11 +172,24 @@ func downloadReleaseFrom(ctx context.Context, url, destPath string) (string, err
 // the package-level downloader variable so tests can inject a fake that
 // writes a placeholder file and reports a version without any network
 // access.
+//
+// Updates are serialized: two Update clicks must not interleave their swaps,
+// nor let the second remove the tree the first just set aside.
+//
+// Once an unpacked build is installed, a plain dir/yt-dlp an older peeq
+// installed is removed: it is a python zipapp nothing resolves any more.
 func UpdateLatest(ctx context.Context, dir string) (string, error) {
-	destPath := filepath.Join(dir, releaseFor(runtime.GOOS, runtime.GOARCH).install)
-	version, err := downloader(ctx, destPath)
+	updateMu.Lock()
+	defer updateMu.Unlock()
+	r := releaseFor(runtime.GOOS, runtime.GOARCH)
+	version, err := downloader(ctx, filepath.Join(dir, r.install))
 	if err != nil {
 		return "", err
 	}
+	if r.unpacked() {
+		_ = os.Remove(filepath.Join(dir, "yt-dlp"))
+	}
 	return version, nil
 }
+
+var updateMu sync.Mutex

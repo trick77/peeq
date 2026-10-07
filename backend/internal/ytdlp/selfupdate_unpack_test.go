@@ -95,33 +95,73 @@ func TestDownloadUnpackedFrom_installsTree(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(dest, "_internal", "lib.so")); string(got) != "lib-2099.01.01" {
 		t.Fatalf("_internal/lib.so = %q", got)
 	}
-	if l := leftovers(t, dir, "yt-dlp_linux"); len(l) != 0 {
-		t.Fatalf("leftovers after a first install: %v", l)
+	if info, err := os.Lstat(dest); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("install is not a symlink: %v %v", info, err)
+	}
+	if l := leftovers(t, dir, "yt-dlp_linux"); len(l) != 1 || !strings.HasPrefix(l[0], treePrefix) {
+		t.Fatalf("want exactly the one tree the link points at, got %v", l)
 	}
 }
 
-// TestDownloadUnpackedFrom_replacesAndKeepsOnePrevious: the replaced tree is
-// kept until the next update, because a yt-dlp still running from it loads
-// modules from _internal/ lazily; the update after that removes it.
-func TestDownloadUnpackedFrom_replacesAndKeepsOnePrevious(t *testing.T) {
+// TestDownloadUnpackedFrom_runningTreeSurvivesUpdate: a yt-dlp runs from the
+// real path of its tree and loads modules from it as it goes, so an update
+// must not change or remove the tree a run started in. The update after that
+// may remove it.
+func TestDownloadUnpackedFrom_runningTreeSurvivesUpdate(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "yt-dlp_linux")
 	ctx := context.Background()
-
-	for _, v := range []string{"2099.01.01", "2099.02.02", "2099.03.03"} {
+	install := func(v string) {
+		t.Helper()
 		if _, err := downloadUnpackedFrom(ctx, serveBytes(t, http.StatusOK, goodRelease(t, v)), dest, "yt-dlp_linux"); err != nil {
 			t.Fatalf("install %s: %v", v, err)
 		}
 	}
+
+	install("2099.01.01")
+	install("2099.02.02")
+	running, err := filepath.EvalSymlinks(dest) // where a run started now lives
+	if err != nil {
+		t.Fatal(err)
+	}
+	install("2099.03.03")
+
+	if got, _ := os.ReadFile(filepath.Join(running, "_internal", "lib.so")); string(got) != "lib-2099.02.02" {
+		t.Fatalf("the running tree changed under its run: %q", got)
+	}
 	if got, _ := os.ReadFile(filepath.Join(dest, "_internal", "lib.so")); string(got) != "lib-2099.03.03" {
-		t.Fatalf("installed tree = %q, want the last release", got)
+		t.Fatalf("installed release = %q, want the last one", got)
 	}
-	l := leftovers(t, dir, "yt-dlp_linux")
-	if len(l) != 1 || !strings.HasPrefix(l[0], ".yt-dlp-old-") {
-		t.Fatalf("want exactly one previous tree kept, got %v", l)
+	if l := leftovers(t, dir, "yt-dlp_linux"); len(l) != 2 {
+		t.Fatalf("want the current and the previous tree, got %v", l)
 	}
-	if got, _ := os.ReadFile(filepath.Join(dir, l[0], "_internal", "lib.so")); string(got) != "lib-2099.02.02" {
-		t.Fatalf("kept tree = %q, want the release just replaced", got)
+}
+
+// TestDownloadUnpackedFrom_plainDirectoryKept: an install that is a plain
+// directory, not a link, is kept as the previous tree like any other.
+func TestDownloadUnpackedFrom_plainDirectoryKept(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "yt-dlp_linux")
+	if err := os.MkdirAll(dest, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "yt-dlp_linux"), []byte(versionScript("2024.01.01")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := downloadUnpackedFrom(context.Background(), serveBytes(t, http.StatusOK, goodRelease(t, "2099.01.01")), dest, "yt-dlp_linux"); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := Version(context.Background(), filepath.Join(dest, "yt-dlp_linux")); err != nil || v != "2099.01.01" {
+		t.Fatalf("installed = %q %v", v, err)
+	}
+	var kept bool
+	for _, l := range leftovers(t, dir, "yt-dlp_linux") {
+		if v, err := Version(context.Background(), filepath.Join(dir, l, "yt-dlp_linux")); err == nil && v == "2024.01.01" {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Fatal("the replaced plain directory was not kept")
 	}
 }
 
