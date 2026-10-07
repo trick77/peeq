@@ -251,6 +251,39 @@ func TestDownload_holdsTheTurnThroughSubtitles(t *testing.T) {
 	}
 }
 
+// TestDownload_cancelWhileQueuedRemovesStaging: a download cancelled while it
+// waits for its turn ran nothing, and leaves no staging dir behind.
+func TestDownload_cancelWhileQueuedRemovesStaging(t *testing.T) {
+	mediaDir := t.TempDir()
+	const id = "queuedCanc1"
+	r := New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+		MediaDir:       mediaDir,
+	})
+	release, err := r.acquire(context.Background()) // another call holds the turn
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release(false)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.Download(ctx, DownloadReq{URL: "https://youtu.be/" + id, VideoID: id, Format: "best-mp4"}, nil)
+		done <- err
+	}()
+	waitQueued(t, r, 1)
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if _, serr := os.Stat(filepath.Join(mediaDir, ".staging", id)); !os.IsNotExist(serr) {
+		t.Fatalf("staging dir left behind: %v", serr)
+	}
+}
+
 // SkipSubtitles: one call, no caption flags, no .vtt.
 func TestDownload_skipSubtitles(t *testing.T) {
 	mediaDir := t.TempDir()

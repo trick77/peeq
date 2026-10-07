@@ -270,8 +270,8 @@ func (r *Runner) pauseGate() error {
 
 // gates runs the kill-switch gate and then the cookie gate and returns the
 // cookie text the run may use. execWithProgress calls it twice: once before the
-// throttle wait, so a call already known to be refused never burns a pacer
-// slot or a 20s+ sleep, and once after it, because the wait can last minutes
+// queue wait, so a call already known to be refused never takes a turn or
+// waits out a gap, and once after it, because the wait can last minutes
 // on a busy Runner and the world moves meanwhile — a scan can flag the cookie
 // stale or the operator can throw the kill-switch. Only the second answer is
 // trusted: it is the cookie current when the process actually starts.

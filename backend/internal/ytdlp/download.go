@@ -193,10 +193,9 @@ func sponsorblockSegmentsFromInfo(info downloadInfoJSON) []sponsorblock.Segment 
 // Download runs yt-dlp to fetch req.URL into a per-video staging
 // directory, then atomically moves the finished result into its final
 // MediaDir/<channelID>/<videoID>/ location. Like Metadata, it goes
-// through the shared cookie gate and throttle (via execWithProgress); a
-// download is refused with ErrNoCookie exactly like a metadata fetch
-// would be, and it waits out the same 20s+ floor before invoking the
-// binary.
+// through the shared cookie gate and the YouTube queue; a download is
+// refused with ErrNoCookie exactly like a metadata fetch would be, and it
+// holds one turn (holdTurn) for its media call and its subtitle call.
 //
 // The pause and cookie gates run inside execWithProgress, after the request
 // has been validated and the staging directory prepared, so a malformed
@@ -282,6 +281,9 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 	}
 	ctx, releaseTurn, err := r.holdTurn(ctx)
 	if err != nil {
+		// Cancelled while queued: nothing ran, and a cancel removes the
+		// staging dir like any other non-retryable failure.
+		_ = os.RemoveAll(stagingDir)
 		return nil, err
 	}
 	defer releaseTurn()
