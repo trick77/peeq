@@ -37,17 +37,36 @@ type releaseDownloader func(ctx context.Context, destPath string) (version strin
 // network; production code leaves it at downloadLatestRelease.
 var downloader releaseDownloader = downloadLatestRelease
 
-// binaryName returns the yt-dlp release asset name for the current
-// platform, matching yt-dlp's own GitHub release naming.
-func binaryName() string {
-	switch runtime.GOOS {
+// releaseAsset returns the yt-dlp GitHub release asset to download for a
+// platform.
+//
+// Linux takes the self-contained build, never the plain "yt-dlp" asset. That
+// one is a zipapp run by the system python, which has no curl_cffi, so yt-dlp
+// cannot impersonate a browser. It asks to for every caption download, and
+// without it YouTube answered some of them with HTTP 429 on every attempt. The
+// bundled build carries the curl_cffi its own release was tested with, so a
+// self-update can never leave the two out of step.
+func releaseAsset(goos, goarch string) string {
+	switch goos {
 	case "windows":
 		return "yt-dlp.exe"
 	case "darwin":
 		return "yt-dlp_macos"
-	default:
+	}
+	if goarch == "arm64" {
+		return "yt-dlp_linux_aarch64"
+	}
+	return "yt-dlp_linux"
+}
+
+// installName is the file name the downloaded release is installed under.
+// On Linux it is "yt-dlp" whatever the asset is called, because that is the
+// name resolveYtdlpBin (cmd/peeq) looks for.
+func installName(goos string) string {
+	if goos == "linux" {
 		return "yt-dlp"
 	}
+	return releaseAsset(goos, "")
 }
 
 const latestReleaseBaseURL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/"
@@ -66,7 +85,7 @@ const latestReleaseBaseURL = "https://github.com/yt-dlp/yt-dlp/releases/latest/d
 // completely untouched. This avoids ever leaving a truncated or corrupt
 // binary in place after a failed self-update.
 func downloadLatestRelease(ctx context.Context, destPath string) (string, error) {
-	return downloadReleaseFrom(ctx, latestReleaseBaseURL+binaryName(), destPath)
+	return downloadReleaseFrom(ctx, latestReleaseBaseURL+releaseAsset(runtime.GOOS, runtime.GOARCH), destPath)
 }
 
 // downloadReleaseFrom downloads the yt-dlp binary at url and atomically
@@ -131,12 +150,12 @@ func downloadReleaseFrom(ctx context.Context, url, destPath string) (string, err
 }
 
 // UpdateLatest downloads the latest yt-dlp release binary into dir (as
-// binaryName()) and returns its version. The actual fetch is delegated to
+// installName(runtime.GOOS)) and returns its version. The actual fetch is delegated to
 // the package-level downloader variable so tests can inject a fake that
 // writes a placeholder file and reports a version without any network
 // access.
 func UpdateLatest(ctx context.Context, dir string) (string, error) {
-	destPath := filepath.Join(dir, binaryName())
+	destPath := filepath.Join(dir, installName(runtime.GOOS))
 	version, err := downloader(ctx, destPath)
 	if err != nil {
 		return "", err

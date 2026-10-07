@@ -30,6 +30,32 @@ func TestVersion_binMissing(t *testing.T) {
 	}
 }
 
+// TestReleaseAsset_linuxIsSelfContained pins Linux to the bundled build. The
+// plain "yt-dlp" asset runs on the system python without curl_cffi, so it
+// cannot impersonate a browser, and YouTube answers some of its caption
+// downloads with HTTP 429.
+func TestReleaseAsset_linuxIsSelfContained(t *testing.T) {
+	cases := []struct{ goos, goarch, want string }{
+		{"linux", "amd64", "yt-dlp_linux"},
+		{"linux", "arm64", "yt-dlp_linux_aarch64"},
+		{"darwin", "arm64", "yt-dlp_macos"},
+		{"windows", "amd64", "yt-dlp.exe"},
+	}
+	for _, c := range cases {
+		if got := releaseAsset(c.goos, c.goarch); got != c.want {
+			t.Errorf("releaseAsset(%s, %s) = %q, want %q", c.goos, c.goarch, got, c.want)
+		}
+	}
+}
+
+// TestInstallName_linuxIsYtDlp: whichever asset is downloaded, it is installed
+// under the name resolveYtdlpBin looks for.
+func TestInstallName_linuxIsYtDlp(t *testing.T) {
+	if got := installName("linux"); got != "yt-dlp" {
+		t.Fatalf("installName(linux) = %q, want %q", got, "yt-dlp")
+	}
+}
+
 // TestUpdateLatest_usesInjectedDownloader locks the seam that lets tests
 // (and this test) avoid ever hitting the network: UpdateLatest delegates
 // the actual fetch to the package-level downloader variable, which tests

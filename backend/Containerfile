@@ -28,15 +28,14 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/trick77/peeq/internal/v
 #
 # Deviation from loom: loom's runtime is gcr.io/distroless/static-debian12, a
 # scratch-like image with no shell, no package manager, and no dynamic libc —
-# it cannot host ffmpeg or the yt-dlp binary (both need a real userland, and
-# yt-dlp additionally needs a Python interpreter and OpenSSL/certs). peeq's
+# it cannot host ffmpeg or the yt-dlp binary (both need a real userland and
+# glibc). peeq's
 # runtime instead needs to shell out to ffmpeg and yt-dlp for every download,
 # so it uses debian:13-slim (glibc, apt) and installs both directly.
 FROM debian:13-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     ca-certificates \
-    python3 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 # Fetch the yt-dlp standalone binary into /usr/local/bin. /data/bin (BACKEND_YTDLP_DIR)
@@ -48,10 +47,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # week, so the image picks up a new yt-dlp at most a week late. (peeq also
 # updates yt-dlp at runtime into its data directory; this is the copy a fresh
 # container starts with.)
+#
+# The self-contained yt-dlp_linux build, not the plain "yt-dlp" zipapp: that one
+# runs on a system python without curl_cffi, cannot impersonate a browser, and
+# YouTube answered some of its caption downloads with HTTP 429 on every try.
+# Same asset the self-update fetches (ytdlp.releaseAsset). The build fails if
+# Chrome impersonation is unavailable, so the 429s cannot come back silently.
 ARG YTDLP_REFRESH=unset
+ARG TARGETARCH
 RUN echo "yt-dlp layer: ${YTDLP_REFRESH}" \
-    && curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-    && chmod a+rx /usr/local/bin/yt-dlp
+    && asset=yt-dlp_linux && if [ "${TARGETARCH}" = "arm64" ]; then asset=yt-dlp_linux_aarch64; fi \
+    && curl -fsSL -o /usr/local/bin/yt-dlp "https://github.com/yt-dlp/yt-dlp/releases/latest/download/${asset}" \
+    && chmod a+rx /usr/local/bin/yt-dlp \
+    && yt-dlp --list-impersonate-targets | grep -i '^chrome' | grep -vq unavailable
 # yt-dlp must execute YouTube's player JavaScript to solve the sig and n
 # challenges. Without a runtime it falls back to a deprecated Python
 # reimplementation where formats silently disappear from the list and

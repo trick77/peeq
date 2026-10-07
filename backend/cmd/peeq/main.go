@@ -682,7 +682,7 @@ func runYtdlpVersionCheckTicker(
 // restart.
 //
 // On Linux (the container target) the self-update writes exactly "yt-dlp"
-// (see ytdlp.binaryName), so this matches. On macOS the self-update writes
+// (see ytdlp.installName), so this matches. On macOS the self-update writes
 // "yt-dlp_macos", so a dev box relies on the PATH binary rather than the
 // self-updated one — acceptable, as production runs on Linux.
 func resolveYtdlpBin(dir string) string {
