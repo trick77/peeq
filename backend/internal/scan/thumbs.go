@@ -34,13 +34,48 @@ type thumbJob struct {
 // the background. The inbox's poster endpoint calls it for a poster it does
 // not have, instead of fetching on the request: every poster request is a
 // turn in the YouTube queue, and a page of uncached cards would otherwise hold
-// a request open per card for as long as the queue takes. A poster already
-// waiting, or one that failed within thumbRetryAfter, is not queued again.
+// a request open per card for as long as the queue takes.
+//
+// Not queued: a poster already waiting, one that failed within
+// thumbRetryAfter, any poster while YouTube calls are refused (paused, or no
+// valid cookie — it would only be refused again), and any poster while the
+// queue is full. The page asks for posters top to bottom, so letting a
+// request evict the oldest job would push out the newest uploads at the top
+// of the inbox; the next page load asks again.
 func (s *Scheduler) QueueThumbnail(videoID, url string) {
 	if s.d.Images == nil {
 		return
 	}
-	s.queueThumbnail(videoID, url)
+	if s.d.CookieStatus != nil && !s.gate.Open(context.Background()) {
+		return
+	}
+	if !s.markWaiting(videoID) {
+		return
+	}
+	select {
+	case s.thumbs <- thumbJob{videoID: videoID, url: url}:
+	default:
+		s.thumbDone(videoID, false)
+	}
+}
+
+// markWaiting claims videoID for the queue, reporting false when it is
+// already waiting or failed within thumbRetryAfter. Failures older than that
+// are pruned on the way, so the map does not grow for the life of the process.
+func (s *Scheduler) markWaiting(videoID string) bool {
+	s.thumbMu.Lock()
+	defer s.thumbMu.Unlock()
+	now := s.d.Now()
+	for id, at := range s.thumbFailed {
+		if now.Sub(at) >= thumbRetryAfter {
+			delete(s.thumbFailed, id)
+		}
+	}
+	if _, failed := s.thumbFailed[videoID]; failed || s.thumbWaiting[videoID] {
+		return false
+	}
+	s.thumbWaiting[videoID] = true
+	return true
 }
 
 // queueThumbnail hands a newly-pending video's poster to the drainer without
@@ -48,16 +83,13 @@ func (s *Scheduler) QueueThumbnail(videoID, url string) {
 // background context, and outside any WaitGroup, so a pass with many pending
 // uploads burst parallel requests at i.ytimg.com and a shutdown could leave a
 // prefetch writing to a database that main had already closed.
+//
+// A scan's discoveries are the newest uploads, so when the queue is full the
+// OLDEST waiting job makes room for this one.
 func (s *Scheduler) queueThumbnail(videoID, url string) {
-	s.thumbMu.Lock()
-	failedAt, failed := s.thumbFailed[videoID]
-	if s.thumbWaiting[videoID] || (failed && s.d.Now().Sub(failedAt) < thumbRetryAfter) {
-		s.thumbMu.Unlock()
+	if !s.markWaiting(videoID) {
 		return
 	}
-	s.thumbWaiting[videoID] = true
-	s.thumbMu.Unlock()
-
 	job := thumbJob{videoID: videoID, url: url}
 	select {
 	case s.thumbs <- job:
@@ -145,7 +177,9 @@ func (s *Scheduler) prefetchPendingThumbnail(ctx context.Context, j thumbJob) {
 		return
 	}
 	if err != nil {
-		failed = true
+		// Only the CDN saying no is remembered as a failure; a network blip or
+		// timeout may well work on the next ask.
+		failed = media.IsCDNAnswer(err)
 		s.d.Logger.Warn("scan: prefetch pending thumbnail failed", "video_id", j.videoID, "err", err)
 		return
 	}

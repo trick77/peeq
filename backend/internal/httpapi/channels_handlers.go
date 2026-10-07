@@ -590,9 +590,19 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	// reason: "yt-dlp's throttle, then two image fetches" says outright that
 	// most of the elapsed time can be wait rather than work, and counting the
 	// wait against the process lands in that same resolve_ok = 0 path.
+	//
+	// The artwork is not fetched on the request: each image is a turn in the
+	// YouTube queue, so it goes to the background, as on channel add.
+	var avatarURL, bannerURL string
+	deferArt := func(a, b string) { avatarURL, bannerURL = a, b }
 	var stalled bool
 	stalled, err = ytdlp.CallWithCap(ytdlp.WithInteractive(context.WithoutCancel(r.Context())), s.resolveCap,
-		func(cctx context.Context) error { return s.metadata.Resolve(cctx, id, c) })
+		func(cctx context.Context) error {
+			return s.metadata.Resolve(channelmeta.WithArtDeferred(cctx, deferArt), id, c)
+		})
+	if err == nil {
+		s.storeChannelArtAsync(id, avatarURL, bannerURL)
+	}
 	if err != nil {
 		if errors.Is(err, ytdlp.ErrNoCookie) {
 			writeJSONError(w, http.StatusConflict, "cookie required")

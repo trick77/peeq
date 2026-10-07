@@ -2,6 +2,7 @@ package scan
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -41,6 +42,37 @@ func TestQueueThumbnail_skipsWaitingAndRecentlyFailed(t *testing.T) {
 	s.QueueThumbnail("v1", "u")
 	if n := len(s.thumbs); n != 1 {
 		t.Fatalf("a poster that failed %v ago was not queued again", thumbRetryAfter)
+	}
+}
+
+// TestQueueThumbnail_pageNeverEvicts: the inbox asks for posters top to
+// bottom, so a request finding the queue full must not push out the posters
+// queued before it (the newest uploads, at the top of the page).
+func TestQueueThumbnail_pageNeverEvicts(t *testing.T) {
+	s := New(Deps{Images: media.FetchImageBytes})
+	for i := range prefetchQueueSize {
+		s.QueueThumbnail(fmt.Sprintf("v%d", i), "u")
+	}
+	s.QueueThumbnail("late", "u")
+	if first := <-s.thumbs; first.videoID != "v0" {
+		t.Fatalf("head of the queue = %s, want v0 — a page request evicted it", first.videoID)
+	}
+	if s.thumbWaiting["late"] {
+		t.Fatal("a poster that did not fit is still marked waiting, so it could never be asked again")
+	}
+}
+
+// TestQueueThumbnail_notWhileRefused: while YouTube calls are paused or the
+// cookie is not valid every fetch would be refused, so nothing is queued.
+func TestQueueThumbnail_notWhileRefused(t *testing.T) {
+	s := New(Deps{
+		Images:        media.FetchImageBytes,
+		CookieStatus:  func(context.Context) string { return "valid" },
+		YoutubePaused: func(context.Context) bool { return true },
+	})
+	s.QueueThumbnail("v1", "u")
+	if n := len(s.thumbs); n != 0 {
+		t.Fatalf("queued %d posters while paused, want 0", n)
 	}
 }
 

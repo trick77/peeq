@@ -159,9 +159,27 @@ func (f *Refresher) Resolve(ctx context.Context, channelID string, cached *chann
 	// Best-effort in both directions: a fetch that fails is logged and skipped
 	// rather than stored, so a blip cannot replace good artwork with nothing —
 	// the rule the avatar_path/banner_path COALESCE guards used to encode.
+	if art := artDeferredTo(ctx); art != nil {
+		art(info.AvatarURL, info.BannerURL)
+		return nil
+	}
 	f.storeImage(ctx, channelID, channels.ImageAvatar, info.AvatarURL)
 	f.storeImage(ctx, channelID, channels.ImageBanner, info.BannerURL)
 	return nil
+}
+
+type deferArtKey struct{}
+
+// WithArtDeferred makes Resolve hand the artwork urls to art instead of
+// fetching them itself. For a caller a person is waiting on: each image is a
+// turn in the YouTube queue, and a request must not wait on image work.
+func WithArtDeferred(ctx context.Context, art func(avatarURL, bannerURL string)) context.Context {
+	return context.WithValue(ctx, deferArtKey{}, art)
+}
+
+func artDeferredTo(ctx context.Context) func(avatarURL, bannerURL string) {
+	art, _ := ctx.Value(deferArtKey{}).(func(avatarURL, bannerURL string))
+	return art
 }
 
 // storeImage fetches one piece of channel artwork and stores it on the row.

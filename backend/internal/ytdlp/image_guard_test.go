@@ -26,13 +26,24 @@ func TestFetchImageBytes_onlyBehindTheQueue(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if !strings.Contains(string(src), "media.FetchImageBytes(") {
+		// Any mention in code, not just a call: handing the function on as a
+		// value (an ImageFetcher) bypasses the queue just the same. Comment
+		// lines may name it.
+		inCode := false
+		for _, line := range strings.Split(string(src), "\n") {
+			if !strings.HasPrefix(strings.TrimSpace(line), "//") && strings.Contains(line, "FetchImageBytes") {
+				inCode = true
+				break
+			}
+		}
+		if !inCode {
 			return nil
 		}
-		if filepath.Base(path) == "image.go" && filepath.Base(filepath.Dir(path)) == "ytdlp" {
+		dir, base := filepath.Base(filepath.Dir(path)), filepath.Base(path)
+		if (dir == "ytdlp" && base == "image.go") || (dir == "media" && base == "fetch.go") {
 			return nil
 		}
-		t.Errorf("%s calls media.FetchImageBytes directly; fetch through ytdlp.Runner.FetchImage", path)
+		t.Errorf("%s uses FetchImageBytes; fetch through ytdlp.Runner.FetchImage", path)
 		return nil
 	})
 	if err != nil {

@@ -1597,6 +1597,52 @@ func TestChannelRefresh_reResolvesAStuckChannel(t *testing.T) {
 	}
 }
 
+// TestChannelRefresh_artInTheBackground: the request answers once the metadata
+// is stored; the avatar and banner are each a turn in the YouTube queue, so
+// they are fetched after the response, never while the person waits.
+func TestChannelRefresh_artInTheBackground(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write([]byte("\xff\xd8\xff art"))
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	deps, _ := channelImageTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{
+		UCID: "UCart", Name: "Art", AvatarURL: srv.URL + "/a", BannerURL: srv.URL + "/b",
+	}})
+	artDone := make(chan string, 1)
+	deps.OnChannelResolved = func(id string) { artDone <- id }
+	h := New(deps)
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCart", Name: "Art"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	answered := make(chan int, 1)
+	go func() { answered <- postJSON(t, h, "/api/channels/UCart/refresh", nil).Code }()
+	select {
+	case code := <-answered:
+		if code != http.StatusOK {
+			t.Fatalf("refresh status = %d", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the refresh waited for the artwork")
+	}
+
+	release <- struct{}{} // avatar
+	release <- struct{}{} // banner
+	select {
+	case <-artDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the background art fetch never finished")
+	}
+	if img, err := deps.Channels.GetImage("UCart", channels.ImageAvatar); err != nil || img == nil {
+		t.Fatalf("avatar not stored after the refresh: %v, %v", img, err)
+	}
+}
+
 // TestChannelRefresh_unknownID_404 asserts refreshing an id that names nothing
 // 404s rather than creating a phantom row (the failure path writes a bare row,
 // so an unguarded refresh of a made-up id would conjure one).

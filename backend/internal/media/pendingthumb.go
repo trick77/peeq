@@ -68,7 +68,7 @@ func FetchPendingThumbnail(ctx context.Context, fetch ImageFetcher, videoID, rec
 		// Only an answer about THIS url (a status, or a body that is not an
 		// image) is a reason to try the next one. A refusal (paused, no
 		// cookie) or a network failure would meet the fallback the same way.
-		if !answeredFor(err) {
+		if !IsCDNAnswer(err) {
 			break
 		}
 	}
@@ -78,9 +78,9 @@ func FetchPendingThumbnail(ctx context.Context, fetch ImageFetcher, videoID, rec
 	return "", nil, fmt.Errorf("pending thumbnail %s: %w", videoID, lastErr)
 }
 
-// answeredFor reports whether err is the CDN's answer about one url — a status
+// IsCDNAnswer reports whether err is the CDN's answer about one url — a status
 // or a non-image body — rather than a failure that would recur for any url.
-func answeredFor(err error) bool {
+func IsCDNAnswer(err error) bool {
 	var se *FetchStatusError
 	return errors.As(err, &se) || errors.Is(err, ErrUnsupportedContentType)
 }
