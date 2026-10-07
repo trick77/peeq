@@ -83,7 +83,7 @@ func attemptLabel(job *summaryjobs.Job) string {
 // pipelineStages are the analysis stages in execution order. Their position is
 // what "2/4" in a log line counts against, so a stage a resumed job skips still
 // leaves the others numbered where a reader expects them.
-var pipelineStages = []string{"summary", "classify", "keypoints", "embedding"}
+var pipelineStages = []string{"summary", "classify", "indepth", "keypoints", "embedding"}
 
 // stageMessage builds a stage line's message: "stage 2/4 done". A stage that
 // is not in pipelineStages is named instead of numbered — a wrong number would

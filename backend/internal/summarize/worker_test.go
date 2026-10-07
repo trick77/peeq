@@ -43,7 +43,7 @@ type fakeWorkerCompleter struct{}
 
 func (fakeWorkerCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	if len(m) > 0 {
-		sys := m[0].Content
+		sys := promptText(m)
 		if strings.Contains(sys, "cohesive summary") {
 			return "Overall prose summary.", nil
 		}
@@ -63,7 +63,7 @@ func (fakeWorkerCompleter) Complete(_ context.Context, m []llm.Message) (string,
 type classifyErrCompleter struct{}
 
 func (classifyErrCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
-	sys := m[0].Content
+	sys := promptText(m)
 	switch {
 	case strings.Contains(sys, "cohesive summary"):
 		return "Overall prose summary.", nil
@@ -768,7 +768,7 @@ func TestWorkerChunkTimestampsAreExactAndMonotonic(t *testing.T) {
 type keyPointsFailOnceCompleter struct{ kpCalls int }
 
 func (c *keyPointsFailOnceCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
-	sys := m[0].Content
+	sys := promptText(m)
 	switch {
 	case strings.Contains(sys, "cohesive summary"):
 		return "Overall prose summary.", nil
@@ -1223,7 +1223,7 @@ func TestClassifyDoesNotOverwriteAPickMadeDuringTheJob(t *testing.T) {
 	w := NewWorker(WorkerDeps{
 		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
 		Summarizer: New(completerFunc(func(_ context.Context, m []llm.Message) (string, error) {
-			sys := m[0].Content
+			sys := promptText(m)
 			if strings.Contains(sys, "cohesive summary") {
 				// The user picks a category on the Player while the summary
 				// call is still in flight.
@@ -1540,7 +1540,7 @@ type chapterCompleter struct{}
 
 func (chapterCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	if len(m) > 0 {
-		sys := m[0].Content
+		sys := promptText(m)
 		if strings.Contains(sys, "cohesive summary") {
 			return "Overall prose summary.", nil
 		}
@@ -1561,7 +1561,7 @@ type keyPointsFailCompleter struct{}
 
 func (keyPointsFailCompleter) Complete(_ context.Context, m []llm.Message) (string, error) {
 	if len(m) > 0 {
-		sys := m[0].Content
+		sys := promptText(m)
 		if strings.Contains(sys, "cohesive summary") {
 			return "Overall prose summary.", nil
 		}
@@ -1786,7 +1786,7 @@ func (c sponsorSpyCompleter) Complete(_ context.Context, m []llm.Message) (strin
 		*c.seen = append(*c.seen, msg.Content)
 	}
 	if len(m) > 0 {
-		sys := m[0].Content
+		sys := promptText(m)
 		if strings.Contains(sys, "cohesive summary") {
 			return "Overall prose summary.", nil
 		}

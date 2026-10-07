@@ -14,14 +14,15 @@ package summarize
 // what the terminal done/error emits carry.
 //
 // DO NOT confuse these with pipelineStages in worker.go. That list —
-// "summary", "classify", "keypoints", "embedding" — is the LOG vocabulary
-// used to number stage lines ("stage 2/4 done"), and two of its entries are
-// deliberately different words from the phases here. They are separate
-// vocabularies that happen to describe the same four steps, and merging them
+// "summary", "classify", "indepth", "keypoints", "embedding" — is the LOG
+// vocabulary used to number stage lines ("stage 2/5 done"), and two of its
+// entries are deliberately different words from the phases here. They are
+// separate vocabularies that happen to describe the same five steps, and merging them
 // would change either the log format or the wire contract.
 const (
 	PhaseSummarizing = "summarizing"
 	PhaseClassifying = "classifying"
+	PhaseInDepth     = "indepth"
 	PhaseEmbedding   = "embedding"
 	PhaseKeypoints   = "keypoints"
 )
@@ -32,6 +33,7 @@ const (
 var Phases = []string{
 	PhaseSummarizing,
 	PhaseClassifying,
+	PhaseInDepth,
 	PhaseKeypoints,
 	PhaseEmbedding,
 }

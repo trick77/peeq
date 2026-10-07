@@ -138,6 +138,10 @@ export type Video = {
   // mirror the Task 14 summarization fields added to httpapi.videoDTO —
   // chapters/key_points arrive as arrays (never omitted, just empty).
   summary: string;
+  // in_depth is the in-depth summary (inDepth.ts reads its format). Only the
+  // single-video GET carries it; absent when the video has none, which hides
+  // the card.
+  in_depth?: string;
   chapters: Chapter[];
   key_points: KeyPoint[];
   summary_status: SummaryStatus;

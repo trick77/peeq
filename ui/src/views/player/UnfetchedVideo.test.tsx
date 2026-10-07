@@ -51,6 +51,30 @@ describe("UnfetchedVideo", () => {
     expect(screen.getByRole("button", { name: /Ignore/ })).toBeTruthy();
   });
 
+  it("expands the in-depth text in place, and the next video starts shut", async () => {
+    const deep = "Lead.\n\n### Fuse plugs fail on purpose [3:10]\n\nBody.";
+    const { rerender } = render(
+      <UnfetchedVideo video={video({ in_depth: deep })} />,
+    );
+    expect(screen.queryByText("Lead.")).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /Read in depth/ }),
+    );
+    expect(screen.getByText("Lead.")).toBeTruthy();
+    // No media to seek: the stamp is text.
+    expect(screen.queryByRole("button", { name: "3:10" })).toBeNull();
+    expect(screen.getByRole("button", { name: /Hide in depth/ })).toBeTruthy();
+
+    rerender(<UnfetchedVideo video={video({ id: "v2", in_depth: deep })} />);
+    expect(screen.queryByText("Lead.")).toBeNull();
+  });
+
+  it("offers no in-depth button when the video has none", () => {
+    render(<UnfetchedVideo video={video()} />);
+    expect(screen.queryByRole("button", { name: /in depth/i })).toBeNull();
+  });
+
   // There is no media, so nothing on this page may imply there is. A <video>
   // element here would try to load a stream that cannot exist.
   it("renders no media element", () => {

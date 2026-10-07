@@ -25,21 +25,23 @@ export function formatDuration(totalSeconds: number | undefined): string {
   return `${minutes}:${pad(seconds)}`;
 }
 
-// The summarize worker runs four stages in order (summarize → classify → embed
-// → key points), emitting a live phase for each on the "summary" SSE event.
+// The summarize worker runs five stages in order (summarize → classify → in
+// depth → key points → embed), emitting a live phase for each on the "summary"
+// SSE event.
 // SUMMARY_PHASES maps each phase string to its display label and 1-based step,
-// so the Queue can render "Key points 4/4" with a matching progress meter.
+// so the Queue can render "Key points 4/5" with a matching progress meter.
 // Anything unrecognised (or absent, before the first event) reads as the first
 // stage, "Summarizing".
 //
 // The phase strings themselves come from SUMMARY_PHASE_NAMES, which src/
 // wireenums.test.ts holds to summarize.Phases in Go — order included, which is
-// exactly what the "N/4" step depends on. Only the LABELS live here, as a total
+// exactly what the "N/5" step depends on. Only the LABELS live here, as a total
 // Record, so a renamed phase in Go is a compile error rather than a meter that
 // silently falls back to step 1.
 const PHASE_LABELS: Record<SummaryPhase, string> = {
   summarizing: "Summarizing",
   classifying: "Classifying",
+  indepth: "In depth",
   embedding: "Embedding",
   keypoints: "Key points",
 };

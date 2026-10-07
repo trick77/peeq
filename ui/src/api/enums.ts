@@ -81,6 +81,7 @@ export type CookieStatus = (typeof COOKIE_STATUSES)[number];
 export const SUMMARY_PHASE_NAMES = [
   "summarizing",
   "classifying",
+  "indepth",
   "keypoints",
   "embedding",
 ] as const;

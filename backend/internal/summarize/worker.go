@@ -223,14 +223,14 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 
 	// The pipeline is resumable: each artifact is saved the moment it is
 	// produced, and a retry skips whatever a prior attempt already stored. So a
-	// failure in the fragile key-points step (step 3) never discards the summary
+	// failure in the fragile key-points step (step 4) never discards the summary
 	// or embeddings, and only that step re-runs.
 
 	// Step 1 — prose summary. Persist on its own; skip if already saved.
 	summary := video.Summary
 	if summary == "" {
 		sctx, done := run.step("summary")
-		s, serr := w.d.Summarizer.SummarizeText(sctx, forSummary.Transcript)
+		s, serr := w.d.Summarizer.SummarizeVideo(sctx, video.Title, int(video.DurationSeconds), forSummary)
 		if serr != nil {
 			return true, w.failJob(ctx, job, video, run, serr.Error())
 		}
@@ -276,6 +276,10 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		if err := w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryDone, ""); err != nil {
 			return true, w.failJob(ctx, job, video, run, err.Error())
 		}
+		// The in-depth text is the one investment an inbox read does make:
+		// the Inbox page offers it to settle a maybe the short summary left
+		// open. Best-effort, as on the full path below.
+		w.inDepthStep(video, run, forSummary.Cues)
 		outcome := "done_inbox"
 		if video.ChannelKeepReads {
 			// No chapters: an inbox read never runs the key-points step that
@@ -347,9 +351,15 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	if video.SummaryStatus != videos.SummaryDone {
 		_ = w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryDone, "")
 	}
+
+	// Step 3 — the in-depth summary (best-effort). Right after the summary, so
+	// its transcript prefill is still in the provider's prompt cache (prefix.go).
+	// Its own emit carries "done", so the open Player still refetches the
+	// summary the moment it is saved.
+	w.inDepthStep(video, run, forSummary.Cues)
 	w.emit(video.ID, videos.SummaryDone, PhaseKeypoints)
 
-	// Step 3 — key points (and chapters when yt-dlp didn't supply them). The
+	// Step 4 — key points (and chapters when yt-dlp didn't supply them). The
 	// fragile call. It now runs BEFORE embedding rather than last, because the
 	// chapters it writes are what chapter chunks are built from; embedding first
 	// would index every video as though it had no chapters.
@@ -411,7 +421,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	}
 	done("chapters", len(chapters), "key_points", len(keyPoints))
 
-	// Step 4 — embeddings, last so the index is built from the finished
+	// Step 5 — embeddings, last so the index is built from the finished
 	// analysis.
 	//
 	// Unconditional, and it has to be: the only route here is a successful
@@ -582,4 +592,36 @@ func toRagChapters(chapters []Chapter) []rag.Chapter {
 		out = append(out, rag.Chapter{TS: c.TS, Title: c.Title})
 	}
 	return out
+}
+
+// inDepthStep writes the in-depth summary unless one is already stored, which
+// is what makes a retried job, or the job a download queues after an inbox
+// read, skip it.
+//
+// Best-effort, like classify: a failure is logged and the job carries on. The
+// text is an extra on top of the analysis, and requeuing on it would hold back
+// key points and the index — the core of the video — on the one step the
+// video can do without. A video whose call failed simply has no card; a later
+// re-analysis writes one.
+func (w *Worker) inDepthStep(video *videos.Video, run *analysisRun, cues []subtitles.Cue) {
+	have, err := w.d.Videos.InDepth(video.ID)
+	if err != nil {
+		w.d.Logger.Warn("summarize worker: read in-depth summary failed", append(run.ident(), "err", err)...)
+		return
+	}
+	if have != "" {
+		run.skipped("indepth", "already stored")
+		return
+	}
+	w.emit(video.ID, videos.SummaryDone, PhaseInDepth)
+	ictx, done := run.step("indepth")
+	text, err := w.d.Summarizer.InDepth(ictx, video.Title, int(video.DurationSeconds), cues)
+	if err == nil {
+		err = w.d.Videos.SetInDepth(video.ID, text)
+	}
+	if err != nil {
+		w.d.Logger.Warn("summarize worker: in-depth failed", append(run.ident(), "duration_ms", run.stepElapsedMs(), "err", err)...)
+		return
+	}
+	done("words", len(strings.Fields(text)))
 }

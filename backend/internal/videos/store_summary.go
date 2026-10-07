@@ -47,17 +47,28 @@ func (s *Store) SetSummary(id, summary, chaptersJSON, keyPointsJSON string) erro
 	return nil
 }
 
-// ClearSummary wipes a video's stored analysis — prose summary, chapters and
-// key points — leaving summary_status alone so the caller decides the resulting
-// state. It is the counterpart of SetSummary for two cases: re-analysis that
-// found nothing to summarize, and a user-triggered re-summarize. The worker's
-// pipeline is resumable and skips the summary step when summary <> ”, so
-// without this a redo would silently keep the old text.
+// ClearSummary wipes a video's stored analysis — prose summary, in-depth
+// summary, chapters and key points — leaving summary_status alone so the caller
+// decides the resulting state. It is the counterpart of SetSummary for two
+// cases: re-analysis that found nothing to summarize, and a user-triggered
+// re-summarize. The worker's pipeline is resumable and skips the summary step
+// when summary <> ”, so without this a redo would silently keep the old text.
 func (s *Store) ClearSummary(id string) error {
-	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET summary='', chapters='', key_points='', summary_error='' WHERE id=?`, id)
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("clear video %s summary: begin: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE videos SET summary='', chapters='', key_points='', summary_error='' WHERE id=?`, id); err != nil {
 		return fmt.Errorf("clear video %s summary: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, deleteInDepthSQL, id); err != nil {
+		return fmt.Errorf("clear video %s in-depth summary: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("clear video %s summary: commit: %w", id, err)
 	}
 	return nil
 }
@@ -66,11 +77,27 @@ func (s *Store) ClearSummary(id string) error {
 // and status untouched, so the resumable summarize worker can save it the
 // moment it is produced — before the fragile key-points step — instead of
 // discarding it if a later step fails. Clears any prior summary error.
+//
+// It also drops the in-depth summary, in the same transaction: that text was
+// written from the analysis this summary replaces, and the worker's in-depth
+// step skips while a row exists, so a survivor would sit next to the new
+// summary for good.
 func (s *Store) SetSummaryText(id, summary string) error {
-	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET summary=?, summary_error='' WHERE id=?`, summary, id)
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("set video %s summary text: begin: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE videos SET summary=?, summary_error='' WHERE id=?`, summary, id); err != nil {
 		return fmt.Errorf("set video %s summary text: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, deleteInDepthSQL, id); err != nil {
+		return fmt.Errorf("set video %s summary text: drop in-depth summary: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set video %s summary text: commit: %w", id, err)
 	}
 	return nil
 }
@@ -162,6 +189,9 @@ UPDATE videos
 		return fmt.Errorf("reset video %s for reprocess: rows affected: %w", id, err)
 	} else if n == 0 {
 		return fmt.Errorf("reset video %s for reprocess: %w", id, ErrNotFound)
+	}
+	if _, err := x.ExecContext(ctx, deleteInDepthSQL, id); err != nil {
+		return fmt.Errorf("reset video %s for reprocess: in-depth summary: %w", id, err)
 	}
 	return nil
 }

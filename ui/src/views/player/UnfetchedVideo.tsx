@@ -10,6 +10,7 @@ import {
 import { pendingThumbnailUrl } from "../../api/videos";
 import { subtitlesUrl } from "../../api/search";
 import { TranscriptCard } from "../../components/TranscriptCard";
+import { InDepthBody } from "./InDepthCard";
 import { transcriptFilenameBase } from "../../vtt";
 import type { Video } from "../../api/types";
 import { formatAgo, formatDuration } from "../../format";
@@ -82,6 +83,11 @@ export function UnfetchedVideo({
   // Which video Try again was pressed for, not a bare flag: the stepper swaps
   // the video under this component without remounting it.
   const [retriedID, setRetriedID] = useState<string | null>(null);
+  // Which video's in-depth text is open. An id rather than a flag: the inbox
+  // stepper moves to the next video without unmounting this page, and the
+  // next one should start shut.
+  const [deepFor, setDeepFor] = useState<string | null>(null);
+  const deepOpen = deepFor === video.id;
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
 
@@ -264,7 +270,31 @@ export function UnfetchedVideo({
 
       <div className="unfetched-body">
         {paragraphs.length > 0 ? (
-          paragraphs.map((p, i) => <p key={i}>{p}</p>)
+          <>
+            {paragraphs.map((p, i) => (
+              <p key={i}>{p}</p>
+            ))}
+            {/* The longer reading, for the maybe 190 words left open. It
+                expands in place at this page's reading size rather than
+                leaving the page that holds Download and Ignore. */}
+            {video.in_depth ? (
+              <>
+                <div className="deep-open">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    small
+                    aria-expanded={deepOpen}
+                    onClick={() => setDeepFor(deepOpen ? null : video.id)}
+                  >
+                    <Icon name="bookOpenText" size="15px" />
+                    {deepOpen ? "Hide in depth" : "Read in depth"}
+                  </Button>
+                </div>
+                {deepOpen ? <InDepthBody text={video.in_depth} /> : null}
+              </>
+            ) : null}
+          </>
         ) : video.summary_status === "no_transcript" ? (
           // Deliberately not phrased as captions: the same status covers "there
           // are none" and "they turned out to be music", which is the wording

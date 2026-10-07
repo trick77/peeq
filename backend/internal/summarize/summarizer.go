@@ -313,6 +313,39 @@ func (s *Summarizer) SummarizeText(ctx context.Context, transcript string) (stri
 	return finalizeSummary(summary, "reduce")
 }
 
+// summaryTask is wholeVideoSystemPrompt's ask, rephrased as the task after the
+// shared video prefix (prefix.go). "or timestamps" is new because the prefix's
+// cue index carries them and the plain transcript did not.
+const summaryTask = "Write a single cohesive summary of this video, at most 2 paragraphs and at most 190 words total. " +
+	"Lead with what the video is about, then its main claims or moments. Be concrete and drop tangents; do not list every topic mentioned. " +
+	"Output only the summary prose, with no preamble, headings, labels or timestamps."
+
+// SummarizeVideo is the worker's summary call. A video inside the chunk budget
+// is one call opening with the shared video prefix, which the in-depth call
+// sends again moments later and so reads from the prompt cache instead of
+// paying for the transcript twice. Past the budget the prefix is moot — the
+// in-depth summary maps too — and this is SummarizeText's coarse map-reduce
+// over the plain transcript, unchanged.
+//
+// Same guards as SummarizeText's single pass, for the same reasons: default
+// reasoning, the answer cap, FailOnEarlyFinish and the empty-result check.
+func (s *Summarizer) SummarizeVideo(ctx context.Context, title string, durationSeconds int, p subtitles.Parsed) (string, error) {
+	chunks := s.videoChunks(p.Cues)
+	if len(chunks) != 1 {
+		return s.SummarizeText(ctx, p.Transcript)
+	}
+	summary, err := s.c.Complete(
+		llm.WithMaxAnswerTokens(llm.FailOnEarlyFinish(ctx), summaryMaxAnswerTokens),
+		[]llm.Message{
+			{Role: "system", Content: videoSystemPrompt},
+			{Role: "user", Content: videoPrefix(title, durationSeconds, chunks[0].Text) + summaryTask},
+		})
+	if err != nil {
+		return "", fmt.Errorf("summarize single-pass: %w", err)
+	}
+	return finalizeSummary(summary, "single-pass")
+}
+
 // finalizeSummary trims the model's summary and rejects an empty result. An
 // empty-but-successful completion — a call that spent its whole token budget
 // reasoning and ended on "length", or a filtered answer — must never be

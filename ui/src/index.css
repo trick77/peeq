@@ -2682,20 +2682,25 @@ button.sleeppick.armed {
   .playgrid .hlpanel {
     order: 5;
   }
+  /* Under Highlights, as on the desktop: both are about the key points. */
+  .playgrid .deeppanel {
+    order: 6;
+  }
   /* Above the transcript, as on the desktop: the transcript is a long scroll,
      and in one column anything under it is buried. Never rendered on a phone
      at all (Player.tsx). */
   .playgrid .detailspanel {
-    order: 6;
+    order: 7;
   }
   .playgrid .transcriptpanel {
-    order: 7;
+    order: 8;
   }
   /* .leftcol carried min-width: 0 to stop a long unbroken transcript line
      widening the column; with its box gone, the panels it held carry it. */
   .playgrid .stage-wrap,
   .playgrid .playmeta,
   .playgrid .contentspanel,
+  .playgrid .deeppanel,
   .playgrid .transcriptpanel {
     min-width: 0;
   }
@@ -3604,6 +3609,60 @@ button.sleeppick.armed {
    distinction. */
 .card.hlpanel .hd svg {
   color: var(--color-kept);
+}
+
+/* The in-depth summary (InDepthCard.tsx): a lead, then one headed section per
+   key point. Card prose size and the Highlights' stamp size, so the page keeps
+   its type scale. A 72-character measure: the card spans the main column, and
+   prose at its full width is a line too long to track back from. */
+.deep .lead,
+.deep p {
+  margin: 0;
+  max-width: 72ch;
+  font-size: 13.5px;
+  line-height: 1.62;
+  color: var(--color-ink-dim);
+}
+.deep .lead {
+  color: var(--color-ink);
+}
+.deep .lead + .lead {
+  margin-top: 12px;
+}
+.deep section {
+  margin-top: 18px;
+}
+.deep section p + p {
+  margin-top: 10px;
+}
+.deep h4 {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 5px;
+  max-width: 72ch;
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--color-ink);
+  text-wrap: balance;
+}
+/* The section's stamp, in the Highlights' gold. A button when it seeks, plain
+   text on the Inbox page where there is no video. */
+.deep h4 .ts {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--color-kept);
+}
+.deep h4 button.ts {
+  cursor: pointer;
+}
+.deep h4 button.ts:hover {
+  text-decoration: underline;
 }
 
 /* Transcript search + cues */
@@ -6925,6 +6984,26 @@ details.tomb-sect[open] > summary svg {
 }
 .unfetched-body p:last-child {
   margin-bottom: 0;
+}
+/* The in-depth text on this page reads at the page's own size and measure, not
+   the card's, under a rule like the one above the summary. */
+.unfetched-body .deep-open {
+  margin-top: 18px;
+}
+.unfetched-body .deep {
+  margin-top: 26px;
+  padding-top: 22px;
+  border-top: 1px solid var(--color-border-soft);
+}
+.unfetched-body .deep .lead,
+.unfetched-body .deep p,
+.unfetched-body .deep h4 {
+  margin-bottom: 0;
+  max-width: 66ch;
+  font-size: var(--text-body);
+}
+.unfetched-body .deep h4 {
+  margin-bottom: 6px;
 }
 .unfetched-empty {
   display: flex;
