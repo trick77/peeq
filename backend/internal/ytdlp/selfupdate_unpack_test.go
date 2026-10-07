@@ -103,11 +103,12 @@ func TestDownloadUnpackedFrom_installsTree(t *testing.T) {
 	}
 }
 
-// TestDownloadUnpackedFrom_runningTreeSurvivesUpdate: a yt-dlp runs from the
-// real path of its tree and loads modules from it as it goes, so an update
-// must not change or remove the tree a run started in. The update after that
-// may remove it.
-func TestDownloadUnpackedFrom_runningTreeSurvivesUpdate(t *testing.T) {
+// TestDownloadUnpackedFrom_runningTreeSurvivesUpdates: a yt-dlp runs from the
+// real path of its tree and loads modules from it as it goes, so no update
+// may change or remove the tree a run started in, however many follow (the
+// Update button reinstalls even the same version). Only age expires a tree,
+// and never the current or previous one.
+func TestDownloadUnpackedFrom_runningTreeSurvivesUpdates(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "yt-dlp_linux")
 	ctx := context.Background()
@@ -119,21 +120,27 @@ func TestDownloadUnpackedFrom_runningTreeSurvivesUpdate(t *testing.T) {
 	}
 
 	install("2099.01.01")
-	install("2099.02.02")
 	running, err := filepath.EvalSymlinks(dest) // where a run started now lives
 	if err != nil {
 		t.Fatal(err)
 	}
-	install("2099.03.03")
+	install("2099.01.01")
+	install("2099.01.01")
 
-	if got, _ := os.ReadFile(filepath.Join(running, "_internal", "lib.so")); string(got) != "lib-2099.02.02" {
-		t.Fatalf("the running tree changed under its run: %q", got)
+	if got, _ := os.ReadFile(filepath.Join(running, "_internal", "lib.so")); string(got) != "lib-2099.01.01" {
+		t.Fatalf("the running tree changed or went away under its run: %q", got)
 	}
-	if got, _ := os.ReadFile(filepath.Join(dest, "_internal", "lib.so")); string(got) != "lib-2099.03.03" {
+
+	prev := treeKeep
+	treeKeep = 0
+	t.Cleanup(func() { treeKeep = prev })
+	install("2099.02.02")
+
+	if got, _ := os.ReadFile(filepath.Join(dest, "_internal", "lib.so")); string(got) != "lib-2099.02.02" {
 		t.Fatalf("installed release = %q, want the last one", got)
 	}
 	if l := leftovers(t, dir, "yt-dlp_linux"); len(l) != 2 {
-		t.Fatalf("want the current and the previous tree, got %v", l)
+		t.Fatalf("expired trees not removed: want the current and the previous tree, got %v", l)
 	}
 }
 

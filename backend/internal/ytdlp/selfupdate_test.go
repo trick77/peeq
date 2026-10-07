@@ -2,6 +2,7 @@ package ytdlp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -40,14 +41,14 @@ func TestReleaseFor_linuxIsUnpackedBuild(t *testing.T) {
 		goos, goarch string
 		want         release
 	}{
-		{"linux", "amd64", release{asset: "yt-dlp_linux.zip", install: "yt-dlp_linux", exe: "yt-dlp_linux/yt-dlp_linux"}},
-		{"linux", "arm64", release{asset: "yt-dlp_linux_aarch64.zip", install: "yt-dlp_linux", exe: "yt-dlp_linux/yt-dlp_linux_aarch64"}},
-		{"linux", "arm", release{asset: "yt-dlp_linux_armv7l.zip", install: "yt-dlp_linux", exe: "yt-dlp_linux/yt-dlp_linux_armv7l"}},
+		{"linux", "amd64", release{asset: "yt-dlp_linux.zip", install: "yt-dlp_linux", exe: "yt-dlp_linux"}},
+		{"linux", "arm64", release{asset: "yt-dlp_linux_aarch64.zip", install: "yt-dlp_linux", exe: "yt-dlp_linux_aarch64"}},
+		{"linux", "arm", release{asset: "yt-dlp_linux_armv7l.zip", install: "yt-dlp_linux", exe: "yt-dlp_linux_armv7l"}},
 		// No self-contained build: the plain zipapp, as before.
-		{"linux", "386", release{asset: "yt-dlp", install: "yt-dlp", exe: "yt-dlp"}},
-		{"freebsd", "amd64", release{asset: "yt-dlp", install: "yt-dlp", exe: "yt-dlp"}},
-		{"darwin", "arm64", release{asset: "yt-dlp_macos", install: "yt-dlp_macos", exe: "yt-dlp_macos"}},
-		{"windows", "amd64", release{asset: "yt-dlp.exe", install: "yt-dlp.exe", exe: "yt-dlp.exe"}},
+		{"linux", "386", release{asset: "yt-dlp", install: "yt-dlp"}},
+		{"freebsd", "amd64", release{asset: "yt-dlp", install: "yt-dlp"}},
+		{"darwin", "arm64", release{asset: "yt-dlp_macos", install: "yt-dlp_macos"}},
+		{"windows", "amd64", release{asset: "yt-dlp.exe", install: "yt-dlp.exe"}},
 	}
 	for _, c := range cases {
 		if got := releaseFor(c.goos, c.goarch); got != c.want {
@@ -88,6 +89,19 @@ func TestUpdateLatest_usesInjectedDownloader(t *testing.T) {
 	}
 	if _, err := os.Stat(gotDest); err != nil {
 		t.Fatalf("expected downloaded file to exist: %v", err)
+	}
+}
+
+// TestUpdateLatest_waitingCallerHonoursCtx: an update waiting for another to
+// finish gives up when its request goes away instead of queueing forever.
+func TestUpdateLatest_waitingCallerHonoursCtx(t *testing.T) {
+	updateSlot <- struct{}{} // another update is running
+	t.Cleanup(func() { <-updateSlot })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := UpdateLatest(ctx, t.TempDir()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
 

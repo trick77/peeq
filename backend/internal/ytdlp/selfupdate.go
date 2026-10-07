@@ -8,11 +8,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 )
 
 // Version runs `<bin> --version` and returns the trimmed version string
@@ -47,12 +45,13 @@ type release struct {
 	// install is the entry the asset becomes in the install directory: the
 	// binary itself, or, for a .zip asset, the directory it unpacks into.
 	install string
-	// exe is the executable, relative to the install directory.
+	// exe is the executable inside the unpacked directory; empty for a single
+	// binary, which is install itself.
 	exe string
 }
 
 // unpacked reports whether the asset is a zip of a self-contained directory.
-func (r release) unpacked() bool { return strings.HasSuffix(r.asset, ".zip") }
+func (r release) unpacked() bool { return r.exe != "" }
 
 // releaseFor returns the release a platform runs.
 //
@@ -69,7 +68,7 @@ func (r release) unpacked() bool { return strings.HasSuffix(r.asset, ".zip") }
 //
 // Other platforms keep the asset they always ran.
 func releaseFor(goos, goarch string) release {
-	single := func(name string) release { return release{asset: name, install: name, exe: name} }
+	single := func(name string) release { return release{asset: name, install: name} }
 	switch goos {
 	case "windows":
 		return single("yt-dlp.exe")
@@ -79,7 +78,7 @@ func releaseFor(goos, goarch string) release {
 		suffix := map[string]string{"amd64": "", "arm64": "_aarch64", "arm": "_armv7l"}
 		if s, ok := suffix[goarch]; ok {
 			exe := "yt-dlp_linux" + s
-			return release{asset: exe + ".zip", install: "yt-dlp_linux", exe: "yt-dlp_linux/" + exe}
+			return release{asset: exe + ".zip", install: "yt-dlp_linux", exe: exe}
 		}
 	}
 	return single("yt-dlp")
@@ -88,7 +87,8 @@ func releaseFor(goos, goarch string) release {
 // InstalledBin is the path the self-update installs this platform's yt-dlp
 // executable at inside dir. resolveYtdlpBin (cmd/peeq) runs it when present.
 func InstalledBin(dir string) string {
-	return filepath.Join(dir, filepath.FromSlash(releaseFor(runtime.GOOS, runtime.GOARCH).exe))
+	r := releaseFor(runtime.GOOS, runtime.GOARCH)
+	return filepath.Join(dir, r.install, r.exe)
 }
 
 const latestReleaseBaseURL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/"
@@ -101,22 +101,19 @@ const latestReleaseBaseURL = "https://github.com/yt-dlp/yt-dlp/releases/latest/d
 func downloadLatestRelease(ctx context.Context, destPath string) (string, error) {
 	r := releaseFor(runtime.GOOS, runtime.GOARCH)
 	if r.unpacked() {
-		return downloadUnpackedFrom(ctx, latestReleaseBaseURL+r.asset, destPath, path.Base(r.exe))
+		return downloadUnpackedFrom(ctx, latestReleaseBaseURL+r.asset, destPath, r.exe)
 	}
 	return downloadReleaseFrom(ctx, latestReleaseBaseURL+r.asset, destPath)
 }
 
-// downloadReleaseFrom downloads the yt-dlp binary at url and atomically
-// installs it at destPath, as described on downloadLatestRelease. Factored
-// out from downloadLatestRelease so tests can point it at an
-// httptest.Server instead of the real GitHub releases URL, without ever
-// touching the network.
-func downloadReleaseFrom(ctx context.Context, url, destPath string) (string, error) {
+// fetchToTemp downloads url into a new temp file in dir and returns its path;
+// the caller removes it. On any error nothing is left behind. dir is the
+// install directory, so a later rename out of it stays on one filesystem.
+func fetchToTemp(ctx context.Context, url, dir string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("ytdlp: build download request: %w", err)
 	}
-
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("ytdlp: download latest release: %w", err)
@@ -126,44 +123,49 @@ func downloadReleaseFrom(ctx context.Context, url, destPath string) (string, err
 		return "", fmt.Errorf("ytdlp: download latest release: unexpected status %s", resp.Status)
 	}
 
-	destDir := filepath.Dir(destPath)
-	tmp, err := os.CreateTemp(destDir, ".yt-dlp-download-*")
+	tmp, err := os.CreateTemp(dir, ".yt-dlp-download-*")
 	if err != nil {
 		return "", fmt.Errorf("ytdlp: create temp download file: %w", err)
 	}
-	tmpPath := tmp.Name()
-	// Always clean up the temp file on any early return; once the rename
-	// below succeeds this is a no-op (the file no longer exists at tmpPath).
+	written, err := io.Copy(tmp, resp.Body)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && resp.ContentLength >= 0 && written != resp.ContentLength {
+		// The body was truncated (e.g. the connection dropped mid-download)
+		// even though io.Copy itself didn't error.
+		err = fmt.Errorf("ytdlp: download incomplete: wrote %d bytes, expected %d", written, resp.ContentLength)
+	}
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+		return "", fmt.Errorf("ytdlp: write download: %w", err)
+	}
+	return tmp.Name(), nil
+}
+
+// downloadReleaseFrom downloads the yt-dlp binary at url and atomically
+// installs it at destPath.
+//
+// The download is written to a temp file in the same directory as destPath
+// (so the final rename is on the same filesystem and therefore atomic),
+// verified to have downloaded in full, made executable, and only then renamed
+// over destPath. If anything fails along the way the temp file is removed and
+// destPath (any pre-existing binary) is left completely untouched, so a failed
+// self-update never leaves a truncated or corrupt binary in place.
+func downloadReleaseFrom(ctx context.Context, url, destPath string) (string, error) {
+	tmpPath, err := fetchToTemp(ctx, url, filepath.Dir(destPath))
+	if err != nil {
+		return "", err
+	}
+	// A no-op once the rename below succeeds.
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	written, err := io.Copy(tmp, resp.Body)
-	if err != nil {
-		_ = tmp.Close()
-		return "", fmt.Errorf("ytdlp: write downloaded binary: %w", err)
-	}
-	// A Content-Length mismatch means the body was truncated (e.g. the
-	// connection dropped mid-download) even though io.Copy itself didn't
-	// error. Catch that before it ever reaches destPath.
-	if resp.ContentLength >= 0 && written != resp.ContentLength {
-		_ = tmp.Close()
-		return "", fmt.Errorf("ytdlp: download incomplete: wrote %d bytes, expected %d", written, resp.ContentLength)
-	}
-
-	if err := tmp.Chmod(0o755); err != nil {
-		_ = tmp.Close()
+	if err := os.Chmod(tmpPath, 0o755); err != nil { //nolint:gosec // an executable must be executable
 		return "", fmt.Errorf("ytdlp: chmod downloaded binary: %w", err)
 	}
-	if err := tmp.Close(); err != nil {
-		return "", fmt.Errorf("ytdlp: close downloaded binary: %w", err)
-	}
-
-	// os.Rename is atomic within the same filesystem: destPath either has
-	// the old binary or the fully-downloaded new one, never a partial
-	// write, regardless of when a crash or failure occurs.
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		return "", fmt.Errorf("ytdlp: install downloaded binary: %w", err)
 	}
-
 	return Version(ctx, destPath)
 }
 
@@ -173,14 +175,19 @@ func downloadReleaseFrom(ctx context.Context, url, destPath string) (string, err
 // writes a placeholder file and reports a version without any network
 // access.
 //
-// Updates are serialized: two Update clicks must not interleave their swaps,
-// nor let the second remove the tree the first just set aside.
+// Updates are serialized: two Update clicks must not interleave their swaps.
+// A caller waiting its turn gives up when its ctx ends.
 //
 // Once an unpacked build is installed, a plain dir/yt-dlp an older peeq
 // installed is removed: it is a python zipapp nothing resolves any more.
 func UpdateLatest(ctx context.Context, dir string) (string, error) {
-	updateMu.Lock()
-	defer updateMu.Unlock()
+	select {
+	case updateSlot <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	defer func() { <-updateSlot }()
+
 	r := releaseFor(runtime.GOOS, runtime.GOARCH)
 	version, err := downloader(ctx, filepath.Join(dir, r.install))
 	if err != nil {
@@ -192,4 +199,5 @@ func UpdateLatest(ctx context.Context, dir string) (string, error) {
 	return version, nil
 }
 
-var updateMu sync.Mutex
+// updateSlot holds one token while an update runs.
+var updateSlot = make(chan struct{}, 1)

@@ -6,10 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -21,6 +19,11 @@ const maxUnpackedBytes = 1 << 30
 // treePrefix names one unpacked release beside the install link.
 const treePrefix = ".yt-dlp-tree-"
 
+// treeKeep is how long a replaced tree is kept. A download has no total time
+// cap (only an inactivity watchdog), so how many updates it can outlive is
+// unbounded; how long it runs is not. A var so tests can expire trees.
+var treeKeep = 24 * time.Hour
+
 // downloadUnpackedFrom downloads the zipped self-contained build at url and
 // installs it so that destDir/exe runs it. It returns the version the new
 // executable reports.
@@ -29,48 +32,25 @@ const treePrefix = ".yt-dlp-tree-"
 // a symlink to the current one. The new tree is complete and has answered
 // --version before the link moves, and the link moves by renaming a new link
 // over it, so a caller resolving the binary sees the old release or the new
-// one, never neither. Any failure before that removes the new tree and leaves
-// the install as it was.
+// one, never neither. Any failure leaves the install as it was and removes
+// the new tree.
 //
 // A tree is never changed after it is installed, and that is what keeps a
 // running yt-dlp safe: PyInstaller resolves the real path of its executable at
 // start and loads modules from that tree for as long as it runs, so a long
-// download carries on from the tree it started in. The tree the link just left
-// is therefore kept; older ones are removed, since no run outlives two updates
-// in practice.
+// download carries on from the tree it started in. A replaced tree is
+// therefore only removed once it is older than treeKeep; the current and the
+// previous one are always kept.
 func downloadUnpackedFrom(ctx context.Context, url, destDir, exe string) (string, error) {
 	parent := filepath.Dir(destDir)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	archivePath, err := fetchToTemp(ctx, url, parent)
 	if err != nil {
-		return "", fmt.Errorf("ytdlp: build download request: %w", err)
+		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("ytdlp: download latest release: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("ytdlp: download latest release: unexpected status %s", resp.Status)
-	}
-
-	archive, err := os.CreateTemp(parent, ".yt-dlp-download-*")
-	if err != nil {
-		return "", fmt.Errorf("ytdlp: create temp download file: %w", err)
-	}
-	archivePath := archive.Name()
 	defer func() { _ = os.Remove(archivePath) }()
-	written, err := io.Copy(archive, resp.Body)
-	if cerr := archive.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return "", fmt.Errorf("ytdlp: write downloaded archive: %w", err)
-	}
-	if resp.ContentLength >= 0 && written != resp.ContentLength {
-		return "", fmt.Errorf("ytdlp: download incomplete: wrote %d bytes, expected %d", written, resp.ContentLength)
-	}
 
+	// MkdirTemp makes the tree 0700: only peeq's own user ever runs it.
 	tree, err := os.MkdirTemp(parent, treePrefix+"*")
 	if err != nil {
 		return "", fmt.Errorf("ytdlp: create unpack dir: %w", err)
@@ -81,7 +61,6 @@ func downloadUnpackedFrom(ctx context.Context, url, destDir, exe string) (string
 			_ = os.RemoveAll(tree)
 		}
 	}()
-	// MkdirTemp makes the tree 0700: only peeq's own user ever runs it.
 	if err := unzipInto(archivePath, tree); err != nil {
 		return "", err
 	}
@@ -99,58 +78,78 @@ func downloadUnpackedFrom(ctx context.Context, url, destDir, exe string) (string
 		return "", err
 	}
 	installed = true
-	removeTreesExcept(parent, tree, previous)
+	removeStaleTrees(parent, time.Now(), tree, previous)
 	return version, nil
 }
 
 // swapLink points the symlink at link to tree and returns the tree it pointed
-// to before ("" if none). A plain directory found at link is moved into a tree
-// of its own first, so it is kept like any previous release.
+// to before ("" if none). A plain directory found at link is first moved into
+// a tree of its own, so it is kept like any previous release, and moved back
+// if the link cannot be made.
 func swapLink(link, tree string) (string, error) {
 	parent := filepath.Dir(link)
 	var previous string
+	movedPlain := false
 	switch info, err := os.Lstat(link); {
 	case err == nil && info.Mode()&os.ModeSymlink != 0:
-		if target, err := os.Readlink(link); err == nil {
-			previous = filepath.Join(parent, filepath.Base(target))
+		// Unreadable means the tree in use is unknown, and removing trees
+		// afterwards could take the one a run is executing from.
+		target, err := os.Readlink(link)
+		if err != nil {
+			return "", fmt.Errorf("ytdlp: read installed release link: %w", err)
 		}
+		previous = filepath.Join(parent, filepath.Base(target))
 	case err == nil:
 		previous = filepath.Join(parent, fmt.Sprintf("%s%d", treePrefix, time.Now().UnixNano()))
 		if err := os.Rename(link, previous); err != nil {
 			return "", fmt.Errorf("ytdlp: move installed release aside: %w", err)
 		}
+		movedPlain = true
 	case !errors.Is(err, os.ErrNotExist):
 		return "", fmt.Errorf("ytdlp: inspect installed release: %w", err)
+	}
+	restore := func() {
+		if movedPlain {
+			_ = os.Rename(previous, link)
+		}
 	}
 
 	next := filepath.Join(parent, fmt.Sprintf(".yt-dlp-link-%d", time.Now().UnixNano()))
 	// Relative, so the link keeps working wherever the volume is mounted.
 	if err := os.Symlink(filepath.Base(tree), next); err != nil {
+		restore()
 		return "", fmt.Errorf("ytdlp: link downloaded release: %w", err)
 	}
 	if err := os.Rename(next, link); err != nil {
 		_ = os.Remove(next)
+		restore()
 		return "", fmt.Errorf("ytdlp: install downloaded release: %w", err)
 	}
 	return previous, nil
 }
 
-// removeTreesExcept deletes every unpacked release in parent other than keep.
-// Best-effort: one that cannot be removed now is tried again by the next
-// update.
-func removeTreesExcept(parent string, keep ...string) {
+// removeStaleTrees deletes the unpacked releases in parent that are older
+// than treeKeep, other than keep. Best-effort: one that cannot be removed now
+// is tried again by the next update.
+func removeStaleTrees(parent string, now time.Time, keep ...string) {
 	matches, _ := filepath.Glob(filepath.Join(parent, treePrefix+"*"))
 	for _, m := range matches {
-		kept := false
-		for _, k := range keep {
-			if k != "" && filepath.Clean(k) == filepath.Clean(m) {
-				kept = true
-			}
+		if isAny(m, keep) {
+			continue
 		}
-		if !kept && strings.HasPrefix(filepath.Base(m), treePrefix) {
+		if info, err := os.Stat(m); err == nil && now.Sub(info.ModTime()) >= treeKeep {
 			_ = os.RemoveAll(m)
 		}
 	}
+}
+
+func isAny(p string, set []string) bool {
+	for _, s := range set {
+		if s != "" && filepath.Clean(s) == filepath.Clean(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // unzipInto unpacks the archive at src into the empty directory dst. Only
