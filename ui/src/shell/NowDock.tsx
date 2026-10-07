@@ -3,7 +3,7 @@ import type { MouseEvent } from "react";
 import { Icon } from "../icons";
 import { AUTO_SKIP } from "../components/Scrubber";
 import { formatDuration } from "../format";
-import { hostedVideo, park, useParkedAt } from "../videoHost";
+import { hostedVideo, park, togglePlayback, useParkedAt } from "../videoHost";
 import type { NowPlaying } from "../nowPlaying";
 
 // SKIP_BACK / SKIP_FORWARD are deliberately asymmetric. Back is for "what did
@@ -106,11 +106,7 @@ function NowDockImpl({
 
   const toggle = useCallback(() => {
     const el = hostedVideo();
-    if (!el) return;
-    // play() rejects under the autoplay policy and returns nothing at all
-    // under jsdom, and neither is worth surfacing from a transport button.
-    if (el.paused) void el.play()?.catch(() => {});
-    else el.pause();
+    if (el) togglePlayback(el);
   }, []);
 
   // The element's own duration when it has one, the stored metadata until

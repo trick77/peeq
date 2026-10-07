@@ -24,6 +24,7 @@ import { Share } from "./views/Share";
 import { useRoute } from "./route";
 import { TabBar } from "./shell/TabBar";
 import { NowDock } from "./shell/NowDock";
+import { useSpaceToPlay } from "./shell/useSpaceToPlay";
 import { MOBILE_QUERY, useMediaQuery } from "./shell/useMediaQuery";
 import { hostedVideo } from "./videoHost";
 import type { NowPlaying } from "./nowPlaying";
@@ -328,6 +329,9 @@ export function App() {
   // cost an embedding, a keyword ladder and a model call. Opening two of the
   // videos it found used to buy all of that twice. See searchState.ts.
   const search = useSearchState();
+  // Space plays and pauses whatever is on screen, on the player page or in the
+  // dock — so it lives here, above both.
+  useSpaceToPlay();
   // The rail's width, remembered across reloads. Two flags rather than one:
   // sidebarCollapsed is what the user chose on a desktop and the only thing
   // written to storage, railCollapsed is what the shell actually renders. On a
