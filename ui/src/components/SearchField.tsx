@@ -1,6 +1,7 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import { Icon } from "../icons";
 import { controlClass } from "../ui";
+import { overlayOwnsKeys } from "../shortcuts";
 
 // SearchField — the one search box for a list page.
 //
@@ -53,15 +54,8 @@ export function SearchField({
       // CategoryPicker on their first item — which the tag check above waves
       // through. Without this, "/" during a delete confirmation pulls focus to
       // a field behind the scrim and leaves the still-open dialog with nothing
-      // focused inside it.
-      //
-      // The modal case is asked of the document, not of the event target: a
-      // scrim click can leave focus on <body>, which no ancestor lookup from
-      // the target would catch. Popovers are asked of the target instead —
-      // they are not modal, so one being open somewhere on the page is no
-      // reason to ignore a keystroke aimed outside it.
-      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
-      if (target?.closest('[role="menu"],[role="dialog"]')) return;
+      // focused inside it. See overlayOwnsKeys for how each kind is found.
+      if (overlayOwnsKeys(target)) return;
       // Without this the slash lands in the field we just focused.
       e.preventDefault();
       ref.current?.focus();

@@ -119,6 +119,22 @@ export function hostedVideo(): HTMLVideoElement | null {
   return host?.querySelector("video") ?? null;
 }
 
+// visibleVideo is the <video> only while it is on screen — on the stage or in
+// the dock. A video stopped from the dock can linger in limbo, and a keyboard
+// shortcut must not start something nobody can see.
+export function visibleVideo(): HTMLVideoElement | null {
+  return parkedAt ? hostedVideo() : null;
+}
+
+// togglePlayback is the one play/pause every control shares: the dock's button
+// and the Space shortcut. play() rejects under the autoplay policy and returns
+// nothing at all under jsdom, and neither is worth surfacing from a transport
+// control.
+export function togglePlayback(el: HTMLVideoElement) {
+  if (el.paused) void el.play()?.catch(() => {});
+  else el.pause();
+}
+
 // Test-only: drop the module's DOM so one test's host cannot leak into the
 // next. Not called by app code — the host is meant to live as long as the tab.
 export function resetVideoHostForTests() {
