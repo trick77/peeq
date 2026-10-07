@@ -84,3 +84,15 @@ func IsCDNAnswer(err error) bool {
 	var se *FetchStatusError
 	return errors.As(err, &se) || errors.Is(err, ErrUnsupportedContentType)
 }
+
+// IsCDNRefusal reports whether err is the CDN saying this url has no image —
+// a 4xx, or a body that is not an image. Unlike a 5xx or a network failure it
+// will not change on the next ask, so it is the only failure worth
+// remembering.
+func IsCDNRefusal(err error) bool {
+	var se *FetchStatusError
+	if errors.As(err, &se) {
+		return se.StatusCode >= 400 && se.StatusCode < 500
+	}
+	return errors.Is(err, ErrUnsupportedContentType)
+}

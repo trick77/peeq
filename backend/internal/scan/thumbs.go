@@ -177,9 +177,9 @@ func (s *Scheduler) prefetchPendingThumbnail(ctx context.Context, j thumbJob) {
 		return
 	}
 	if err != nil {
-		// Only the CDN saying no is remembered as a failure; a network blip or
-		// timeout may well work on the next ask.
-		failed = media.IsCDNAnswer(err)
+		// Only the CDN saying this url has no image (4xx, non-image body) is
+		// remembered; a 5xx, a network blip or a timeout may work next time.
+		failed = media.IsCDNRefusal(err)
 		s.d.Logger.Warn("scan: prefetch pending thumbnail failed", "video_id", j.videoID, "err", err)
 		return
 	}

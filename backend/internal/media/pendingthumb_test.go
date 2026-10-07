@@ -9,6 +9,22 @@ import (
 	"testing"
 )
 
+// TestIsCDNRefusal: a 4xx or a non-image body is final; a 5xx or a network
+// failure is not, so a brief CDN outage does not lock a poster out.
+func TestIsCDNRefusal(t *testing.T) {
+	cases := map[error]bool{
+		&FetchStatusError{StatusCode: http.StatusNotFound}:           true,
+		ErrUnsupportedContentType:                                    true,
+		&FetchStatusError{StatusCode: http.StatusServiceUnavailable}: false,
+		errors.New("connection reset"):                               false,
+	}
+	for err, want := range cases {
+		if got := IsCDNRefusal(err); got != want {
+			t.Errorf("IsCDNRefusal(%v) = %v, want %v", err, got, want)
+		}
+	}
+}
+
 // jpegHandler writes a minimal valid JPEG response.
 func jpegHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "image/jpeg")
