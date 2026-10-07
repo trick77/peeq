@@ -46,6 +46,23 @@ func TestInDepth_clearedWithTheRestOfTheAnalysis(t *testing.T) {
 	}
 }
 
+// A new summary makes the old in-depth text stale, and the worker skips the
+// step while a row exists — so writing a summary must drop it, whatever path
+// cleared the summary before.
+func TestSetSummaryText_dropsTheInDepthText(t *testing.T) {
+	s := newTestStore(t)
+	seedThumbVideo(t, s, "v1")
+	if err := s.SetInDepth("v1", "old"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := s.SetSummaryText("v1", "a new summary"); err != nil {
+		t.Fatalf("set summary: %v", err)
+	}
+	if got, err := s.InDepth("v1"); err != nil || got != "" {
+		t.Fatalf("after a new summary: %q, %v; want empty", got, err)
+	}
+}
+
 func TestDeleteVideo_cascadesToInDepth(t *testing.T) {
 	s := newTestStore(t)
 	seedThumbVideo(t, s, "v1")

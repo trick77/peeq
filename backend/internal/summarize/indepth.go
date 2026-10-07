@@ -27,7 +27,7 @@ const inDepthMaxAnswerTokens = 4096
 // walk the video in order, so a second chronological list would repeat them.
 const inDepthRules = `STRUCTURE
 1. Open with one paragraph of 2-3 sentences: the question the video takes on and the answer it gives. State the answer itself, never that there is one.
-2. Then 3 to 7 sections, one per key point. A key point is a claim, finding, method or recommendation the video spends real time on. Order them by how much the video's conclusion depends on them, not by when they appear. Merge points that make the same claim. Drop intros, outros, asides, jokes and requests to like or subscribe.
+2. Then one section per key point, at most 7. Most videos have 3 to 7; a short or thin one may have one or two. A key point is a claim, finding, method or recommendation the video spends real time on. Order them by how much the video's conclusion depends on them, not by when they appear. Merge points that make the same claim. Drop intros, outros, asides, jokes and requests to like or subscribe.
 3. Each section starts on its own line with "### ", then the point as a plain statement of at most 8 words, then a space and the timestamp where the point is first made, in square brackets exactly as the input writes it, for example [12:34]. Then a blank line and one paragraph of 60 to 140 words.
 4. Each paragraph gives the claim, then what it rests on: the figures, names, examples, steps, comparisons or measurements the video gives, with their units. Then any condition, limit or caveat the speaker attaches. When the reasoning is the point, give its steps in order.
 
@@ -119,12 +119,14 @@ func (s *Summarizer) InDepth(ctx context.Context, title string, durationSeconds 
 }
 
 // inDepthWordTarget scales the length to the video: about 25 words a minute,
-// never under 350 or over 900. An unknown duration gets the middle.
+// never under 150 or over 900. The floor is low on purpose: a two-minute video
+// asked for 350 words gets padded, which the rules forbid. An unknown duration
+// gets the middle.
 func inDepthWordTarget(durationSeconds int) int {
 	if durationSeconds <= 0 {
 		return 600
 	}
-	return min(900, max(350, durationSeconds*25/60))
+	return min(900, max(150, durationSeconds*25/60))
 }
 
 // finalizeInDepth trims the reply and rejects an empty one, for the reason

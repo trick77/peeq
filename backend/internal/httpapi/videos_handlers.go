@@ -322,11 +322,12 @@ func (s *server) handleGetVideo(w http.ResponseWriter, r *http.Request) {
 	dto := toVideoDTO(v)
 	// Here and not in toVideoDTO: the text lives in its own table (0035), and
 	// the library list builds that DTO once per card for a field no card shows.
+	// A failed read costs the page one collapsed card, not the page: logged,
+	// and the field stays empty.
 	if v.SummaryStatus == videos.SummaryDone {
 		text, err := s.videos.InDepth(v.ID)
 		if err != nil {
-			serverError(w, r, err, "get video failed")
-			return
+			slog.WarnContext(r.Context(), "read in-depth summary failed", "video_id", v.ID, "err", err)
 		}
 		dto.InDepth = text
 	}

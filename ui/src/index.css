@@ -2682,13 +2682,13 @@ button.sleeppick.armed {
   .playgrid .hlpanel {
     order: 5;
   }
-  /* Above the transcript, as on the desktop: the transcript is a long scroll,
-     and in one column anything under it is buried. Never rendered on a phone
-     at all (Player.tsx). */
   /* Under Highlights, as on the desktop: both are about the key points. */
   .playgrid .deeppanel {
     order: 6;
   }
+  /* Above the transcript, as on the desktop: the transcript is a long scroll,
+     and in one column anything under it is buried. Never rendered on a phone
+     at all (Player.tsx). */
   .playgrid .detailspanel {
     order: 7;
   }

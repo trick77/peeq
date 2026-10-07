@@ -77,11 +77,27 @@ func (s *Store) ClearSummary(id string) error {
 // and status untouched, so the resumable summarize worker can save it the
 // moment it is produced — before the fragile key-points step — instead of
 // discarding it if a later step fails. Clears any prior summary error.
+//
+// It also drops the in-depth summary, in the same transaction: that text was
+// written from the analysis this summary replaces, and the worker's in-depth
+// step skips while a row exists, so a survivor would sit next to the new
+// summary for good.
 func (s *Store) SetSummaryText(id, summary string) error {
-	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET summary=?, summary_error='' WHERE id=?`, summary, id)
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("set video %s summary text: begin: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE videos SET summary=?, summary_error='' WHERE id=?`, summary, id); err != nil {
 		return fmt.Errorf("set video %s summary text: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, deleteInDepthSQL, id); err != nil {
+		return fmt.Errorf("set video %s summary text: drop in-depth summary: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set video %s summary text: commit: %w", id, err)
 	}
 	return nil
 }

@@ -278,11 +278,8 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		}
 		// The in-depth text is the one investment an inbox read does make:
 		// the Inbox page offers it to settle a maybe the short summary left
-		// open. After the status, so a failure requeues a video whose summary
-		// is already showing.
-		if err := w.inDepthStep(ctx, video, run, forSummary.Cues); err != nil {
-			return true, w.requeueJob(ctx, job, video, run, "indepth", err.Error())
-		}
+		// open. Best-effort, as on the full path below.
+		w.inDepthStep(ctx, video, run, forSummary.Cues)
 		outcome := "done_inbox"
 		if video.ChannelKeepReads {
 			// No chapters: an inbox read never runs the key-points step that
@@ -355,14 +352,11 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		_ = w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryDone, "")
 	}
 
-	// Step 3 — the in-depth summary. After "done", so a failure here requeues
-	// without the Player falling back to a spinner over a summary it already
-	// shows; before key points, which has no skip check and would otherwise
-	// re-run on every retry of this step. Its own emit carries "done" too, so
-	// the open Player still refetches the summary the moment it is saved.
-	if err := w.inDepthStep(ctx, video, run, forSummary.Cues); err != nil {
-		return true, w.requeueJob(ctx, job, video, run, "indepth", err.Error())
-	}
+	// Step 3 — the in-depth summary (best-effort). Right after the summary, so
+	// its transcript prefill is still in the provider's prompt cache (prefix.go).
+	// Its own emit carries "done", so the open Player still refetches the
+	// summary the moment it is saved.
+	w.inDepthStep(ctx, video, run, forSummary.Cues)
 	w.emit(video.ID, videos.SummaryDone, PhaseKeypoints)
 
 	// Step 4 — key points (and chapters when yt-dlp didn't supply them). The
@@ -601,26 +595,33 @@ func toRagChapters(chapters []Chapter) []rag.Chapter {
 }
 
 // inDepthStep writes the in-depth summary unless one is already stored, which
-// is what makes a retry, or the job a download queues after an inbox read,
-// skip it. An error is the caller's to requeue on; the summary is untouched.
-func (w *Worker) inDepthStep(ctx context.Context, video *videos.Video, run *analysisRun, cues []subtitles.Cue) error {
+// is what makes a retried job, or the job a download queues after an inbox
+// read, skip it.
+//
+// Best-effort, like classify: a failure is logged and the job carries on. The
+// text is an extra on top of the analysis, and requeuing on it would hold back
+// key points and the index — the core of the video — on the one step the
+// video can do without. A video whose call failed simply has no card; a later
+// re-analysis writes one.
+func (w *Worker) inDepthStep(ctx context.Context, video *videos.Video, run *analysisRun, cues []subtitles.Cue) {
 	have, err := w.d.Videos.InDepth(video.ID)
 	if err != nil {
-		return err
+		w.d.Logger.Warn("summarize worker: read in-depth summary failed", append(run.ident(), "err", err)...)
+		return
 	}
 	if have != "" {
 		run.skipped("indepth", "already stored")
-		return nil
+		return
 	}
 	w.emit(video.ID, videos.SummaryDone, PhaseInDepth)
 	ictx, done := run.step("indepth")
 	text, err := w.d.Summarizer.InDepth(ictx, video.Title, int(video.DurationSeconds), cues)
-	if err != nil {
-		return err
+	if err == nil {
+		err = w.d.Videos.SetInDepth(video.ID, text)
 	}
-	if err := w.d.Videos.SetInDepth(video.ID, text); err != nil {
-		return err
+	if err != nil {
+		w.d.Logger.Warn("summarize worker: in-depth failed", append(run.ident(), "duration_ms", run.stepElapsedMs(), "err", err)...)
+		return
 	}
 	done("words", len(strings.Fields(text)))
-	return nil
 }

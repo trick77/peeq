@@ -90,32 +90,52 @@ func TestWorker_writesTheInDepthSummary(t *testing.T) {
 	}
 }
 
-// A failed in-depth call requeues the job without touching the summary, which
-// stays done and readable. The retry spends nothing on the summary again.
-func TestWorker_inDepthFailureKeepsTheSummaryAndRetriesTheStep(t *testing.T) {
+// The in-depth text is an extra, so its failure must not cost the video its
+// core analysis: the job carries on to key points and the index and finishes
+// done, with the card simply absent.
+func TestWorker_inDepthFailureIsBestEffort(t *testing.T) {
 	h := newWorkerHarness(t)
 	seedDownloaded(t, h, "d2")
-	c := &inDepthCompleter{failInDepth: 1}
-	w := newInDepthWorker(h, c)
+	c := &inDepthCompleter{failInDepth: 99}
 
-	if _, err := w.processOne(t.Context()); err == nil {
-		t.Fatal("want the in-depth failure surfaced")
+	if _, err := newInDepthWorker(h, c).processOne(t.Context()); err != nil {
+		t.Fatalf("processOne: %v, want the job to finish", err)
 	}
 	v, err := h.videos.Get("d2")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if v.Summary == "" || v.SummaryStatus != videos.SummaryDone {
-		t.Fatalf("summary=%q status=%q, want the summary kept and done", v.Summary, v.SummaryStatus)
+	if v.SummaryStatus != videos.SummaryDone || v.KeyPoints == "" || v.KeyPoints == "[]" || !v.Indexed() {
+		t.Fatalf("status=%q key_points=%q indexed=%v, want the core analysis complete", v.SummaryStatus, v.KeyPoints, v.Indexed())
 	}
 	wantInDepth(t, h, "d2", "")
-
-	if _, err := w.processOne(t.Context()); err != nil {
-		t.Fatalf("retry: %v", err)
+	var state string
+	if err := h.db.QueryRow(`SELECT state FROM summary_jobs WHERE video_id = ?`, "d2").Scan(&state); err != nil || state != "done" {
+		t.Fatalf("job state = %q, %v; want done", state, err)
 	}
-	wantInDepth(t, h, "d2", inDepthReply)
-	if c.calls["summary"] != 1 {
-		t.Fatalf("summary calls = %d, want 1 (the retry must skip it)", c.calls["summary"])
+}
+
+// Same on the inbox path: a channel that keeps its reads still gets them
+// indexed when the in-depth call fails.
+func TestWorker_inboxInDepthFailureStillIndexesAKeptRead(t *testing.T) {
+	h := newWorkerHarness(t)
+	rel := writeInboxCaption(t, h, "i2")
+	if err := h.videos.Upsert(videos.Video{ID: "i2", URL: "https://youtu.be/i2"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	seedTranscript(t, h, "i2", rel)
+	if err := h.videos.SetStatus("i2", videos.StatusNew, ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	seedChannel(t, h, "UCkeep", "i2", true)
+	if _, err := h.jobs.Enqueue("i2"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, err := newInDepthWorker(h, &inDepthCompleter{failInDepth: 99}).processOne(t.Context()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if indexed, err := h.rag.HasChunks(t.Context(), "i2"); err != nil || !indexed {
+		t.Fatalf("indexed=%v (err %v), want the kept read indexed", indexed, err)
 	}
 }
 

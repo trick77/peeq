@@ -209,7 +209,7 @@ func TestInDepth_answerCapOnTheWire(t *testing.T) {
 }
 
 func TestInDepthWordTarget(t *testing.T) {
-	for secs, want := range map[int]int{0: 600, 300: 350, 1800: 750, 3 * 3600: 900} {
+	for secs, want := range map[int]int{0: 600, 120: 150, 900: 375, 1800: 750, 3 * 3600: 900} {
 		if got := inDepthWordTarget(secs); got != want {
 			t.Errorf("inDepthWordTarget(%d) = %d, want %d", secs, got, want)
 		}
