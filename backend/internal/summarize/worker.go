@@ -279,7 +279,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		// The in-depth text is the one investment an inbox read does make:
 		// the Inbox page offers it to settle a maybe the short summary left
 		// open. Best-effort, as on the full path below.
-		w.inDepthStep(ctx, video, run, forSummary.Cues)
+		w.inDepthStep(video, run, forSummary.Cues)
 		outcome := "done_inbox"
 		if video.ChannelKeepReads {
 			// No chapters: an inbox read never runs the key-points step that
@@ -356,7 +356,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// its transcript prefill is still in the provider's prompt cache (prefix.go).
 	// Its own emit carries "done", so the open Player still refetches the
 	// summary the moment it is saved.
-	w.inDepthStep(ctx, video, run, forSummary.Cues)
+	w.inDepthStep(video, run, forSummary.Cues)
 	w.emit(video.ID, videos.SummaryDone, PhaseKeypoints)
 
 	// Step 4 — key points (and chapters when yt-dlp didn't supply them). The
@@ -603,7 +603,7 @@ func toRagChapters(chapters []Chapter) []rag.Chapter {
 // key points and the index — the core of the video — on the one step the
 // video can do without. A video whose call failed simply has no card; a later
 // re-analysis writes one.
-func (w *Worker) inDepthStep(ctx context.Context, video *videos.Video, run *analysisRun, cues []subtitles.Cue) {
+func (w *Worker) inDepthStep(video *videos.Video, run *analysisRun, cues []subtitles.Cue) {
 	have, err := w.d.Videos.InDepth(video.ID)
 	if err != nil {
 		w.d.Logger.Warn("summarize worker: read in-depth summary failed", append(run.ident(), "err", err)...)
