@@ -274,6 +274,18 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		}
 	}
 
+	// One turn for the media call and the subtitle call after it (holdTurn
+	// says why). Refused before queueing, as execWithProgress would be, so a
+	// paused peeq does not wait for a turn only to be refused.
+	if _, gerr := r.gates(); gerr != nil {
+		return nil, &RefusedError{Err: gerr}
+	}
+	ctx, releaseTurn, err := r.holdTurn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseTurn()
+
 	if _, execErr := r.execWithProgress(ctx, onLine, args...); execErr != nil {
 		// A refusal (paused, no cookie, cookie flagged) means yt-dlp never ran:
 		// there is nothing of this attempt to clean up, and a .part left by an
@@ -286,6 +298,12 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 	}
 
 	if !req.SkipSubtitles {
+		// Spaced from the media call like any two YouTube calls, inside the
+		// held turn: at most one gap, which the watchdog easily absorbs.
+		if err := r.gapWithin(ctx); err != nil {
+			_ = os.RemoveAll(stagingDir)
+			return nil, err
+		}
 		if err := r.downloadSubtitles(ctx, req.VideoID, watchURL, subLang, stagingDir); err != nil {
 			_ = os.RemoveAll(stagingDir)
 			return nil, err
@@ -315,11 +333,8 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 //
 // A gate refusal (paused, no cookie) made no call and is swallowed with the rest.
 func (r *Runner) downloadSubtitles(ctx context.Context, videoID, watchURL, subLang, dir string) error {
-	// Interactive: this finishes a download already under way, and its wait for
-	// a turn counts against the download watchdog armed by the media call (a
-	// second SignalStart does not re-arm it). Queued behind background work it
-	// could outwait the watchdog, which would discard the downloaded media.
-	_, err := r.exec(WithInteractive(ctx), subtitleArgs(dir, subLang, watchURL)...)
+	// Runs under the turn Download holds (holdTurn), so it never queues.
+	_, err := r.exec(ctx, subtitleArgs(dir, subLang, watchURL)...)
 	switch {
 	case err == nil:
 		return nil

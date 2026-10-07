@@ -346,7 +346,7 @@ func TestQueue_hungCallIsCutOff(t *testing.T) {
 	if r.queued() != 0 {
 		t.Fatal("the queue did not move on")
 	}
-	if !strings.Contains(logs.String(), "runtime ceiling") {
+	if !strings.Contains(logs.String(), "runtime ceiling hit") {
 		t.Fatalf("a ceiling kill was not logged at warn:\n%s", logs.String())
 	}
 }

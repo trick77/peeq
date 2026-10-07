@@ -376,7 +376,7 @@ func (r *Runner) handOff(ran bool) {
 	defer r.mu.Unlock()
 	if ran {
 		r.lastEnd = r.now()
-		r.gap = r.effectiveThrottleFloor() + time.Duration(r.cfg.RandFloat64()*float64(r.cfg.ThrottleJitter))
+		r.gap = r.drawGap()
 	}
 	r.busy = false
 	if (len(r.interactive) > 0 || len(r.background) > 0) && !r.dispatching {
@@ -455,8 +455,8 @@ type interactiveKey struct{}
 // Not for downloads, approved ones included: the download worker keeps every
 // job on the background lane (download/process.go). A download holds the turn
 // for its whole run, so on this lane a run of approved videos would starve
-// every scan and caption fetch until it drained. The one exception is a
-// download's own subtitle call, which finishes work already under way.
+// every scan and caption fetch until it drained. A download's subtitle call
+// does not queue at all: it runs under the turn the download holds.
 func WithInteractive(ctx context.Context) context.Context {
 	return context.WithValue(ctx, interactiveKey{}, true)
 }
@@ -632,15 +632,32 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 	// The turn applies unconditionally — anonymous calls carry MORE ban risk
 	// (no account to rate-limit, just the host IP), so they must never skip or
 	// shorten it. It is held until this function returns, i.e. until the
-	// process has exited, so no other yt-dlp can start meanwhile.
-	release, err := r.acquire(ctx)
-	if err != nil {
-		return nil, err
-	}
+	// process has exited, so no other yt-dlp can start meanwhile. A caller that
+	// already holds the turn for several calls (Download: media, then
+	// subtitles) passes it in ctx and keeps it across them.
+	//
 	// ran flips just before the process starts: anything returning earlier
 	// made no YouTube request and owes no gap.
 	ran := false
-	defer func() { release(ran) }()
+	held, _ := ctx.Value(heldTurnKey{}).(*heldTurn)
+	if held == nil {
+		release, err := r.acquire(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { release(ran) }()
+	}
+	markRan := func() {
+		ran = true
+		if held != nil {
+			held.ran = true
+		}
+	}
+	// Handed the turn at the moment the caller gave up: start nothing, so
+	// nobody behind waits a gap for a process that never ran.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Second pass, after the wait: the answer that counts. This is the cookie
 	// yt-dlp is handed, and this is where a cookie that went stale or a
@@ -711,12 +728,12 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 		cmd.Stderr = &stderr
 		// Set before Run: a start that fails costs a gap it did not need,
 		// which is the conservative direction.
-		ran = true
+		markRan()
 		if runErr := cmd.Run(); runErr != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) && callerCtx.Err() == nil {
 				// The ceiling fired, not the caller: say so, since this is the
 				// event the ceiling exists for and the stderr dump goes to debug.
-				r.cfg.Logger.Warn("yt-dlp call hit its runtime ceiling; killed so the queue moves on",
+				r.cfg.Logger.Warn("yt-dlp runtime ceiling hit",
 					"video_id", callLabel(ctx), "after", maxCallRuntime)
 			}
 			return nil, r.failed(ctx, stderr.String(), runErr)
@@ -733,7 +750,7 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 	cmd.Stderr = &stderr
 
 	// Before Start, as on the buffered path: a failed start owes a gap too.
-	ran = true
+	markRan()
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("ytdlp: start: %w", err)
 	}

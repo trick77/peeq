@@ -197,6 +197,60 @@ func TestDownload_cancelDuringSubtitlesDoesNotFinalize(t *testing.T) {
 	}
 }
 
+// TestDownload_holdsTheTurnThroughSubtitles: nothing starts between a
+// download's media call and its subtitle call. Queued separately, the subtitle
+// call could wait behind other work past the download watchdog, which would
+// throw the finished media away. The two are still spaced by one gap.
+func TestDownload_holdsTheTurnThroughSubtitles(t *testing.T) {
+	mediaDir := t.TempDir()
+	const id = "subsHold001"
+	t.Setenv("FAKE_YTDLP_ID", id)
+	t.Setenv("FAKE_YTDLP_CHANNEL_ID", "UChold")
+	var r *Runner
+	other := make(chan struct{})
+	var gaps []time.Duration
+	r = New(RunnerConfig{
+		Bin:            fakeBinPath(t),
+		CookieProvider: func() (string, string) { return "cookie-text", "valid" },
+		ThrottleFloor:  20 * time.Second,
+		ThrottleJitter: time.Nanosecond,
+		RandFloat64:    func() float64 { return 0 },
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			// Only gaps taken inside the download's held turn; the queue's own
+			// gap for the waiting caller (after the release) is not one.
+			if d == 0 || ctx.Value(heldTurnKey{}) == nil {
+				return nil
+			}
+			gaps = append(gaps, d)
+			// The gap between media and subtitles: another caller arrives now
+			// and must wait for the whole download, subtitles included.
+			go func() {
+				if rel, err := r.acquire(context.Background()); err == nil {
+					rel(false)
+				}
+				close(other)
+			}()
+			waitQueued(t, r, 1)
+			return nil
+		},
+		MediaDir: mediaDir,
+	})
+
+	if _, err := r.Download(context.Background(), DownloadReq{
+		URL: "https://youtu.be/" + id, VideoID: id, Format: "best-mp4", SubLang: "en",
+	}, nil); err != nil {
+		t.Fatalf("download: %v", err)
+	}
+	select {
+	case <-other:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the turn was never released after the download")
+	}
+	if len(gaps) != 1 || gaps[0] != 20*time.Second {
+		t.Fatalf("gaps inside the download = %v, want one 20s gap before the subtitles", gaps)
+	}
+}
+
 // SkipSubtitles: one call, no caption flags, no .vtt.
 func TestDownload_skipSubtitles(t *testing.T) {
 	mediaDir := t.TempDir()
