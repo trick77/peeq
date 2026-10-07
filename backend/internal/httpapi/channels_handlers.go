@@ -209,8 +209,11 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	//
 	// Best-effort: a channel with no banner, or a transient fetch failure, must
 	// not prevent the channel from being added.
-	s.storeChannelImage(r.Context(), ucid, channels.ImageAvatar, info.AvatarURL)
-	s.storeChannelImage(r.Context(), ucid, channels.ImageBanner, info.BannerURL)
+	//
+	// In the background: each image is a turn in the YouTube queue, a gap
+	// after the resolve above, so fetching both on the request would hold it
+	// open for a minute or more after the channel was already added.
+	s.storeChannelArtAsync(ucid, info.AvatarURL, info.BannerURL)
 
 	now := store.FormatTime(time.Now())
 	if err := s.channels.MarkAdded(ucid, now); err != nil {

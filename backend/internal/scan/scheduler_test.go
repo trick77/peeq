@@ -17,6 +17,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
@@ -161,10 +162,10 @@ type scanHarness struct {
 	activity     *fakeRecorder
 	sched        *Scheduler
 	cookieStatus string
-	// mediaDir, when set before buildSched, enables the pending-thumbnail
-	// prefetch. Left "" by default so the bulk of the scan tests never spawn a
+	// images, when set before buildSched, enables the pending-thumbnail
+	// prefetch. Left nil by default so the bulk of the scan tests never spawn a
 	// prefetch goroutine (and never touch the network).
-	mediaDir string
+	images media.ImageFetcher
 }
 
 func newScanHarness(t *testing.T) *scanHarness {
@@ -208,7 +209,7 @@ func (h *scanHarness) buildSched(j JobEnqueuer) *Scheduler {
 		Activity:     h.activity,
 		Now:          func() time.Time { return fixedNow },
 		PollInterval: 5 * time.Millisecond,
-		MediaDir:     h.mediaDir,
+		Images:       h.images,
 	})
 }
 
@@ -382,8 +383,8 @@ func TestScan_prefetchesPendingThumbnail(t *testing.T) {
 	defer srv.Close()
 
 	h := newScanHarness(t)
-	h.mediaDir = t.TempDir()
-	h.sched = h.buildSched(h.jobs) // rebuild with MediaDir set
+	h.images = media.FetchImageBytes
+	h.sched = h.buildSched(h.jobs) // rebuild with Images set
 	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", []string{"old1"})
 	h.lister.set("UC1", []ytdlp.ChannelEntry{
@@ -2202,6 +2203,12 @@ func TestScan_prefetchFailureStoresNothing(t *testing.T) {
 	defer dead.Close()
 
 	h := newScanHarness(t)
+	// Every candidate fails, the hqdefault fallback included — without touching
+	// the real CDN the fallback URL points at.
+	h.images = func(ctx context.Context, _ string) (string, []byte, error) {
+		return media.FetchImageBytes(ctx, dead.URL)
+	}
+	h.sched = h.buildSched(h.jobs)
 	h.addAndSubscribe("UC1", false, "")
 	if err := h.ledger.Insert(channelvideos.Entry{
 		VideoID: "pf1", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=pf1",

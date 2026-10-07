@@ -23,6 +23,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/failmonitor"
+	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/store"
@@ -45,11 +46,6 @@ const (
 	// to re-spread the fleet, which the next successful scan does anyway.
 	scanBackoffJitter = 15 * time.Minute
 	autoPriority      = 0 // below manual (10), matching Phase 1
-	// pendingThumbPrefetchTimeout bounds one best-effort thumbnail prefetch
-	// (across its retries and the hqdefault fallback). It is also the most a
-	// single job can hold one of the prefetchDrainers, which is why there is
-	// more than one of them (see thumbs.go).
-	pendingThumbPrefetchTimeout = 90 * time.Second
 )
 
 // ChannelLister is the subset of *ytdlp.Runner the scheduler needs: a flat
@@ -106,12 +102,12 @@ type Deps struct {
 	PollInterval time.Duration    // idle re-check (default 30s)
 	Logger       *slog.Logger
 
-	// MediaDir is config.MediaDir, used only to prefetch a newly-pending
-	// video's thumbnail to local disk (best-effort, off the scan's critical
-	// path) so the inbox never loads it from YouTube in the browser. Empty
-	// disables prefetch — tests leave it unset, and the serve endpoint fetches
-	// on demand regardless.
-	MediaDir string
+	// Images fetches a newly-pending video's poster (best-effort, off the
+	// scan's critical path) so the inbox never loads it from YouTube in the
+	// browser. Production passes ytdlp.Runner.FetchImage, so every poster is a
+	// turn in the YouTube queue. Nil disables prefetch — most tests leave it
+	// unset.
+	Images media.ImageFetcher
 
 	// listSize is a test seam: how many entries to request per channel.
 	// Zero selects defaultListSize.

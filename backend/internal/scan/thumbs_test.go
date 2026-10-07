@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
 
@@ -35,7 +36,7 @@ func TestScan_runAbandonsInFlightPrefetchOnCancel(t *testing.T) {
 	defer close(release)
 
 	h := newScanHarness(t)
-	h.mediaDir = t.TempDir()
+	h.images = media.FetchImageBytes
 	h.sched = h.buildSched(h.jobs)
 	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", []string{"old1"})

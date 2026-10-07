@@ -49,6 +49,10 @@ var _ Resolver = (*ytdlp.Runner)(nil)
 type Refresher struct {
 	Channels *channels.Store
 	Resolver Resolver
+	// Images fetches the channel's avatar and banner. Production passes
+	// ytdlp.Runner.FetchImage, so each image is a turn in the YouTube queue.
+	// Nil skips artwork.
+	Images   media.ImageFetcher
 	MediaDir string
 	Logger   *slog.Logger
 }
@@ -166,10 +170,10 @@ func (f *Refresher) Resolve(ctx context.Context, channelID string, cached *chann
 // with no banner, a CDN blip and an unreadable response all mean "no new image
 // this time", and the artwork already stored stays exactly as it was.
 func (f *Refresher) storeImage(ctx context.Context, channelID, kind, url string) {
-	if url == "" {
+	if url == "" || f.Images == nil {
 		return
 	}
-	mime, data, err := media.FetchImageBytes(ctx, url)
+	mime, data, err := f.Images(ctx, url)
 	if err != nil {
 		f.logger().Warn("channel image fetch failed", "channel_id", channelID, "kind", kind, "err", err)
 		return

@@ -2,34 +2,38 @@ package scan
 
 import (
 	"context"
-	"sync"
 
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/media"
 )
 
 // prefetchQueueSize bounds how many newly-pending thumbnails can wait for the
-// drainers. A scan pass lists at most a few dozen entries per channel, so the
+// drainer. A scan pass lists at most a few dozen entries per channel, so the
 // queue is rarely more than a few deep. When it is full the OLDEST waiting
 // job is dropped for the new one: the newest uploads are the ones at the top
-// of the inbox, and a dropped poster is fetched on demand by the serve
-// endpoint — the same self-healing path a failed prefetch already takes.
+// of the inbox, and a dropped poster is queued again when the inbox asks for
+// it (QueueThumbnail).
 const prefetchQueueSize = 64
 
-// prefetchDrainers is how many posters are fetched at once. More than one, so
-// a single slow CDN response (each job may spend up to
-// pendingThumbPrefetchTimeout across its retries) does not hold every later
-// poster behind it; few, so a pass with many uploads never bursts at
-// i.ytimg.com the way one detached goroutine per video used to.
-const prefetchDrainers = 2
-
-// thumbJob is one pending video whose poster a drainer should cache.
+// thumbJob is one pending video whose poster the drainer should cache.
 type thumbJob struct {
 	videoID string
 	url     string
 }
 
-// queueThumbnail hands a newly-pending video's poster to the drainers without
+// QueueThumbnail asks for videoID's inbox poster to be fetched and cached in
+// the background. The inbox's poster endpoint calls it for a poster it does
+// not have, instead of fetching on the request: every poster request is a
+// turn in the YouTube queue, and a page of uncached cards would otherwise hold
+// a request open per card for as long as the queue takes.
+func (s *Scheduler) QueueThumbnail(videoID, url string) {
+	if s.d.Images == nil {
+		return
+	}
+	s.queueThumbnail(videoID, url)
+}
+
+// queueThumbnail hands a newly-pending video's poster to the drainer without
 // blocking the scan. It replaced a detached `go` per video: unbounded, on a
 // background context, and outside any WaitGroup, so a pass with many pending
 // uploads burst parallel requests at i.ytimg.com and a shutdown could leave a
@@ -42,23 +46,25 @@ func (s *Scheduler) queueThumbnail(videoID, url string) {
 	default:
 	}
 	// Full: make room by dropping the oldest, then queue this one. Info, not
-	// Debug — sustained drops mean the CDN is slower than the scans, which an
-	// operator at the default level should be able to see.
+	// Debug — sustained drops mean posters arrive faster than the YouTube queue
+	// lets them be fetched, which an operator at the default level should see.
 	select {
 	case dropped := <-s.thumbs:
-		s.d.Logger.Info("scan: thumbnail prefetch queue full; leaving the oldest to the serve endpoint", "video_id", dropped.videoID)
+		s.d.Logger.Info("scan: thumbnail prefetch queue full; dropping the oldest", "video_id", dropped.videoID)
 	default:
 	}
 	select {
 	case s.thumbs <- job:
 	default:
-		s.d.Logger.Info("scan: thumbnail prefetch queue full; leaving it to the serve endpoint", "video_id", videoID)
+		s.d.Logger.Info("scan: thumbnail prefetch queue full; dropping it", "video_id", videoID)
 	}
 }
 
 // drainThumbnails fetches queued posters until ctx is cancelled. Run starts
-// prefetchDrainers of these and waits for them, so none can outlive the
-// process's database handle.
+// one and waits for it, so it cannot outlive the process's database handle.
+//
+// One, not several: each fetch is a turn in the serial YouTube queue, so a
+// second drainer would only hold a second place in that queue.
 func (s *Scheduler) drainThumbnails(ctx context.Context) {
 	for {
 		select {
@@ -71,16 +77,19 @@ func (s *Scheduler) drainThumbnails(ctx context.Context) {
 }
 
 // prefetchPendingThumbnail fetches one pending video's thumbnail and caches it
-// on its ledger row. Best-effort: a failure is logged and left for the serve
-// endpoint to retry on demand. A fetch cut short by shutdown is not logged as
-// a failure and writes nothing.
+// on its ledger row. Best-effort: a failure is logged and the poster is asked
+// for again when the inbox next shows the card. A fetch cut short by shutdown
+// is not logged as a failure and writes nothing.
 //
 // The row is re-read first. A job can sit in the queue for a while, and the
 // world moves meanwhile: the user may have ignored or queued the video (which
 // deletes its poster cache on purpose — see the serve endpoint's refusal to
-// recreate it), or the serve endpoint may already have fetched the poster.
+// recreate it), or an earlier job may already have fetched the poster.
 // Either way there is nothing to do, and doing it anyway would leak a blob the
 // primary reclaim path has already run for.
+//
+// No timeout of its own: the wait for a turn can last as long as the download
+// in front of it, and each request is bounded by FetchImageBytes' own.
 func (s *Scheduler) prefetchPendingThumbnail(ctx context.Context, j thumbJob) {
 	entry, err := s.d.Ledger.Get(j.videoID)
 	if err != nil || entry == nil || entry.State != channelvideos.StatePending {
@@ -89,9 +98,7 @@ func (s *Scheduler) prefetchPendingThumbnail(ctx context.Context, j thumbJob) {
 	if have, err := s.d.Ledger.HasThumbnail(j.videoID); err == nil && have {
 		return
 	}
-	fctx, cancel := context.WithTimeout(ctx, pendingThumbPrefetchTimeout)
-	defer cancel()
-	mime, data, err := media.FetchPendingThumbnail(fctx, j.videoID, j.url)
+	mime, data, err := media.FetchPendingThumbnail(ctx, s.d.Images, j.videoID, j.url)
 	if ctx.Err() != nil {
 		return
 	}
@@ -104,16 +111,13 @@ func (s *Scheduler) prefetchPendingThumbnail(ctx context.Context, j thumbJob) {
 	}
 }
 
-// runThumbnailDrainers starts prefetchDrainers drainers and returns a func that
-// waits for all of them to stop.
+// runThumbnailDrainers starts the drainer and returns a func that waits for
+// it to stop.
 func (s *Scheduler) runThumbnailDrainers(ctx context.Context) (wait func()) {
-	var wg sync.WaitGroup
-	for range prefetchDrainers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			s.drainThumbnails(ctx)
-		}()
-	}
-	return wg.Wait
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.drainThumbnails(ctx)
+	}()
+	return func() { <-done }
 }

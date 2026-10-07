@@ -14,6 +14,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/sse"
@@ -106,6 +107,14 @@ type Deps struct {
 	// background worker (every test, today) needs no extra wiring. Production
 	// passes the same instance the worker uses.
 	Metadata *channelmeta.Refresher
+	// Images fetches channel art from YouTube's CDN. Production passes
+	// ytdlp.Runner.FetchImage, so each image is a turn in the YouTube queue.
+	// Optional: when nil, channels are added without art.
+	Images media.ImageFetcher
+	// QueueThumbnail asks for an inbox poster to be fetched in the background
+	// (scan.Scheduler.QueueThumbnail). Optional: when nil, a missing poster just
+	// stays the placeholder.
+	QueueThumbnail func(videoID, url string)
 
 	// Ledger is the per-channel scan ledger (channel_videos) backing the
 	// pending API. Optional: when nil, the pending endpoints return 503.
@@ -246,6 +255,9 @@ type server struct {
 	streamAccess StreamAccessRecorder
 	ytdlp        YTDLPVersioner
 
+	images     media.ImageFetcher
+	queueThumb func(videoID, url string)
+
 	channels        *channels.Store
 	channelResolver ChannelResolver
 	metadata        *channelmeta.Refresher
@@ -304,6 +316,9 @@ func New(d Deps) http.Handler {
 		streamAccess:   d.StreamAccess,
 		ytdlp:          d.YTDLP,
 
+		images:     d.Images,
+		queueThumb: d.QueueThumbnail,
+
 		channels:        d.Channels,
 		channelResolver: d.ChannelResolver,
 		metadata:        d.Metadata,
@@ -335,6 +350,7 @@ func New(d Deps) http.Handler {
 		s.metadata = &channelmeta.Refresher{
 			Channels: s.channels,
 			Resolver: s.channelResolver,
+			Images:   s.images,
 			MediaDir: s.mediaDir,
 		}
 	}

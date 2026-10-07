@@ -20,6 +20,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/store"
@@ -760,6 +761,13 @@ func (h *pendingTestHarness) seedChannel(id string) {
 // of them.
 func newPendingTestServer(t *testing.T) *pendingTestHarness {
 	t.Helper()
+	return newPendingTestServerWith(t, nil)
+}
+
+// newPendingTestServerWith is newPendingTestServer with a hook to adjust Deps
+// before the server is built.
+func newPendingTestServerWith(t *testing.T, adjust func(*Deps)) *pendingTestHarness {
+	t.Helper()
 	db := openTestDB(t)
 	sessions := auth.NewSessionStore(db, false)
 	users := auth.NewUserStore(db)
@@ -785,6 +793,9 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 			Email:             "dev@example.local",
 			Name:              "Dev Tester",
 		},
+	}
+	if adjust != nil {
+		adjust(&deps)
 	}
 	return &pendingTestHarness{
 		Handler:  New(deps),
@@ -2831,6 +2842,7 @@ func channelImageTestDeps(t *testing.T, resolver ChannelResolver) (Deps, string)
 	t.Helper()
 	deps := channelsTestDeps(t, resolver)
 	deps.MediaDir = t.TempDir()
+	deps.Images = media.FetchImageBytes
 	return deps, deps.MediaDir
 }
 
@@ -3193,7 +3205,11 @@ func TestPendingThumbnail_notPending_404(t *testing.T) {
 // TestPendingThumbnail_fetchesAndCachesOnMiss covers the fill-in path: an inbox
 // item the scan's prefetch never cached is fetched on first request and kept,
 // so the second request is served from the row.
-func TestPendingThumbnail_fetchesAndCachesOnMiss(t *testing.T) {
+// TestPendingThumbnail_queuesOnMiss: a poster the row does not have is queued
+// for the background fetcher, never fetched on the request — every poster is
+// a turn in the YouTube queue, and a page of uncached cards must not hold a
+// request open per card. The card gets the placeholder 404 meanwhile.
+func TestPendingThumbnail_queuesOnMiss(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt32(&hits, 1)
@@ -3202,7 +3218,10 @@ func TestPendingThumbnail_fetchesAndCachesOnMiss(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := newPendingTestServer(t)
+	var queued []string
+	h := newPendingTestServerWith(t, func(d *Deps) {
+		d.QueueThumbnail = func(videoID, url string) { queued = append(queued, videoID+" "+url) }
+	})
 	h.seedChannel("UC1")
 	if err := h.ledger.Insert(channelvideos.Entry{
 		VideoID: "pt9", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=pt9",
@@ -3212,18 +3231,14 @@ func TestPendingThumbnail_fetchesAndCachesOnMiss(t *testing.T) {
 	}
 
 	rec := h.getRaw(t, "/api/pending/pt9/thumbnail")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want the placeholder 404", rec.Code)
 	}
-	if got, err := h.ledger.GetThumbnail("pt9"); err != nil || got == nil {
-		t.Fatalf("the fetched poster was not cached: %v, %v", got, err)
+	if len(queued) != 1 || queued[0] != "pt9 "+srv.URL {
+		t.Fatalf("queued %v, want the poster queued once", queued)
 	}
-
-	if rec2 := h.getRaw(t, "/api/pending/pt9/thumbnail"); rec2.Code != http.StatusOK {
-		t.Fatalf("second request = %d", rec2.Code)
-	}
-	if n := atomic.LoadInt32(&hits); n != 1 {
-		t.Fatalf("origin hit %d times, want 1 — the second request must come from the row", n)
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("origin hit %d times on the request, want 0", n)
 	}
 }
 
@@ -3264,6 +3279,10 @@ func TestChannelAdd_storesArtworkOnTheRow(t *testing.T) {
 	deps, _ := channelImageTestDeps(t, &testResolver{info: ytdlp.ChannelInfo{
 		UCID: "UCnew", Name: "New", AvatarURL: srv.URL + "/a", BannerURL: srv.URL + "/b",
 	}})
+	// The art is fetched after the response, each image a turn in the YouTube
+	// queue; the hook says when that background work is done.
+	artDone := make(chan string, 1)
+	deps.OnChannelResolved = func(id string) { artDone <- id }
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
@@ -3271,6 +3290,11 @@ func TestChannelAdd_storesArtworkOnTheRow(t *testing.T) {
 		[]byte(`{"url":"https://www.youtube.com/channel/UCnew"}`))
 	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
 		t.Fatalf("add status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-artDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the background art fetch never finished")
 	}
 
 	for _, kind := range []string{channels.ImageAvatar, channels.ImageBanner} {

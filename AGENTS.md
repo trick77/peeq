@@ -134,3 +134,5 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   ends; the next starts >= a randomized gap after that END, never after its start. Clicks
   (`WithInteractive`) jump queued work, never a running call; downloads (approved too) stay
   background, else they starve scans. Non-download calls capped (`maxCallRuntime`).
+  CDN images (posters, channel art) too: `Runner.FetchImage`, never `media.FetchImageBytes`
+  (guard test). A request handler queues image work (`scan.QueueThumbnail`), never waits on it.
