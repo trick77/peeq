@@ -13,7 +13,7 @@ import (
 // latestReleaseAPIURL is the GitHub API endpoint that names the latest
 // yt-dlp release. This is deliberately NOT the releases/latest/download/
 // URL UpdateLatest uses: that one hands back a binary and reveals its
-// version only after a ~30MB download and an install, which is useless for
+// version only after a ~40MB download (unpacking to ~100MB) and a run, useless for
 // answering "is an update available?".
 const latestReleaseAPIURL = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
 

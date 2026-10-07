@@ -194,9 +194,24 @@ func UpdateLatest(ctx context.Context, dir string) (string, error) {
 		return "", err
 	}
 	if r.unpacked() {
-		_ = os.Remove(filepath.Join(dir, "yt-dlp"))
+		removeLegacyZipapp(filepath.Join(dir, "yt-dlp"))
 	}
 	return version, nil
+}
+
+// removeLegacyZipapp deletes the python zipapp an older self-update installed
+// at p, and nothing else: a binary someone put there themselves stays.
+func removeLegacyZipapp(p string) {
+	f, err := os.Open(p) //nolint:gosec // p is the fixed name the old self-update wrote inside the configured install dir
+	if err != nil {
+		return
+	}
+	head := make([]byte, 64)
+	n, _ := io.ReadFull(f, head)
+	_ = f.Close()
+	if strings.HasPrefix(string(head[:n]), "#!") && strings.Contains(string(head[:n]), "python") {
+		_ = os.Remove(p)
+	}
 }
 
 // updateSlot holds one token while an update runs.

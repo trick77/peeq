@@ -60,6 +60,7 @@ RUN echo "yt-dlp layer: ${YTDLP_REFRESH}" \
     && curl -fsSL -o /tmp/yt-dlp.zip "https://github.com/yt-dlp/yt-dlp/releases/latest/download/${exe}.zip" \
     && unzip -q /tmp/yt-dlp.zip -d /opt/yt-dlp \
     && rm /tmp/yt-dlp.zip \
+    && chmod -R a+rX /opt/yt-dlp \
     && ln -s "/opt/yt-dlp/${exe}" /opt/yt-dlp/yt-dlp
 
 # --- Stage 4: minimal runtime ---

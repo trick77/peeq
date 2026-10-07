@@ -188,18 +188,58 @@ func TestDownloadUnpackedFrom_sameVersionIsNotSwapped(t *testing.T) {
 }
 
 // TestDownloadUnpackedFrom_removesCrashLeftovers: a process that died
-// mid-update leaves its temp archive and link; the next update removes them.
+// mid-update leaves its temp archive, link and half-unpacked tree; the next
+// update removes them, even one that installs nothing new. A fresh temp file
+// may belong to another peeq updating the same volume, and stays.
 func TestDownloadUnpackedFrom_removesCrashLeftovers(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "yt-dlp_linux")
-	for _, name := range []string{downloadPrefix + "123", linkPrefix + "456"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600); err != nil {
+	install(t, dest, "2099.01.01")
+
+	old := time.Now().Add(-48 * time.Hour)
+	for _, name := range []string{downloadPrefix + "1", linkPrefix + "2", treePrefix + "3", downloadPrefix + "fresh"} {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		if !strings.HasSuffix(name, "fresh") {
+			if err := os.Chtimes(p, old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	install(t, dest, "2099.01.01")
-	if l := leftovers(t, dir, "yt-dlp_linux"); len(l) != 1 || !strings.HasPrefix(l[0], treePrefix) {
-		t.Fatalf("crash leftovers not removed: %v", l)
+	install(t, dest, "2099.01.01") // same version: no swap, still swept
+
+	l := leftovers(t, dir, "yt-dlp_linux")
+	if len(l) != 2 {
+		t.Fatalf("want the installed tree and the fresh temp file, got %v", l)
+	}
+	for _, name := range l {
+		if !strings.HasPrefix(name, treePrefix) && name != downloadPrefix+"fresh" {
+			t.Fatalf("crash leftover not removed: %s", name)
+		}
+	}
+}
+
+// TestRemoveLegacyZipapp_onlyPython: only the python zipapp an older
+// self-update wrote is removed; any other binary at that path stays.
+func TestRemoveLegacyZipapp_onlyPython(t *testing.T) {
+	dir := t.TempDir()
+	zipapp := filepath.Join(dir, "zipapp")
+	other := filepath.Join(dir, "other")
+	if err := os.WriteFile(zipapp, []byte("#!/usr/bin/env python3\nPK..."), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte("\x7fELF..."), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	removeLegacyZipapp(zipapp)
+	removeLegacyZipapp(other)
+	if _, err := os.Stat(zipapp); err == nil {
+		t.Fatal("the python zipapp was kept")
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("a non-zipapp binary was removed: %v", err)
 	}
 }
 

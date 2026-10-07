@@ -61,7 +61,13 @@ const (
 // repeatedly does not stack 100MB trees.
 func downloadUnpackedFrom(ctx context.Context, url, destDir, exe string) (string, error) {
 	parent := filepath.Dir(destDir)
-	removeCrashLeftovers(parent)
+	// Swept on every update, not only after a swap: a same-version press
+	// returns early, and a tree a crash left half-unpacked must still go.
+	now := time.Now()
+	removeCrashLeftovers(parent, now)
+	if target, err := os.Readlink(destDir); err == nil {
+		removeStaleTrees(parent, now, filepath.Join(parent, filepath.Base(target)))
+	}
 
 	archivePath, err := fetchToTemp(ctx, url, parent)
 	if err != nil {
@@ -103,7 +109,7 @@ func downloadUnpackedFrom(ctx context.Context, url, destDir, exe string) (string
 		return "", err
 	}
 	installed = true
-	now := time.Now()
+	now = time.Now()
 	if previous != "" {
 		// Its age counts from now, when it stopped being the install: a run
 		// started from it moments ago must get the full treeKeep.
@@ -116,9 +122,12 @@ func downloadUnpackedFrom(ctx context.Context, url, destDir, exe string) (string
 // checkImpersonation fails unless the build at bin can impersonate Chrome,
 // the same test the image build applies (backend/Containerfile).
 func checkImpersonation(ctx context.Context, bin string) error {
-	out, err := exec.CommandContext(ctx, bin, "--list-impersonate-targets").Output()
+	cmd := exec.CommandContext(ctx, bin, "--list-impersonate-targets")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("ytdlp: list impersonate targets: %w", err)
+		return fmt.Errorf("ytdlp: list impersonate targets: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.HasPrefix(strings.ToLower(line), "chrome") && !strings.Contains(line, "unavailable") {
@@ -179,14 +188,21 @@ func removeStaleTrees(parent string, now time.Time, keep ...string) {
 
 // removeCrashLeftovers deletes the temp archive and link a process that died
 // mid-update left behind.
-func removeCrashLeftovers(parent string) {
+func removeCrashLeftovers(parent string, now time.Time) {
 	for _, prefix := range []string{downloadPrefix, linkPrefix} {
 		matches, _ := filepath.Glob(filepath.Join(parent, prefix+"*"))
 		for _, m := range matches {
-			_ = os.Remove(m)
+			// Only old ones: another peeq on the same volume (an overlapping
+			// container during a recreate) may be mid-update right now.
+			if info, err := os.Lstat(m); err == nil && now.Sub(info.ModTime()) >= leftoverAge {
+				_ = os.Remove(m)
+			}
 		}
 	}
 }
+
+// leftoverAge is how old an update's temp file must be to count as a crash's.
+const leftoverAge = time.Hour
 
 // unzipInto unpacks the archive at src into the empty directory dst. Only
 // plain files and directories are accepted, every entry must stay inside dst,
