@@ -197,7 +197,7 @@ func sponsorblockSegmentsFromInfo(info downloadInfoJSON) []sponsorblock.Segment 
 // refused with ErrNoCookie exactly like a metadata fetch would be, and it
 // holds one turn (holdTurn) for its media call and its subtitle call.
 //
-// The pause and cookie gates run inside execWithProgress, after the request
+// The pause and cookie gates run in holdTurn (before queueing) and in execCall, after the request
 // has been validated and the staging directory prepared, so a malformed
 // request is reported as such even while peeq is paused. A gate refusal is
 // returned as a *RefusedError wrapping the sentinel (errors.Is still matches).

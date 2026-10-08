@@ -27,6 +27,24 @@ func TestFetchPendingThumbnail_mixedFailureMayClear(t *testing.T) {
 	}
 }
 
+// TestFetchPendingThumbnail_refusalAfterTimeoutStaysARefusal: a timeout on the
+// large variant, then the fallback refused (YouTube calls paused meanwhile),
+// is reported as the refusal — no failure of the poster, no back-off.
+func TestFetchPendingThumbnail_refusalAfterTimeoutStaysARefusal(t *testing.T) {
+	calls := 0
+	fetch := func(context.Context, string) (string, []byte, error) {
+		calls++
+		if calls == 1 {
+			return "", nil, errors.New("fetch image: context deadline exceeded")
+		}
+		return "", nil, refusal{}
+	}
+	_, _, err := FetchPendingThumbnail(context.Background(), fetch, "vid1", "https://cdn.test/a.jpg")
+	if !errors.As(err, new(refusal)) {
+		t.Fatalf("err = %v, want the refusal", err)
+	}
+}
+
 // TestIsCDNRefusal: a 4xx or a non-image body is final; a 5xx or a network
 // failure is not, so a brief CDN outage does not lock a poster out.
 func TestIsCDNRefusal(t *testing.T) {

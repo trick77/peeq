@@ -83,7 +83,8 @@ func FetchPendingThumbnail(ctx context.Context, fetch ImageFetcher, videoID, rec
 
 	// candidates always holds at least the hqdefault url (videoID is non-empty
 	// past the guard above), so the loop ran and lastErr is set.
-	if mayClear != nil {
+	// A refusal stands: it is no failure of the poster at all.
+	if mayClear != nil && !isRefusal(lastErr) {
 		lastErr = mayClear
 	}
 	return "", nil, fmt.Errorf("pending thumbnail %s: %w", videoID, lastErr)

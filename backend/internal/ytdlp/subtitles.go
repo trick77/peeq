@@ -68,7 +68,7 @@ func (r *Runner) Subtitles(ctx context.Context, videoID, rawURL, subLang string)
 		subLang = "en"
 	}
 
-	// Ask the gates before touching the filesystem: execWithProgress asks them
+	// Ask the gates before touching the filesystem: execCall asks them
 	// again, but this call runs once a minute per inbox candidate, and a paused
 	// or cookie-less peeq must not leave an empty summary directory behind on
 	// every tick.
