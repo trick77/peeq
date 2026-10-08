@@ -857,7 +857,7 @@ func TestWorker_progressResetsWatchdog(t *testing.T) {
 	}
 }
 
-// A call that sits on the shared pacer for longer than the whole watchdog
+// A call that sits on the shared YouTube queue for longer than the whole watchdog
 // window before yt-dlp starts must NOT be killed. This is the bug the watchdog
 // had: it was armed when Download was entered, but the pacer's wait happens
 // inside that call and emits no progress, so a job with a deep enough queue in
@@ -1407,20 +1407,14 @@ func laneHarness(t *testing.T, priority int) bool {
 	return interactive
 }
 
-// Approving in the Inbox is a person clicking. Before this, the approved
-// download took the background lane and could sit through a full pacer gap
-// behind a channel scan that happened to start first.
-func TestProcess_userAskedForItTakesTheInteractiveLane(t *testing.T) {
-	if !laneHarness(t, 10) {
-		t.Fatal("a priority-10 job reached yt-dlp on the background lane")
-	}
-}
-
-// The other half of the rule, and the one the old "never for worker calls"
-// comment was really protecting: scan-driven work must not crowd out clicks.
-func TestProcess_scheduledWorkStaysOnTheBackgroundLane(t *testing.T) {
-	if laneHarness(t, autoDownloadPriority) {
-		t.Fatal("a scheduler-priority job jumped the interactive lane")
+// Every download takes the background lane, approved ones too. The queue
+// holds the turn for a whole download, so on the interactive lane a run of
+// approved videos would starve every scan and caption fetch until it drained.
+func TestProcess_downloadsTakeTheBackgroundLane(t *testing.T) {
+	for _, priority := range []int{10, 0} { // a person's enqueue, and the scheduler's
+		if laneHarness(t, priority) {
+			t.Fatalf("a priority-%d job reached yt-dlp on the interactive lane", priority)
+		}
 	}
 }
 

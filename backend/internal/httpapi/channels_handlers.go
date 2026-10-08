@@ -170,8 +170,9 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Interactive: someone pasted a url and is watching a spinner, so this call
-	// skips the pacer's background queue instead of waiting behind the download
-	// worker, the scan scheduler and the metadata refresher.
+	// goes ahead of queued scans, caption fetches and downloads. It still waits
+	// for the yt-dlp running now to exit (one at a time), which can be a long
+	// download.
 	info, err := s.channelResolver.ResolveChannel(ytdlp.WithInteractive(r.Context()), channelURL)
 	if err != nil {
 		if errors.Is(err, ytdlp.ErrNoCookie) {
@@ -512,14 +513,14 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 		}()
 		// Detached from the request: the browser has its response already.
 		// Interactive lane: this fetch is triggered by a real page visit and
-		// carries a deadline, so it must skip the background reservation queue —
+		// carries a deadline, so it must go ahead of queued background work —
 		// starving behind it is what let the 2-minute timeout expire and strand
 		// the channel with resolve_ok=0 (the case #106 is about).
 		//
 		// The lane made that rarer; the cap starting at the wrong moment is
-		// what made it possible at all. WithInteractive skips the background
-		// reservation queue but not the throttle, so an interactive call still
-		// waits — and a cap armed on entry counted that wait as though yt-dlp
+		// what made it possible at all. WithInteractive goes ahead of queued
+		// background work but still waits for the running call and the gap, so
+		// it can wait minutes — and a cap armed on entry counted that wait as though yt-dlp
 		// were already hung. It runs from the process actually starting now.
 		stalled, err := ytdlp.CallWithCap(ytdlp.WithInteractive(context.Background()), s.resolveCap,
 			func(c context.Context) error { return s.metadata.Resolve(c, channelID, cached) })
@@ -573,9 +574,9 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// WithInteractive so this user-initiated refresh skips the background pacer
-	// queue. WithoutCancel, not r.Context() straight through: a refresh takes
-	// tens of seconds (yt-dlp's throttle, then two image fetches), and
+	// WithInteractive so this user-initiated refresh goes ahead of queued
+	// background work. WithoutCancel, not r.Context() straight through: a refresh
+	// can take minutes (the call running now, the gap, then two image turns), and
 	// cancelling it because the reader closed the tab would land in the FAILURE
 	// path, which stamps resolve_ok = 0. The channel would then claim "last
 	// refresh failed" — the one state peeq uses to mean "this needs your

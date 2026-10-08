@@ -237,8 +237,8 @@ func (r *Runner) ChannelStreams(ctx context.Context, ucid string, n int) ([]Chan
 
 // channelTab is the shared body behind ChannelVideos/ChannelStreams: one flat
 // listing of the newest n entries of a channel tab. It goes through the cookie
-// gate + throttle like every other Runner call, so each tab costs its own
-// throttle slot.
+// gate and the YouTube queue like every other Runner call, so each tab costs
+// its own turn.
 func (r *Runner) channelTab(ctx context.Context, ucid, tab string, n int) ([]ChannelEntry, error) {
 	items := fmt.Sprintf(":%d:1", n)
 	url := "https://www.youtube.com/channel/" + ucid + "/" + tab

@@ -97,8 +97,8 @@ type RunnerConfig struct {
 	// sleeper that selects between a timer and ctx.Done(); tests inject a
 	// no-op (still taking ctx so a cancellation test can exercise it).
 	Sleep func(ctx context.Context, d time.Duration) error
-	// Now is the clock the shared pacer reserves slots against. Injectable so
-	// a test can drive the pacer deterministically instead of waiting real
+	// Now is the clock the queue measures gaps against. Injectable so
+	// a test can drive the queue deterministically instead of waiting real
 	// seconds. Defaults to time.Now.
 	Now func() time.Time
 	// MediaDir is the directory downloads are written into. Not used by
@@ -156,18 +156,29 @@ type RunnerConfig struct {
 type Runner struct {
 	cfg RunnerConfig
 
-	// mu guards nextSlot. It is never held across a sleep or an exec — the slot is claimed under the lock and the waiting happens outside
-	// it, so a long download cannot block another caller from claiming.
+	// mu guards the queue below. It is never held across a sleep or an exec.
 	mu sync.Mutex
-	// nextSlot is the tail of the queue: the earliest time a BACKGROUND call may
-	// start. Zero until the first call. An interactive call ignores it when
-	// claiming its own slot but still pushes it, so work queued after the jump
-	// stays spaced. See throttle.
-	nextSlot time.Time
-	// nextInteractiveSlot is the same tail for the priority lane. Interactive
-	// calls skip background reservations but still queue behind each other, so
-	// two clicks in the same second do not fire as one burst.
-	nextInteractiveSlot time.Time
+	// busy is true while a caller holds the turn, until its yt-dlp process
+	// exits. dispatching is true while the gap after that exit runs out and
+	// nobody may start; the next caller is picked only when it has. See acquire.
+	busy        bool
+	dispatching bool
+	// lastEnd is when the last yt-dlp process exited, and gap how long the next
+	// one must wait after it (floor + jitter, drawn at that exit).
+	lastEnd time.Time
+	gap     time.Duration
+	// interactive and background are the callers waiting for the turn, in
+	// arrival order. A released turn goes to the head of interactive first.
+	interactive []*waiter
+	background  []*waiter
+}
+
+// waiter is one caller queued for the turn. ready is closed when the turn is
+// handed to it; granted records that under mu, for a waiter that gives up at
+// the same moment.
+type waiter struct {
+	ready   chan struct{}
+	granted bool
 }
 
 // New builds a Runner from cfg, filling in safe defaults for any
@@ -259,8 +270,8 @@ func (r *Runner) pauseGate() error {
 
 // gates runs the kill-switch gate and then the cookie gate and returns the
 // cookie text the run may use. execWithProgress calls it twice: once before the
-// throttle wait, so a call already known to be refused never burns a pacer
-// slot or a 20s+ sleep, and once after it, because the wait can last minutes
+// queue wait, so a call already known to be refused never takes a turn or
+// waits out a gap, and once after it, because the wait can last minutes
 // on a busy Runner and the world moves meanwhile — a scan can flag the cookie
 // stale or the operator can throw the kill-switch. Only the second answer is
 // trusted: it is the cookie current when the process actually starts.
@@ -271,113 +282,148 @@ func (r *Runner) gates() (string, error) {
 	return r.cookieGate()
 }
 
-// throttle spaces out every call peeq makes to YouTube. It runs before EVERY
-// yt-dlp invocation (execWithProgress is the single choke point), so it covers
-// downloads, channel scans, metadata refreshes and on-demand resolves alike.
+// acquire waits for the turn to run one yt-dlp process and returns the func
+// that gives it back. It runs before EVERY yt-dlp invocation
+// (execWithProgress is the single choke point), so it covers downloads,
+// channel scans, caption fetches, metadata refreshes and on-demand resolves
+// alike.
 //
+// The turn makes YouTube calls strictly serial: one yt-dlp process at a time,
+// and the next one starts no earlier than a gap after the previous one EXITED.
 // The gap is floor + rand[0, jitter): floor is the configured throttle floor
 // clamped up to the hard 20s minimum (see effectiveThrottleFloor), and the
 // random component is always added on top, so the wait is never a bare fixed
 // duration that a rate-limiter could recognise as a pattern.
 //
-// The gap alone is not enough, and this is the part worth understanding. It
-// used to be a plain per-call sleep, which spaces out one caller's SUCCESSIVE
-// calls but says nothing about DIFFERENT callers: the download worker, the
-// scan scheduler and the metadata refresher each slept their own 20s+ and
-// could then fire at YouTube in the same instant. Peeq's own concurrency —
-// each worker serial, but several workers — was the thing defeating the
-// throttle.
+// This replaced a pacer that only spaced STARTS: each call reserved a slot a
+// gap after the previous call's start and never waited for it to finish, so a
+// 15-minute download overlapped the scans, caption fetches and resolves queued
+// behind it, and several yt-dlp processes talked to YouTube at once.
 //
-// So the wait is a reservation against a shared clock rather than a private
-// sleep. Each caller claims a slot at or after the last slot claimed, pushes
-// the queue tail past it, and sleeps outside the lock until its slot arrives —
-// one sleep, computed once. Consecutive starts are therefore at least one gap
-// apart across the whole process.
+// The gap is TRAILING: it is owed after a call, never in front of one that has
+// nothing to be spaced from, so on an idle Runner a caller goes at once.
 //
-// The gap is TRAILING, not leading: it is enforced between one call and the
-// next, never in front of a call that has nothing to be spaced from. On an idle
-// Runner — nothing has touched YouTube for longer than a gap — a caller goes
-// immediately. This used to be `slot := now.Add(gap)`, which made every call
-// wait its full gap however idle the Runner was, so a click after hours of
-// quiet still sat for 20-35s, and a pasted URL paid it twice (metadata preflight
-// then download) for 40-70s of doing nothing. That leading gap protected
-// nothing: nextSlot already holds lastClaim+gap, so taking the later of now and
-// nextSlot keeps callers exactly as far apart as before. It only added latency.
+// A person goes first. A call whose ctx carries WithInteractive is handed the
+// turn ahead of every queued background call, but it still waits for the
+// running process to exit and for the gap after it: a click never runs
+// alongside another yt-dlp. A handler a person waits on can therefore wait as
+// long as the download in front of it.
 //
-// Interactive callers skip the queue. A call a person is waiting on (ctx
-// carries WithInteractive: the add-download and add-channel handlers, and the
-// download worker when the job it is running was asked for by a person — see
-// WithInteractive) claims its slot from the last ADMITTED call rather than from
-// the queue tail, so on a busy Runner it waits one gap instead of inheriting
-// however many background reservations happen to be outstanding — and on an
-// idle one, nothing. Without this a button press could sit behind the download
-// worker, the scan scheduler and the metadata refresher and take minutes to
-// answer — and for the handlers that is on the request's own context, so a
-// proxy timeout turns a merely-queued call into a visible failure.
+// The next caller is picked when the gap has run out, not when the previous
+// process exits: a click arriving during the gap still goes before background
+// work that was already queued.
 //
-// The cost, stated plainly: a background reservation already made for a time
-// inside the interactive call's gap is NOT pushed back — it is asleep and
-// cannot be told otherwise without a wakeup mechanism that would make every
-// wait a polling loop. So a queue jump can let one background call start closer
-// than a full gap behind the interactive one: a burst of two, never more, and
-// only when a click lands while a worker is already queued. Everything after it
-// is spaced normally, since the tail moves. That is a deliberate trade of a
-// rare two-call burst for an interactive path that cannot hang.
+// Waiting is cancellable. A caller whose ctx ends while queued leaves the
+// queue (if it was handed the turn at that very moment, it hands it on), and
+// acquire returns ctx.Err() with nothing owed.
 //
-// A cancelled wait burns its slot: the reservation is not returned to the pool,
-// so the next caller may wait slightly longer than necessary. That is the
-// conservative direction (fewer calls, not more) and not worth reclaiming.
-//
-// The wait is cancellable: if ctx is cancelled before the slot arrives,
-// throttle returns ctx.Err() without completing the sleep, so a queued download
-// can be cancelled during its pre-call wait instead of blocking until it ends.
-func (r *Runner) throttle(ctx context.Context) error {
-	floor := r.effectiveThrottleFloor()
-	jitter := time.Duration(r.cfg.RandFloat64() * float64(r.cfg.ThrottleJitter))
-	gap := floor + jitter
-
-	now := r.now()
+// The returned release must be called (further calls do nothing). ran says
+// whether a yt-dlp process actually started: a call refused after its wait
+// made no YouTube request, so the next one is not spaced from it.
+func (r *Runner) acquire(ctx context.Context) (release func(ran bool), err error) {
 	r.mu.Lock()
-	// nextSlot is lastClaim+gap for calls of every kind, so now >= nextSlot is
-	// exactly "nothing has been claimed within a gap of now" — an idle Runner.
-	// Then there is nothing to be spaced from and the caller goes at once.
-	slot := now
-	if slot.Before(r.nextSlot) {
-		// Busy: a call is outstanding, or one started less than a gap ago.
-		if IsInteractive(ctx) {
-			// A person is waiting, so skip the background queue — but not the
-			// throttle. now.Add(gap) is required rather than nextInteractiveSlot
-			// alone: nextInteractiveSlot tracks only the priority lane, so a
-			// background call that just started (at or before now, invisible to
-			// it) would otherwise get an interactive call fired on top of it.
-			// Anything already ADMITTED did so at or before now, so a full gap
-			// from now clears it. A background reservation made for a time still
-			// in the future is NOT cleared — that is the burst-of-two trade-off
-			// stated above, not something this branch fixes.
-			slot = now.Add(gap)
-			// ...and not other interactive calls either: two clicks in the same
-			// second must not fire together, so the priority lane keeps a tail.
-			if slot.Before(r.nextInteractiveSlot) {
-				slot = r.nextInteractiveSlot
-			}
-		} else {
-			slot = r.nextSlot
+	free := !r.busy && !r.dispatching && len(r.interactive) == 0 && len(r.background) == 0
+	if free && !r.now().Before(r.lastEnd.Add(r.gap)) {
+		// Idle and the gap is long past: go at once. Sleep still runs (for
+		// nothing) so a cancelled ctx is honoured the same way on every path.
+		r.busy = true
+		r.mu.Unlock()
+		if err := r.cfg.Sleep(ctx, 0); err != nil {
+			r.handOff(false)
+			return nil, err
 		}
+		return r.releaser(), nil
 	}
-	tail := slot.Add(gap)
-	// The background tail always moves, so work queued after an interactive
-	// jump stays spaced behind it. The interactive tail moves ONLY for
-	// interactive calls — letting background reservations push it would put the
-	// priority lane right back at the end of the queue it exists to skip.
-	if tail.After(r.nextSlot) {
-		r.nextSlot = tail
+	w := &waiter{ready: make(chan struct{})}
+	if IsInteractive(ctx) {
+		r.interactive = append(r.interactive, w)
+	} else {
+		r.background = append(r.background, w)
 	}
-	if IsInteractive(ctx) && tail.After(r.nextInteractiveSlot) {
-		r.nextInteractiveSlot = tail
+	if !r.busy && !r.dispatching {
+		r.startDispatch()
 	}
 	r.mu.Unlock()
 
-	return r.cfg.Sleep(ctx, slot.Sub(now))
+	select {
+	case <-w.ready:
+		return r.releaser(), nil
+	case <-ctx.Done():
+		r.mu.Lock()
+		if !w.granted {
+			r.interactive = removeWaiter(r.interactive, w)
+			r.background = removeWaiter(r.background, w)
+			r.mu.Unlock()
+			return nil, ctx.Err()
+		}
+		r.mu.Unlock()
+		// Handed the turn as it gave up: pass it on.
+		r.handOff(false)
+		return nil, ctx.Err()
+	}
+}
+
+func (r *Runner) releaser() func(ran bool) {
+	var once sync.Once
+	return func(ran bool) { once.Do(func() { r.handOff(ran) }) }
+}
+
+// handOff gives the turn back. When a process ran, its exit starts the next
+// gap. If anyone is waiting, a dispatch picks the next caller once the gap has
+// run out; otherwise the Runner is free.
+func (r *Runner) handOff(ran bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ran {
+		r.lastEnd = r.now()
+		r.gap = r.drawGap()
+	}
+	r.busy = false
+	if (len(r.interactive) > 0 || len(r.background) > 0) && !r.dispatching {
+		r.startDispatch()
+	}
+}
+
+// startDispatch sleeps out the gap in the background and then hands the turn
+// to the longest-waiting interactive caller, else the longest-waiting
+// background one. Called with mu held.
+func (r *Runner) startDispatch() {
+	r.dispatching = true
+	due := r.lastEnd.Add(r.gap)
+	go func() {
+		wait := time.Duration(0)
+		if now := r.now(); due.After(now) {
+			wait = due.Sub(now)
+		}
+		// Not tied to any caller's ctx: a caller giving up only leaves the
+		// queue; the gap still has to pass before anyone else starts.
+		_ = r.cfg.Sleep(context.Background(), wait)
+
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.dispatching = false
+		var next *waiter
+		switch {
+		case len(r.interactive) > 0:
+			next, r.interactive = r.interactive[0], r.interactive[1:]
+		case len(r.background) > 0:
+			next, r.background = r.background[0], r.background[1:]
+		default:
+			return
+		}
+		r.busy = true
+		next.granted = true
+		close(next.ready)
+	}()
+}
+
+func removeWaiter(list []*waiter, w *waiter) []*waiter {
+	for i, x := range list {
+		if x == w {
+			return append(list[:i], list[i+1:]...)
+		}
+	}
+	return list
 }
 
 // callLabelKey carries a short name for what a call is about — a video id —
@@ -386,9 +432,8 @@ func (r *Runner) throttle(ctx context.Context) error {
 // behaviour.
 type callLabelKey struct{}
 
-// withCallLabel names the subject of a call for the logger. Needed because the
-// pacer runs an interactive call alongside a background one, so two yt-dlp
-// processes can be writing at once and an unattributed line is guesswork.
+// withCallLabel names the subject of a call for the logger, so a stderr line
+// says which video it came from rather than leaving that to the timestamps.
 func withCallLabel(ctx context.Context, label string) context.Context {
 	return context.WithValue(ctx, callLabelKey{}, label)
 }
@@ -401,30 +446,17 @@ func callLabel(ctx context.Context) string {
 // interactiveKey marks a context as belonging to a call a person is waiting on.
 type interactiveKey struct{}
 
-// WithInteractive marks ctx as user-facing, so the pacer lets it go ahead of
-// background work instead of behind it. Use it for the handlers a person waits
-// on with a spinner in front of them.
+// WithInteractive marks ctx as user-facing, so the queue hands it the turn
+// ahead of background work instead of behind it. It never runs alongside the
+// yt-dlp already running: it waits for that one to exit and for the gap after
+// it (see acquire). Use it for the handlers a person waits on with a spinner
+// in front of them.
 //
-// "Never for worker calls" is the wrong rule, and used to be stated here. What
-// matters is whether a PERSON asked for the work, not which goroutine carries
-// it out: approving an Inbox item is a click, and it happens to run on the
-// download worker. That worker marks a job interactive when its priority is
-// above the scheduler's automatic 0. Scan-driven downloads, metadata refreshes
-// and every other self-scheduled call stay on the background lane — which is
-// what the old wording was actually protecting.
-//
-// The trade-off, stated plainly: the lane keeps its own tail, and an approved
-// download now pushes it. On a busy Runner that call takes slot now+gap and
-// leaves nextInteractiveSlot at now+2gap, so a click landing inside that window
-// is bumped to it and waits up to one gap longer than it used to — and a job
-// whose title is still unknown makes two such calls (metadata preflight, then
-// the download), pushing the tail again. On an idle Runner it costs nothing.
-//
-// That is the price of not having a person's download queue behind a robot's,
-// and it is bounded by how many approved calls are in flight at once rather
-// than by how many videos were approved: enqueuing ten rows is not ten
-// reservations. Worth watching rather than pre-solving; the fix, if it bites,
-// is a third tier — true clicks ahead of approved downloads ahead of scans.
+// Not for downloads, approved ones included: the download worker keeps every
+// job on the background lane (download/process.go). A download holds the turn
+// for its whole run, so on this lane a run of approved videos would starve
+// every scan and caption fetch until it drained. A download's subtitle call
+// does not queue at all: it runs under the turn the download holds.
 func WithInteractive(ctx context.Context) context.Context {
 	return context.WithValue(ctx, interactiveKey{}, true)
 }
@@ -458,9 +490,9 @@ type startKey struct{}
 // fn runs on the goroutine making the call, synchronously, immediately before
 // exec — so it must not block. It fires at most once per call, and NOT at all
 // when the call never reaches exec: a pause gate, a missing cookie, or a
-// context cancelled during the throttle wait all return early. That is the
+// context cancelled during the queue wait all return early. That is the
 // point — there is no process to bound, and a user Cancel during the pre-call
-// wait is already handled by throttle's own cancellation.
+// wait is already handled by the queue wait's own cancellation.
 //
 // A context carrying no hook is the normal case and costs a nil check.
 func WithStartHook(ctx context.Context, fn func()) context.Context {
@@ -563,7 +595,7 @@ func (r *Runner) now() time.Time {
 // ctx is cancelled first, in which case it returns ctx.Err() immediately
 // instead of blocking for the full duration.
 func defaultSleep(ctx context.Context, d time.Duration) error {
-	// A zero or negative wait is reachable: on an idle Runner throttle grants
+	// A zero or negative wait is reachable: on an idle Runner acquire grants
 	// the current instant. sched.Sleep checks ctx before arming a timer, so a
 	// cancelled caller never proceeds on an already-due slot.
 	if !sched.Sleep(ctx, d) {
@@ -585,22 +617,45 @@ func (r *Runner) exec(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 // execWithProgress is exec's superset: it goes through the exact same
-// cookie-temp-file and throttle choke point, but when onLine is non-nil
+// cookie-temp-file and queue choke point, but when onLine is non-nil
 // it streams stdout line by line (for --newline progress parsing) instead
 // of buffering it silently. Download uses this so it shares the identical
-// cookie gate / throttle path as Metadata rather than a parallel one.
+// cookie gate / queue path as Metadata rather than a parallel one.
 func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args ...string) ([]byte, error) {
 	// First pass: refuse early. A call that is paused or has no usable cookie
-	// must not take a pacer slot or sit through the sleep just to be refused
+	// must not take a turn or wait out a gap just to be refused
 	// afterwards. The text is discarded — see gates for why.
 	if _, err := r.gates(); err != nil {
 		return nil, &RefusedError{Err: err}
 	}
 
-	// The throttle applies unconditionally — anonymous calls carry MORE ban
-	// risk (no account to rate-limit, just the host IP), so they must never
-	// skip or shorten it.
-	if err := r.throttle(ctx); err != nil {
+	// The turn applies unconditionally — anonymous calls carry MORE ban risk
+	// (no account to rate-limit, just the host IP), so they must never skip or
+	// shorten it. It is held until this function returns, i.e. until the
+	// process has exited, so no other yt-dlp can start meanwhile. A caller that
+	// already holds the turn for several calls (Download: media, then
+	// subtitles) passes it in ctx and keeps it across them.
+	//
+	// ran flips just before the process starts: anything returning earlier
+	// made no YouTube request and owes no gap.
+	ran := false
+	held, _ := ctx.Value(heldTurnKey{}).(*heldTurn)
+	if held == nil {
+		release, err := r.acquire(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { release(ran) }()
+	}
+	markRan := func() {
+		ran = true
+		if held != nil {
+			held.ran = true
+		}
+	}
+	// Handed the turn at the moment the caller gave up: start nothing, so
+	// nobody behind waits a gap for a process that never ran.
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -630,10 +685,23 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 	// The queueing is over and the process is about to run: tell a caller that
 	// asked to be told. Deliberately here rather than beside cmd.Start() below,
 	// so both branches (buffered exec and streamed download) signal it — and
-	// deliberately AFTER throttle, since everything this hook exists for is
+	// deliberately AFTER acquire, since everything this hook exists for is
 	// about not counting the wait above as though the process were already
 	// running. See WithStartHook.
 	SignalStart(ctx)
+
+	// Every call but a download gets a ceiling. This process holds the one
+	// turn every YouTube call needs, so a hung one (a stuck JS-runtime child, a
+	// stalled socket) would otherwise stall all of peeq's YouTube work until a
+	// restart. A download (onLine set) is bounded by its caller's inactivity
+	// watchdog instead, since a long one can legitimately run past any fixed
+	// ceiling. Started here, after the wait, so queueing never counts.
+	callerCtx := ctx
+	if onLine == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, maxCallRuntime)
+		defer cancel()
+	}
 
 	fullArgs := args
 	if cookieFile != "" {
@@ -658,7 +726,16 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
+		// Set before Run: a start that fails costs a gap it did not need,
+		// which is the conservative direction.
+		markRan()
 		if runErr := cmd.Run(); runErr != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) && callerCtx.Err() == nil {
+				// The ceiling fired, not the caller: say so, since this is the
+				// event the ceiling exists for and the stderr dump goes to debug.
+				r.cfg.Logger.Warn("yt-dlp runtime ceiling hit",
+					"video_id", callLabel(ctx), "after", maxCallRuntime)
+			}
 			return nil, r.failed(ctx, stderr.String(), runErr)
 		}
 		r.logStderr(ctx, stderr.String())
@@ -672,6 +749,8 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
+	// Before Start, as on the buffered path: a failed start owes a gap too.
+	markRan()
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("ytdlp: start: %w", err)
 	}
@@ -718,6 +797,11 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 
 // waitDelay is exec.Cmd.WaitDelay for every yt-dlp call.
 const waitDelay = 10 * time.Second
+
+// maxCallRuntime is the ceiling on a non-download yt-dlp call (scan listing,
+// metadata, captions, channel resolve), which normally takes seconds. A var so
+// a test can shorten it.
+var maxCallRuntime = 10 * time.Minute
 
 // scanLinesCR is a bufio.SplitFunc like bufio.ScanLines but also splits on
 // bare '\r' (yt-dlp overwrites its progress line with '\r', not '\n').

@@ -25,7 +25,7 @@ import (
 const unavailableRecheckWindow = 14 * 24 * time.Hour
 
 // maxUnavailableProbes caps how many parked videos one scan pass may probe.
-// Each probe is a real per-video yt-dlp call on the shared pacer, and a channel
+// Each probe is a real per-video yt-dlp call on the shared YouTube queue, and a channel
 // with a large members-only back catalogue could otherwise turn a single pass
 // into dozens of sequential requests. Rows not reached this pass keep their
 // stamps and are simply first in line next time.

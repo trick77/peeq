@@ -193,10 +193,9 @@ func sponsorblockSegmentsFromInfo(info downloadInfoJSON) []sponsorblock.Segment 
 // Download runs yt-dlp to fetch req.URL into a per-video staging
 // directory, then atomically moves the finished result into its final
 // MediaDir/<channelID>/<videoID>/ location. Like Metadata, it goes
-// through the shared cookie gate and throttle (via execWithProgress); a
-// download is refused with ErrNoCookie exactly like a metadata fetch
-// would be, and it waits out the same 20s+ floor before invoking the
-// binary.
+// through the shared cookie gate and the YouTube queue; a download is
+// refused with ErrNoCookie exactly like a metadata fetch would be, and it
+// holds one turn (holdTurn) for its media call and its subtitle call.
 //
 // The pause and cookie gates run inside execWithProgress, after the request
 // has been validated and the staging directory prepared, so a malformed
@@ -251,9 +250,7 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 	)
 
 	// Name this call for the logger, so a warning on stderr can be tied to the
-	// video it belongs to. The pacer deliberately lets an interactive call run
-	// alongside a background one, so two yt-dlp processes really can be writing
-	// at the same time.
+	// video it belongs to.
 	ctx = withCallLabel(ctx, req.VideoID)
 
 	onLine := func(line string) {
@@ -276,6 +273,21 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		}
 	}
 
+	// One turn for the media call and the subtitle call after it (holdTurn
+	// says why). Refused before queueing, as execWithProgress would be, so a
+	// paused peeq does not wait for a turn only to be refused.
+	if _, gerr := r.gates(); gerr != nil {
+		return nil, &RefusedError{Err: gerr}
+	}
+	ctx, releaseTurn, err := r.holdTurn(ctx)
+	if err != nil {
+		// Cancelled while queued: nothing ran, and a cancel removes the
+		// staging dir like any other non-retryable failure.
+		_ = os.RemoveAll(stagingDir)
+		return nil, err
+	}
+	defer releaseTurn()
+
 	if _, execErr := r.execWithProgress(ctx, onLine, args...); execErr != nil {
 		// A refusal (paused, no cookie, cookie flagged) means yt-dlp never ran:
 		// there is nothing of this attempt to clean up, and a .part left by an
@@ -288,12 +300,22 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 	}
 
 	if !req.SkipSubtitles {
+		// Spaced from the media call like any two YouTube calls, inside the
+		// held turn: at most one gap, which the watchdog easily absorbs.
+		if err := r.gapWithin(ctx); err != nil {
+			_ = os.RemoveAll(stagingDir)
+			return nil, err
+		}
 		if err := r.downloadSubtitles(ctx, req.VideoID, watchURL, subLang, stagingDir); err != nil {
 			_ = os.RemoveAll(stagingDir)
 			return nil, err
 		}
 	}
 
+	// The YouTube calls are done; finalizing is local file work, so the turn
+	// goes back now rather than after it (release is once-only; the deferred
+	// call is a no-op).
+	releaseTurn()
 	result, err := finalizeDownload(stagingDir, r.cfg.MediaDir, req.VideoID, formatSelector)
 	if err != nil {
 		_ = os.RemoveAll(stagingDir)
@@ -317,6 +339,7 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 //
 // A gate refusal (paused, no cookie) made no call and is swallowed with the rest.
 func (r *Runner) downloadSubtitles(ctx context.Context, videoID, watchURL, subLang, dir string) error {
+	// Runs under the turn Download holds (holdTurn), so it never queues.
 	_, err := r.exec(ctx, subtitleArgs(dir, subLang, watchURL)...)
 	switch {
 	case err == nil:

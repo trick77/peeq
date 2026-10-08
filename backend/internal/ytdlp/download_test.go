@@ -67,7 +67,7 @@ func TestDownload_happyPath(t *testing.T) {
 	// The gap is trailing, so a call on an idle Runner correctly waits nothing.
 	// Prime it, so what this test measures is a download spaced behind a
 	// previous YouTube call — the case the floor actually governs.
-	if err := r.throttle(context.Background()); err != nil {
+	if err := r.paceOnce(context.Background()); err != nil {
 		t.Fatalf("priming throttle: %v", err)
 	}
 	throttleCalls = 0
@@ -638,8 +638,7 @@ func TestDownload_logsStderrFromASuccessfulRun(t *testing.T) {
 			t.Fatalf("log missing stderr line %q\n%s", want, out)
 		}
 	}
-	// Attributed, because the pacer lets a background call run alongside an
-	// interactive one — two processes can be writing at the same time.
+	// Attributed, so a warning names its video without leaning on timestamps.
 	if !strings.Contains(out, "video_id=dQw4w9WgXcQ") {
 		t.Fatalf("stderr line not attributed to its video\n%s", out)
 	}

@@ -31,16 +31,6 @@ import (
 // starves the rest of the queue.
 const metadataPreflightTimeout = 2 * time.Minute
 
-// autoDownloadPriority is the priority the scan scheduler enqueues with — work
-// nobody is sitting in front of. Anything above it was asked for by a person
-// (the Inbox approve, the re-download button, the channel handler all use 10),
-// and process() puts those on the pacer's interactive lane.
-//
-// Deliberately re-stated here rather than imported from internal/scan: the
-// worker must not depend on the scheduler, and the contract this encodes is
-// "0 means automatic", not "whatever the scheduler happens to pass today".
-const autoDownloadPriority = 0
-
 // Runner is the subset of *ytdlp.Runner the worker needs. Declaring it here
 // (rather than importing the concrete type) keeps the worker testable with
 // a fake that never shells out to yt-dlp; the real *ytdlp.Runner satisfies
@@ -145,7 +135,7 @@ type Deps struct {
 	// killed and the job retried. Zero selects metadataPreflightTimeout; a
 	// negative value disables the cap. Like Watchdog it runs from when the
 	// process starts, not from when the call is made, so time spent queueing
-	// on the shared pacer does not count against it.
+	// on the shared YouTube queue does not count against it.
 	MetadataTimeout time.Duration
 	// PollInterval is how long the loop waits before re-checking the queue
 	// when it found nothing to claim.

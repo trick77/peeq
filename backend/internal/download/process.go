@@ -22,18 +22,13 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	// reason: an early Cancel cancels it, so a slow preflight read or the
 	// Download call aborts.
 	jobCtx, cancel := context.WithCancel(ctx)
-	// Approving something in the Inbox is a person clicking, even though a
-	// worker is what carries it out. Without this the approved download takes
-	// the background lane and can queue behind a channel scan that happened to
-	// start first — the person waits out a full pacer gap for work they asked
-	// for by hand, while a robot's scan goes first.
-	//
-	// The distinction is already in the data and needs no schema change: every
-	// user-initiated enqueue uses priority 10 (the Inbox approve, the
-	// re-download button, the channel handler), while the scan scheduler uses 0.
-	if job.Priority > autoDownloadPriority {
-		jobCtx = ytdlp.WithInteractive(jobCtx)
-	}
+	// Every download takes the background lane, approved or scheduled. The
+	// YouTube queue runs one call at a time and holds the turn for the whole
+	// download, so on the interactive lane a run of approved videos would
+	// starve every scan, caption fetch and metadata refresh until it drained.
+	// On the background lane an approved download waits behind the few short
+	// calls queued before it; the interactive lane stays for handlers a person
+	// is watching a spinner on.
 	// Panic-safe context cleanup: even if a later step panics (recovered at
 	// the loop level), the child context is always cancelled rather than
 	// leaked. cancel is idempotent, so the explicit teardown below is fine.
@@ -235,7 +230,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	// which surfaces as a retry below.
 	//
 	// Armed on the start hook rather than here, because Download does not run
-	// yt-dlp immediately: the shared pacer makes the call wait its turn first,
+	// yt-dlp immediately: the shared YouTube queue makes the call wait its turn first,
 	// and there are no progress lines until the process exists. A timer started
 	// here therefore counts the queueing wait as "no progress", and a job with a
 	// deep enough queue in front of it was killed before it ever downloaded
@@ -244,7 +239,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	// process is running and has gone quiet.
 	//
 	// A Cancel during the pre-call wait does not need the watchdog and never
-	// did: throttle's own wait is cancellable.
+	// did: the wait for a turn is cancellable.
 	watchdog := ytdlp.NewDeferredTimer(w.deps.Watchdog, cancel)
 	onProgress := func(p ytdlp.Progress) {
 		watchdog.Reset()

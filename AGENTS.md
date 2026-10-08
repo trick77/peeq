@@ -130,7 +130,7 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - **Kill switch fails closed**: `settings.YoutubePaused` reports paused, plus the error, when the
   row cannot be read; gates may ignore the error, handlers answer 500 with it. Gates are polled,
   so a blip clears itself; a call let through on a blip does not.
-- **Randomized throttle**: every YouTube call is spaced from the previous one by a randomized gap
-  (floor + jitter, enforced by `ytdlp.Runner`'s pacer across the whole process). The gap is
-  trailing, not leading: an idle Runner goes at once, so a click after hours of quiet does not
-  wait 20-35s for nothing. What matters is that consecutive starts are never closer than a gap.
+- **Serial queue**: every YouTube call takes the ONE turn (`ytdlp.Runner.acquire`), held until it
+  ends; the next starts >= a randomized gap after that END, never after its start. Clicks
+  (`WithInteractive`) jump queued work, never a running call; downloads (approved too) stay
+  background, else they starve scans. Non-download calls capped (`maxCallRuntime`).

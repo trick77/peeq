@@ -5,9 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -138,8 +136,8 @@ func TestThrottle_floorAlwaysAtLeast20Seconds(t *testing.T) {
 			})
 			// The floor is the gap BETWEEN calls, so prime the Runner first: the
 			// measured wait is the second call's.
-			r.throttle(context.Background())
-			r.throttle(context.Background())
+			r.paceOnce(context.Background())
+			r.paceOnce(context.Background())
 			if got < minThrottleFloor {
 				t.Fatalf("Sleep(%v) below hard floor %v (configured floor was %v)", got, minThrottleFloor, tc.throttleFloor)
 			}
@@ -166,8 +164,8 @@ func TestThrottle_jitterAddsRandomComponent(t *testing.T) {
 		})
 		// Prime: the jitter rides the gap between calls, and the first call on
 		// an idle Runner has no gap to ride.
-		r.throttle(context.Background())
-		r.throttle(context.Background())
+		r.paceOnce(context.Background())
+		r.paceOnce(context.Background())
 		return got
 	}
 
@@ -197,8 +195,8 @@ func TestThrottle_defaultJitterAppliedWhenUnset(t *testing.T) {
 		Sleep:         func(_ context.Context, d time.Duration) error { got = d; return nil },
 	})
 	// Prime, then measure the gap between calls.
-	r.throttle(context.Background())
-	r.throttle(context.Background())
+	r.paceOnce(context.Background())
+	r.paceOnce(context.Background())
 	want := minThrottleFloor + time.Duration(0.5*float64(defaultThrottleJitter))
 	if got != want {
 		t.Fatalf("Sleep(%v), want %v (default jitter %v applied)", got, want, defaultThrottleJitter)
@@ -223,7 +221,7 @@ func TestThrottle_cancelledContextReturnsPromptly(t *testing.T) {
 	cancel()
 
 	start := time.Now()
-	err := r.throttle(ctx)
+	err := r.paceOnce(ctx)
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, context.Canceled) {
@@ -797,70 +795,6 @@ func TestMetadata_classifiesBlockedError(t *testing.T) {
 	}
 }
 
-// TestThrottle_spacesOutConcurrentCallers is the shared-pacer invariant. Peeq
-// has several things that talk to YouTube at once — the download worker, the
-// scan scheduler, the metadata refresher, and HTTP handlers resolving a
-// channel on demand. When throttle was a private per-call sleep, each of them
-// waited its own 20s+ and they could then all fire in the same instant: peeq's
-// own concurrency defeated its own throttle.
-//
-// Slots are reserved against a shared clock, so consecutive callers are spaced
-// by at least one gap each no matter how many are asking.
-func TestThrottle_spacesOutConcurrentCallers(t *testing.T) {
-	base := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
-	var mu sync.Mutex
-	var waits []time.Duration
-	r := New(RunnerConfig{
-		CookieProvider: func() (string, string) { return "c", "valid" },
-		ThrottleFloor:  20 * time.Second,
-		ThrottleJitter: time.Nanosecond, // effectively no jitter: exact bounds
-		RandFloat64:    func() float64 { return 0 },
-		// A frozen clock is the harsh case: without a shared reservation every
-		// caller would compute the same start time and they would all go at once.
-		Now: func() time.Time { return base },
-		Sleep: func(_ context.Context, d time.Duration) error {
-			mu.Lock()
-			waits = append(waits, d)
-			mu.Unlock()
-			return nil
-		},
-	})
-
-	const callers = 4
-	var wg sync.WaitGroup
-	wg.Add(callers)
-	for i := 0; i < callers; i++ {
-		go func() {
-			defer wg.Done()
-			if err := r.throttle(context.Background()); err != nil {
-				t.Errorf("throttle: %v", err)
-			}
-		}()
-	}
-	wg.Wait()
-
-	mu.Lock()
-	got := append([]time.Duration(nil), waits...)
-	mu.Unlock()
-	if len(got) != callers {
-		t.Fatalf("got %d waits, want %d", len(got), callers)
-	}
-	// Each caller's wait is measured from the same frozen "now". The gap is
-	// trailing, so the first caller finds an idle Runner and goes at once; the
-	// set of waits must be zero, one gap, two gaps, three gaps — in some order.
-	// The spacing between consecutive starts is one gap either way, which is the
-	// invariant this test exists for.
-	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
-	gap := 20*time.Second + time.Nanosecond*0
-	for i, w := range got {
-		want := time.Duration(i) * gap
-		// Allow the sub-nanosecond jitter window to land anywhere in [0, 1ns).
-		if w < want || w > want+time.Duration(i)*time.Nanosecond {
-			t.Fatalf("wait[%d] = %v, want ~%v — callers were not spaced apart", i, w, want)
-		}
-	}
-}
-
 // TestThrottle_idleRunnerGoesImmediately: the gap is trailing, so it is
 // enforced between calls and never in front of one that has nothing to be
 // spaced from. A Runner that has not touched YouTube for an hour must let the
@@ -880,14 +814,14 @@ func TestThrottle_idleRunnerGoesImmediately(t *testing.T) {
 	})
 
 	// First call on a cold Runner: nothing to be spaced from.
-	if err := r.throttle(context.Background()); err != nil {
+	if err := r.paceOnce(context.Background()); err != nil {
 		t.Fatalf("throttle: %v", err)
 	}
 	if got != 0 {
 		t.Fatalf("first call on an idle Runner waited %v, want 0", got)
 	}
 	// A second call at the same instant IS spaced — the gap still applies.
-	if err := r.throttle(context.Background()); err != nil {
+	if err := r.paceOnce(context.Background()); err != nil {
 		t.Fatalf("throttle: %v", err)
 	}
 	if got < 20*time.Second || got > 21*time.Second {
@@ -895,102 +829,11 @@ func TestThrottle_idleRunnerGoesImmediately(t *testing.T) {
 	}
 	// Advance past every reserved slot: the Runner is idle again.
 	now = now.Add(time.Hour)
-	if err := r.throttle(context.Background()); err != nil {
+	if err := r.paceOnce(context.Background()); err != nil {
 		t.Fatalf("throttle: %v", err)
 	}
 	if got != 0 {
 		t.Fatalf("wait after an hour of quiet = %v, want 0 (the gap is trailing, not leading)", got)
-	}
-}
-
-// TestThrottle_interactiveSkipsTheBackgroundQueue is the reason WithInteractive
-// exists. Three background workers queue up; then a person clicks. Before the
-// priority lane the click inherited their queue and waited four gaps — on the
-// request's own context, so a proxy timeout turned a merely-queued call into a
-// visible failure. It must wait its own gap instead.
-func TestThrottle_interactiveSkipsTheBackgroundQueue(t *testing.T) {
-	base := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
-	var mu sync.Mutex
-	var waits []time.Duration
-	r := New(RunnerConfig{
-		CookieProvider: func() (string, string) { return "c", "valid" },
-		ThrottleFloor:  20 * time.Second,
-		ThrottleJitter: time.Nanosecond,
-		RandFloat64:    func() float64 { return 0 },
-		Now:            func() time.Time { return base },
-		Sleep: func(_ context.Context, d time.Duration) error {
-			mu.Lock()
-			waits = append(waits, d)
-			mu.Unlock()
-			return nil
-		},
-	})
-
-	// Three background callers queue: 1, 2 and 3 gaps.
-	for i := 0; i < 3; i++ {
-		if err := r.throttle(context.Background()); err != nil {
-			t.Fatalf("background throttle: %v", err)
-		}
-	}
-	mu.Lock()
-	backgroundWaits := len(waits)
-	mu.Unlock()
-	if backgroundWaits != 3 {
-		t.Fatalf("expected 3 background waits, got %d", backgroundWaits)
-	}
-
-	if err := r.throttle(WithInteractive(context.Background())); err != nil {
-		t.Fatalf("interactive throttle: %v", err)
-	}
-
-	mu.Lock()
-	got := waits[len(waits)-1]
-	mu.Unlock()
-	// One gap — NOT the four it would inherit by queueing.
-	if got < 20*time.Second || got > 21*time.Second {
-		t.Fatalf("interactive wait = %v, want ~20s (its own gap, not the queue's)", got)
-	}
-}
-
-// TestThrottle_interactiveStillWaitsItsOwnGap: skipping the queue must not mean
-// skipping the throttle. On an idle Runner an interactive call goes at once —
-// there is nothing to be spaced from — but it never lands on top of a call
-// already admitted, and never alongside another interactive call.
-func TestThrottle_interactiveStillWaitsItsOwnGap(t *testing.T) {
-	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
-	var got time.Duration
-	r := New(RunnerConfig{
-		CookieProvider: func() (string, string) { return "c", "valid" },
-		ThrottleFloor:  20 * time.Second,
-		ThrottleJitter: time.Nanosecond,
-		RandFloat64:    func() float64 { return 0 },
-		Now:            func() time.Time { return now },
-		Sleep:          func(_ context.Context, d time.Duration) error { got = d; return nil },
-	})
-
-	// A lone interactive call on an idle Runner goes straight through.
-	if err := r.throttle(WithInteractive(context.Background())); err != nil {
-		t.Fatalf("throttle: %v", err)
-	}
-	if got != 0 {
-		t.Fatalf("first interactive wait on an idle Runner = %v, want 0", got)
-	}
-	// A second interactive call at the same instant is spaced from the first,
-	// not granted alongside it.
-	if err := r.throttle(WithInteractive(context.Background())); err != nil {
-		t.Fatalf("throttle: %v", err)
-	}
-	if got < 20*time.Second {
-		t.Fatalf("second interactive wait = %v, want >=20s (spaced from the first)", got)
-	}
-	// A third: now the priority lane's own tail is what binds, not now+gap.
-	// Two clicks deep, now+gap would land on top of the second call — the
-	// interactive tail is what keeps a burst of clicks spaced from each other.
-	if err := r.throttle(WithInteractive(context.Background())); err != nil {
-		t.Fatalf("throttle: %v", err)
-	}
-	if got < 40*time.Second {
-		t.Fatalf("third interactive wait = %v, want >=40s (the priority lane keeps its own tail)", got)
 	}
 }
 
@@ -1010,95 +853,11 @@ func TestThrottle_idleRunnerDoesNotSleepAtAll(t *testing.T) {
 	})
 
 	start := time.Now()
-	if err := r.throttle(context.Background()); err != nil {
+	if err := r.paceOnce(context.Background()); err != nil {
 		t.Fatalf("throttle: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("idle throttle took %v, want a prompt return rather than the ~20-35s gap", elapsed)
-	}
-}
-
-// TestThrottle_interactiveNeverLandsOnAJustStartedBackgroundCall guards the
-// subtle half of the trailing-gap change. nextInteractiveSlot tracks only the
-// priority lane, so it says nothing about a background call that just began.
-// If the interactive branch simply took max(now, nextInteractiveSlot), a click
-// arriving the instant a background call started would fire on top of it — two
-// yt-dlp processes hitting YouTube together, which is the exact failure the
-// pacer exists to prevent. The busy branch must clear it by a full gap.
-//
-// "Never" is scoped to a call that has ALREADY STARTED. A background slot
-// reserved for a time still in the future is a separate, pre-existing case the
-// pacer deliberately does not push back (the burst-of-two trade-off documented
-// on throttle), and this test says nothing about it.
-func TestThrottle_interactiveNeverLandsOnAJustStartedBackgroundCall(t *testing.T) {
-	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
-	var got time.Duration
-	r := New(RunnerConfig{
-		CookieProvider: func() (string, string) { return "c", "valid" },
-		ThrottleFloor:  20 * time.Second,
-		ThrottleJitter: time.Nanosecond,
-		RandFloat64:    func() float64 { return 0 },
-		Now:            func() time.Time { return now },
-		Sleep:          func(_ context.Context, d time.Duration) error { got = d; return nil },
-	})
-
-	// A background call takes the current instant on the idle Runner.
-	if err := r.throttle(context.Background()); err != nil {
-		t.Fatalf("background throttle: %v", err)
-	}
-	if got != 0 {
-		t.Fatalf("background wait on an idle Runner = %v, want 0", got)
-	}
-	// A click lands at that same instant. It skips the queue but must still
-	// clear the call that just started by a full gap.
-	if err := r.throttle(WithInteractive(context.Background())); err != nil {
-		t.Fatalf("interactive throttle: %v", err)
-	}
-	if got < 20*time.Second {
-		t.Fatalf("interactive wait = %v, want >=20s — it must not fire on top of the background call that just started", got)
-	}
-}
-
-// TestThrottle_backgroundQueuesBehindAnInteractiveJump: an interactive call
-// jumps a queue of background reservations, and work queued AFTERWARDS still
-// lands a full gap past the slot the jumper took rather than piling onto it.
-// (The jumper's own tail does not move nextSlot here — it is already further
-// out than the jumper's tail; the spacing comes from the standing queue.)
-func TestThrottle_backgroundQueuesBehindAnInteractiveJump(t *testing.T) {
-	base := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
-	var got time.Duration
-	r := New(RunnerConfig{
-		CookieProvider: func() (string, string) { return "c", "valid" },
-		ThrottleFloor:  20 * time.Second,
-		ThrottleJitter: time.Nanosecond,
-		RandFloat64:    func() float64 { return 0 },
-		Now:            func() time.Time { return base },
-		Sleep:          func(_ context.Context, d time.Duration) error { got = d; return nil },
-	})
-
-	// There must actually BE a queue for the interactive call to jump: on an
-	// idle Runner it takes the current instant and the assertion below would
-	// hold for a plain background call too, proving nothing about the jump.
-	for i := 0; i < 3; i++ {
-		if err := r.throttle(context.Background()); err != nil {
-			t.Fatalf("priming background throttle: %v", err)
-		}
-	}
-
-	if err := r.throttle(WithInteractive(context.Background())); err != nil {
-		t.Fatalf("interactive throttle: %v", err)
-	}
-	jumper := got
-	if jumper < 20*time.Second || jumper > 21*time.Second {
-		t.Fatalf("interactive wait = %v, want ~20s (it jumped the 3-deep queue)", jumper)
-	}
-
-	if err := r.throttle(context.Background()); err != nil {
-		t.Fatalf("background throttle: %v", err)
-	}
-	if got < jumper+20*time.Second {
-		t.Fatalf("background wait after an interactive jump = %v, want >=%v — a full gap past the jumper's slot, not piled onto it",
-			got, jumper+20*time.Second)
 	}
 }
 
