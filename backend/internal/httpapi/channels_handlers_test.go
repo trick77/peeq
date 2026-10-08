@@ -3020,7 +3020,7 @@ func TestChannelDetail_goneChannel(t *testing.T) {
 // --- The refresh cap measures the process, not the queue (issue #179) --------
 
 // pacingResolver splits a Runner call into its two halves: the wait in the
-// shared pacer, during which no process exists, and the work after it. Only the
+// shared YouTube queue, during which no process exists, and the work after it. Only the
 // second half may be counted against the cap, so only the second half is
 // preceded by the start hook execWithProgress fires.
 type pacingResolver struct {

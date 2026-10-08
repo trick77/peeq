@@ -13,7 +13,7 @@ import (
 //
 // It exists because a timeout meant to bound a yt-dlp process is almost never
 // armed at the moment that process runs: entering a Runner call and the process
-// starting are different instants, and the shared pacer makes the call wait its
+// starting are different instants, and the shared YouTube queue makes the call wait its
 // turn in between. A timer armed on entry counts that deliberate wait against
 // the process, so a busy queue turns patience into a reported failure.
 //

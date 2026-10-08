@@ -230,7 +230,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	// which surfaces as a retry below.
 	//
 	// Armed on the start hook rather than here, because Download does not run
-	// yt-dlp immediately: the shared pacer makes the call wait its turn first,
+	// yt-dlp immediately: the shared YouTube queue makes the call wait its turn first,
 	// and there are no progress lines until the process exists. A timer started
 	// here therefore counts the queueing wait as "no progress", and a job with a
 	// deep enough queue in front of it was killed before it ever downloaded

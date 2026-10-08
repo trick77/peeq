@@ -216,7 +216,7 @@ func (w *Worker) pass(ctx context.Context) {
 	}
 
 	// The candidate query excluded videos in the download pipeline, but the
-	// fetch above waited on the shared pacer, and the user may have queued this
+	// fetch above waited on the shared YouTube queue, and the user may have queued this
 	// video meanwhile — by URL, or from the Inbox. A download that finished in
 	// that window stored the full transcript; a caption read must not replace
 	// it with a truncated one, nor enqueue a second analysis.

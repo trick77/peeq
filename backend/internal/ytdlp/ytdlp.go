@@ -98,7 +98,7 @@ type RunnerConfig struct {
 	// no-op (still taking ctx so a cancellation test can exercise it).
 	Sleep func(ctx context.Context, d time.Duration) error
 	// Now is the clock the queue measures gaps against. Injectable so
-	// a test can drive the pacer deterministically instead of waiting real
+	// a test can drive the queue deterministically instead of waiting real
 	// seconds. Defaults to time.Now.
 	Now func() time.Time
 	// MediaDir is the directory downloads are written into. Not used by
@@ -490,7 +490,7 @@ type startKey struct{}
 // fn runs on the goroutine making the call, synchronously, immediately before
 // exec — so it must not block. It fires at most once per call, and NOT at all
 // when the call never reaches exec: a pause gate, a missing cookie, or a
-// context cancelled during the throttle wait all return early. That is the
+// context cancelled during the queue wait all return early. That is the
 // point — there is no process to bound, and a user Cancel during the pre-call
 // wait is already handled by the queue wait's own cancellation.
 //
@@ -623,7 +623,7 @@ func (r *Runner) exec(ctx context.Context, args ...string) ([]byte, error) {
 // cookie gate / queue path as Metadata rather than a parallel one.
 func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args ...string) ([]byte, error) {
 	// First pass: refuse early. A call that is paused or has no usable cookie
-	// must not take a pacer slot or sit through the sleep just to be refused
+	// must not take a turn or wait out a gap just to be refused
 	// afterwards. The text is discarded — see gates for why.
 	if _, err := r.gates(); err != nil {
 		return nil, &RefusedError{Err: err}

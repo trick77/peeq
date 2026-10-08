@@ -851,7 +851,7 @@ func TestWorker_progressResetsWatchdog(t *testing.T) {
 	}
 }
 
-// A call that sits on the shared pacer for longer than the whole watchdog
+// A call that sits on the shared YouTube queue for longer than the whole watchdog
 // window before yt-dlp starts must NOT be killed. This is the bug the watchdog
 // had: it was armed when Download was entered, but the pacer's wait happens
 // inside that call and emits no progress, so a job with a deep enough queue in

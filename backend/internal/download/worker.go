@@ -135,7 +135,7 @@ type Deps struct {
 	// killed and the job retried. Zero selects metadataPreflightTimeout; a
 	// negative value disables the cap. Like Watchdog it runs from when the
 	// process starts, not from when the call is made, so time spent queueing
-	// on the shared pacer does not count against it.
+	// on the shared YouTube queue does not count against it.
 	MetadataTimeout time.Duration
 	// PollInterval is how long the loop waits before re-checking the queue
 	// when it found nothing to claim.

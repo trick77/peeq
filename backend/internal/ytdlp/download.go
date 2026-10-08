@@ -312,6 +312,10 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		}
 	}
 
+	// The YouTube calls are done; finalizing is local file work, so the turn
+	// goes back now rather than after it (release is once-only; the deferred
+	// call is a no-op).
+	releaseTurn()
 	result, err := finalizeDownload(stagingDir, r.cfg.MediaDir, req.VideoID, formatSelector)
 	if err != nil {
 		_ = os.RemoveAll(stagingDir)
