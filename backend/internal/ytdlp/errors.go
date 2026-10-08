@@ -45,6 +45,10 @@ type RefusedError struct {
 func (e *RefusedError) Error() string { return e.Err.Error() }
 func (e *RefusedError) Unwrap() error { return e.Err }
 
+// Refused marks the error as a refusal for packages that cannot import ytdlp
+// (media, which ytdlp imports), so they can tell "never sent" from "failed".
+func (e *RefusedError) Refused() bool { return true }
+
 // IsRefused reports whether err is a gate refusal — a call the Runner never
 // started — as opposed to a failure of a call that ran.
 func IsRefused(err error) bool {

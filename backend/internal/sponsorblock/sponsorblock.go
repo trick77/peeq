@@ -3,7 +3,7 @@
 // sponsor.ajay.app, so peeq's player can skip or mark them.
 //
 // The API is NOT YouTube. Nothing here goes through the cookie gate, the
-// shared yt-dlp pacer, or the global YouTube kill-switch: those exist to
+// shared YouTube queue, or the global YouTube kill-switch: those exist to
 // protect a Google account, and gating a public segment API behind an expired
 // cookie would park the whole backfill for no reason.
 package sponsorblock

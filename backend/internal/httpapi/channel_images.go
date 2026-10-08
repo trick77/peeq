@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/trick77/peeq/internal/channels"
-	"github.com/trick77/peeq/internal/ytdlp"
 )
 
 // handleChannelAvatar and handleChannelBanner serve a channel's stored
@@ -45,10 +44,11 @@ func (s *server) serveChannelImage(w http.ResponseWriter, r *http.Request, kind 
 // its next load. onArt fires when it is done, so a test can await it.
 //
 // Detached from the request, which has already answered: each image is a turn
-// in the YouTube queue. On the interactive lane, because a person is looking
-// at the channel. On the process-lifetime ctx, so a shutdown stops it waiting
-// for a turn. One fetch per channel at a time: a repeated Refresh while one is
-// queued does not queue the same two turns again.
+// in the YouTube queue. On the background lane: nobody waits on it (it shows
+// on the next load), so it must not jump scans. On the process-lifetime
+// ctx, so a shutdown stops it waiting for a turn. One fetch per channel at
+// a time: a repeated Refresh while one is queued does not queue the same
+// two turns again.
 func (s *server) storeChannelArtAsync(channelID, avatarURL, bannerURL string) {
 	if s.channels == nil || s.images == nil || (avatarURL == "" && bannerURL == "") {
 		return
@@ -78,7 +78,7 @@ func (s *server) storeChannelArtAsync(channelID, avatarURL, bannerURL string) {
 				s.onArt(channelID)
 			}
 		}()
-		ctx := ytdlp.WithInteractive(base)
+		ctx := base
 		s.storeChannelImage(ctx, channelID, channels.ImageAvatar, avatarURL)
 		s.storeChannelImage(ctx, channelID, channels.ImageBanner, bannerURL)
 	}()

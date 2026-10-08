@@ -212,8 +212,8 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	//
 	// In the background: each image is a turn in the YouTube queue, a gap
 	// after the resolve above, so fetching both on the request would hold it
-	// open for a minute or more after the channel was already added.
-	s.storeChannelArtAsync(ucid, info.AvatarURL, info.BannerURL)
+	// open for a minute or more after the channel was already added. Started
+	// only once the add has succeeded, so a failed add spends no turns.
 
 	now := store.FormatTime(time.Now())
 	if err := s.channels.MarkAdded(ucid, now); err != nil {
@@ -226,6 +226,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.storeChannelArtAsync(ucid, info.AvatarURL, info.BannerURL)
 	// Report the real post-condition, not req.Subscribe. Upsert and Subscribe
 	// are both idempotent, so re-adding an ALREADY-subscribed channel with
 	// subscribe=false succeeds and leaves the existing subscription intact —
@@ -489,17 +490,34 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 // that cannot be resolved — a stale cookie, a deleted channel — is not
 // re-fetched on every single visit.
 //
-// The gate reads the row snapshotted before the goroutine launches, so two
-// near-simultaneous first visits to the same unresolved channel can both
-// fetch. Left as-is deliberately: peeq is single-user, the window is one
-// page load wide, and the cost of losing that race is one redundant yt-dlp
-// call — not worth a dedup map or a queue.
+// The gate reads the row snapshotted before the goroutine launches, and
+// resolved_at is only written once the resolve has run — which, with one
+// YouTube call at a time, can be a whole download away. So visits are
+// de-duplicated per channel: a revisit while a resolve is queued or running
+// starts nothing, instead of queueing the same lookup again on the
+// interactive lane (where a stream of them would starve scans).
+//
+// The artwork is fetched after the resolve, in the background like on
+// channel add (storeChannelArtAsync): on the process-lifetime ctx, once per
+// channel. The resolve itself runs on that ctx too, so shutdown stops it
+// waiting for a turn.
 func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel) {
 	if s.metadata == nil {
 		return
 	}
 	if cached != nil && cached.ResolvedAt != "" {
 		return
+	}
+	s.artMu.Lock()
+	if s.resolveInFlight[channelID] {
+		s.artMu.Unlock()
+		return
+	}
+	s.resolveInFlight[channelID] = true
+	s.artMu.Unlock()
+	base := s.background
+	if base == nil {
+		base = context.Background()
 	}
 	go func() {
 		defer func() {
@@ -510,6 +528,10 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 			if r := recover(); r != nil {
 				slog.Error("channel resolve: recovered from panic", "channel_id", channelID, "panic", r)
 			}
+			// Cleared before the hook, so a test woken by it can visit again.
+			s.artMu.Lock()
+			delete(s.resolveInFlight, channelID)
+			s.artMu.Unlock()
 			if s.onChannelResolved != nil {
 				s.onChannelResolved(channelID)
 			}
@@ -525,14 +547,21 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 		// background work but still waits for the running call and the gap, so
 		// it can wait minutes — and a cap armed on entry counted that wait as though yt-dlp
 		// were already hung. It runs from the process actually starting now.
-		stalled, err := ytdlp.CallWithCap(ytdlp.WithInteractive(context.Background()), s.resolveCap,
-			func(c context.Context) error { return s.metadata.Resolve(c, channelID, cached) })
+		var avatarURL, bannerURL string
+		deferArt := func(a, b string) { avatarURL, bannerURL = a, b }
+		stalled, err := ytdlp.CallWithCap(ytdlp.WithInteractive(base), s.resolveCap,
+			func(c context.Context) error {
+				rctx := channelmeta.WithShutdownParent(channelmeta.WithArtDeferred(c, deferArt), base)
+				return s.metadata.Resolve(rctx, channelID, cached)
+			})
 		if err != nil {
 			if stalled {
 				slog.Warn("channel resolve stalled", "channel_id", channelID, "after", s.resolveCap)
 			}
 			slog.Warn("channel resolve failed", "channel_id", channelID, "err", err)
+			return
 		}
+		s.storeChannelArtAsync(channelID, avatarURL, bannerURL)
 	}()
 }
 

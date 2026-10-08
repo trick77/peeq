@@ -100,7 +100,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 		// single-threaded queue indefinitely.
 		//
 		// The cap runs from when yt-dlp starts, not from when Metadata is
-		// entered, for the same reason the download watchdog does: the pacer
+		// entered, for the same reason the download watchdog does: the queue
 		// makes this call queue behind everything else in flight, and two
 		// minutes of that is ordinary on a busy Runner. Timing from entry made a
 		// queued probe fail for being patient — and with a shorter fuse than the
@@ -234,7 +234,7 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 	// and there are no progress lines until the process exists. A timer started
 	// here therefore counts the queueing wait as "no progress", and a job with a
 	// deep enough queue in front of it was killed before it ever downloaded
-	// anything — reported as a failure when it was doing exactly what the pacer
+	// anything — reported as a failure when it was doing exactly what the queue
 	// is for. Arming on the hook makes the watchdog mean what it says: the
 	// process is running and has gone quiet.
 	//

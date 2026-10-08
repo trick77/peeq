@@ -22,8 +22,9 @@ import { INBOX_SORT_OPTIONS } from "./Library";
 // same channel-eyebrow-above-clamped-title order, same `.card-foot` action
 // row. The one honest difference remaining is the actions — Download / Ignore
 // rather than favorite/watched. The thumbnail now goes through the same backend
-// proxy the Library uses (`/api/pending/{id}/thumbnail`, which fetches and
-// caches the remote poster server-side), so an inbox card never loads
+// proxy the Library uses (`/api/pending/{id}/thumbnail`, which serves the
+// poster cached server-side and queues a fetch for one it lacks), so an inbox
+// card never loads
 // i.ytimg.com in the browser and falls back to the shared gradient placeholder
 // instead of a broken-image glyph when a poster is missing.
 

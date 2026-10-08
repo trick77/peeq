@@ -32,10 +32,10 @@ const (
 	pollInterval = 5 * time.Minute
 	// resolveTimeout bounds a single refresh, measured from the moment yt-dlp
 	// actually starts rather than from when Resolve is entered — see the
-	// DeferredTimer in refresh. It no longer has to be generous enough to
-	// absorb the pacer's queueing wait, only long enough for one yt-dlp call
-	// and two image fetches, but it is left where it was: shortening it is a
-	// separate decision from fixing what it measures.
+	// DeferredTimer in refresh. It does not have to absorb the queue wait, nor
+	// the two image fetches after the call (they run uncapped, see
+	// ytdlp.Uncapped): only one yt-dlp call. It is left where it was:
+	// shortening it is a separate decision from fixing what it measures.
 	resolveTimeout = 5 * time.Minute
 )
 

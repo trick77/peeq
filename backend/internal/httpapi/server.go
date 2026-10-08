@@ -270,7 +270,10 @@ type server struct {
 	// repeated Refresh does not queue the same two turns again.
 	artMu       sync.Mutex
 	artInFlight map[string]bool
-	queueThumb  func(videoID, url string) bool
+	// resolveInFlight: channels with a page-visit resolve queued or running
+	// (maybeResolveChannel), under artMu.
+	resolveInFlight map[string]bool
+	queueThumb      func(videoID, url string) bool
 
 	channels        *channels.Store
 	channelResolver ChannelResolver
@@ -330,11 +333,12 @@ func New(d Deps) http.Handler {
 		streamAccess:   d.StreamAccess,
 		ytdlp:          d.YTDLP,
 
-		images:      d.Images,
-		background:  d.Background,
-		onArt:       d.OnChannelArt,
-		artInFlight: map[string]bool{},
-		queueThumb:  d.QueueThumbnail,
+		images:          d.Images,
+		background:      d.Background,
+		onArt:           d.OnChannelArt,
+		artInFlight:     map[string]bool{},
+		resolveInFlight: map[string]bool{},
+		queueThumb:      d.QueueThumbnail,
 
 		channels:        d.Channels,
 		channelResolver: d.ChannelResolver,

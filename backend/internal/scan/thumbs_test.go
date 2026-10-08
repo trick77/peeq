@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -96,7 +97,9 @@ func TestScan_runAbandonsInFlightPrefetchOnCancel(t *testing.T) {
 		_, _ = w.Write([]byte("\xff\xd8\xff jpeg"))
 	}))
 	defer srv.Close()
-	defer close(release)
+	var releaseOnce sync.Once
+	letCDNAnswer := func() { releaseOnce.Do(func() { close(release) }) }
+	defer letCDNAnswer()
 
 	h := newScanHarness(t)
 	h.images = media.FetchImageBytes
@@ -121,7 +124,16 @@ func TestScan_runAbandonsInFlightPrefetchOnCancel(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return while a prefetch was blocked; the drainer must follow ctx")
 	}
-	if th, err := h.ledger.GetThumbnail("newp"); err == nil && th != nil {
+	// Only now let the CDN answer: a prefetch that outlived Run (a detached
+	// goroutine on its own ctx) would store the poster at this point, and the
+	// check below must give it the chance to.
+	letCDNAnswer()
+	time.Sleep(300 * time.Millisecond)
+	th, err := h.ledger.GetThumbnail("newp")
+	if err != nil {
+		t.Fatalf("read thumbnail: %v", err)
+	}
+	if th != nil {
 		t.Fatal("a prefetch cut short by shutdown stored a thumbnail")
 	}
 }

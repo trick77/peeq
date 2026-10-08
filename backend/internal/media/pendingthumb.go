@@ -37,7 +37,8 @@ var ytThumbHost = "https://i.ytimg.com"
 //
 // Each candidate is asked ONCE. Every request is a turn in the YouTube queue
 // (20s+ apart), so a retry is never cheap; a transient failure moves on to the
-// fallback, and a poster that still fails is fetched again by a later scan.
+// fallback, and a poster that still fails is asked for again when the inbox
+// next shows its card, after a back-off (scan.QueueThumbnail).
 func FetchPendingThumbnail(ctx context.Context, fetch ImageFetcher, videoID, recordedURL string) (string, []byte, error) {
 	if videoID == "" {
 		return "", nil, fmt.Errorf("pending thumbnail: empty video id")
@@ -55,34 +56,38 @@ func FetchPendingThumbnail(ctx context.Context, fetch ImageFetcher, videoID, rec
 		candidates = append(candidates, hq)
 	}
 
-	var lastErr error
+	// The error returned is the one the caller's back-off is chosen by, so a
+	// failure that may clear (a timeout, a 5xx) wins over a CDN refusal from
+	// another candidate: the poster as a whole may well load next time.
+	var lastErr, mayClear error
 	for _, url := range candidates {
 		mime, data, err := fetch(ctx, url)
 		if err == nil {
 			return mime, data, nil
 		}
 		lastErr = err
+		if mayClear == nil && !IsCDNRefusal(err) {
+			mayClear = err
+		}
 		if ctx.Err() != nil {
 			return "", nil, ctx.Err()
 		}
-		// Only an answer about THIS url (a status, or a body that is not an
-		// image) is a reason to try the next one. A refusal (paused, no
-		// cookie) or a network failure would meet the fallback the same way.
-		if !IsCDNAnswer(err) {
+		// A refusal (paused, no cookie) was never sent and would meet the
+		// fallback the same way. Anything else — a status, a non-image or
+		// oversize body, a timeout — is about this url, and the smaller
+		// fallback may well work.
+		if isRefusal(err) {
 			break
 		}
 	}
 
 	// candidates always holds at least the hqdefault url (videoID is non-empty
 	// past the guard above), so the loop ran and lastErr is set.
+	// A refusal stands: it is no failure of the poster at all.
+	if mayClear != nil && !isRefusal(lastErr) {
+		lastErr = mayClear
+	}
 	return "", nil, fmt.Errorf("pending thumbnail %s: %w", videoID, lastErr)
-}
-
-// IsCDNAnswer reports whether err is the CDN's answer about one url — a status
-// or a non-image body — rather than a failure that would recur for any url.
-func IsCDNAnswer(err error) bool {
-	var se *FetchStatusError
-	return errors.As(err, &se) || errors.Is(err, ErrUnsupportedContentType)
 }
 
 // IsCDNRefusal reports whether err is the CDN saying this url has no image —
@@ -95,4 +100,12 @@ func IsCDNRefusal(err error) bool {
 		return se.StatusCode >= 400 && se.StatusCode < 500
 	}
 	return errors.Is(err, ErrUnsupportedContentType)
+}
+
+// isRefusal reports whether err says the request was never sent (YouTube
+// calls paused, no valid cookie): ytdlp.RefusedError, seen through the
+// interface it implements because media cannot import ytdlp.
+func isRefusal(err error) bool {
+	var r interface{ Refused() bool }
+	return errors.As(err, &r) && r.Refused()
 }
