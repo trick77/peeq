@@ -9,6 +9,24 @@ import (
 	"testing"
 )
 
+// TestFetchPendingThumbnail_mixedFailureMayClear: a timeout on the large
+// variant and a 404 on the fallback is not a poster the CDN refuses, so the
+// error handed back must not read as a refusal (that picks the long back-off).
+func TestFetchPendingThumbnail_mixedFailureMayClear(t *testing.T) {
+	calls := 0
+	fetch := func(context.Context, string) (string, []byte, error) {
+		calls++
+		if calls == 1 {
+			return "", nil, errors.New("fetch image: context deadline exceeded")
+		}
+		return "", nil, &FetchStatusError{StatusCode: http.StatusNotFound}
+	}
+	_, _, err := FetchPendingThumbnail(context.Background(), fetch, "vid1", "https://cdn.test/a.jpg")
+	if err == nil || IsCDNRefusal(err) {
+		t.Fatalf("err = %v, want one that may clear, not a CDN refusal", err)
+	}
+}
+
 // TestIsCDNRefusal: a 4xx or a non-image body is final; a 5xx or a network
 // failure is not, so a brief CDN outage does not lock a poster out.
 func TestIsCDNRefusal(t *testing.T) {

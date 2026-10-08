@@ -521,11 +521,6 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 	}
 	go func() {
 		defer func() {
-			s.artMu.Lock()
-			delete(s.resolveInFlight, channelID)
-			s.artMu.Unlock()
-		}()
-		defer func() {
 			// This goroutine parses yt-dlp output and remote HTTP responses,
 			// both of which are external input. An unrecovered panic here
 			// would take down the whole server, so it is contained the same
@@ -533,6 +528,10 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 			if r := recover(); r != nil {
 				slog.Error("channel resolve: recovered from panic", "channel_id", channelID, "panic", r)
 			}
+			// Cleared before the hook, so a test woken by it can visit again.
+			s.artMu.Lock()
+			delete(s.resolveInFlight, channelID)
+			s.artMu.Unlock()
 			if s.onChannelResolved != nil {
 				s.onChannelResolved(channelID)
 			}
@@ -552,7 +551,8 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 		deferArt := func(a, b string) { avatarURL, bannerURL = a, b }
 		stalled, err := ytdlp.CallWithCap(ytdlp.WithInteractive(base), s.resolveCap,
 			func(c context.Context) error {
-				return s.metadata.Resolve(channelmeta.WithArtDeferred(c, deferArt), channelID, cached)
+				rctx := channelmeta.WithShutdownParent(channelmeta.WithArtDeferred(c, deferArt), base)
+				return s.metadata.Resolve(rctx, channelID, cached)
 			})
 		if err != nil {
 			if stalled {

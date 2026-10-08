@@ -816,16 +816,17 @@ const waitDelay = 10 * time.Second
 // a test can shorten it.
 var maxCallRuntime = 10 * time.Minute
 
-// argsWithoutURLs renders a call's arguments for a log line with every URL
-// left out (the logging rule: never a full URL), so the line still says what
+// argsWithoutURLs renders a call's flags for a log line, so it still says what
 // kind of call it was — a channel tab listing, a metadata read, a resolve.
+// Only flags are kept, never their values: a value can be a URL in any
+// spelling, or a path with a video id in it, and the logging rule is never a
+// full URL.
 func argsWithoutURLs(args []string) string {
 	kept := make([]string, 0, len(args))
 	for _, a := range args {
-		if strings.Contains(a, "://") {
-			continue
+		if strings.HasPrefix(a, "-") {
+			kept = append(kept, a)
 		}
-		kept = append(kept, a)
 	}
 	return strings.Join(kept, " ")
 }

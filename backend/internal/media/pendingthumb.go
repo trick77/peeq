@@ -56,13 +56,19 @@ func FetchPendingThumbnail(ctx context.Context, fetch ImageFetcher, videoID, rec
 		candidates = append(candidates, hq)
 	}
 
-	var lastErr error
+	// The error returned is the one the caller's back-off is chosen by, so a
+	// failure that may clear (a timeout, a 5xx) wins over a CDN refusal from
+	// another candidate: the poster as a whole may well load next time.
+	var lastErr, mayClear error
 	for _, url := range candidates {
 		mime, data, err := fetch(ctx, url)
 		if err == nil {
 			return mime, data, nil
 		}
 		lastErr = err
+		if mayClear == nil && !IsCDNRefusal(err) {
+			mayClear = err
+		}
 		if ctx.Err() != nil {
 			return "", nil, ctx.Err()
 		}
@@ -77,6 +83,9 @@ func FetchPendingThumbnail(ctx context.Context, fetch ImageFetcher, videoID, rec
 
 	// candidates always holds at least the hqdefault url (videoID is non-empty
 	// past the guard above), so the loop ran and lastErr is set.
+	if mayClear != nil {
+		lastErr = mayClear
+	}
 	return "", nil, fmt.Errorf("pending thumbnail %s: %w", videoID, lastErr)
 }
 

@@ -36,6 +36,49 @@ type testResolver struct {
 	calls int
 }
 
+// queuedResolver stands for a resolve still waiting for its turn: it returns
+// only when its ctx ends, as acquire does on shutdown.
+type queuedResolver struct{ entered chan struct{} }
+
+func (q *queuedResolver) ResolveChannel(ctx context.Context, _ string) (ytdlp.ChannelInfo, error) {
+	close(q.entered)
+	<-ctx.Done()
+	return ytdlp.ChannelInfo{}, ctx.Err()
+}
+
+// TestChannelPageResolve_shutdownIsNotAFailedAttempt: the page-visit resolve
+// runs on the process ctx and can wait a long time for its turn. A shutdown
+// in that wait is not an attempt: recording it would stamp resolved_at and
+// resolve_ok=0, and nothing ever retries a stamped channel.
+func TestChannelPageResolve_shutdownIsNotAFailedAttempt(t *testing.T) {
+	q := &queuedResolver{entered: make(chan struct{})}
+	deps := channelsTestDeps(t, q)
+	process, shutdown := context.WithCancel(context.Background())
+	deps.Background = process
+	settled := make(chan string, 1)
+	deps.OnChannelResolved = func(id string) { settled <- id }
+	h := New(deps)
+	if err := deps.Channels.Upsert(channels.Channel{ID: "UCq", Name: "Q"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	getJSON(t, h, "/api/channels/UCq")
+	<-q.entered
+	shutdown()
+	select {
+	case <-settled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the resolve never settled after shutdown")
+	}
+	c, err := deps.Channels.Get("UCq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ResolvedAt != "" {
+		t.Fatalf("a resolve cut short by shutdown was recorded as an attempt (resolved_at %q)", c.ResolvedAt)
+	}
+}
+
 func (r *testResolver) ResolveChannel(_ context.Context, _ string) (ytdlp.ChannelInfo, error) {
 	r.calls++
 	if r.err != nil {
