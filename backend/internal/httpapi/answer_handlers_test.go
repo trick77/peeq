@@ -1553,3 +1553,33 @@ func TestVideoLookup_noStoreAndPreloadFailure(t *testing.T) {
 		t.Fatalf("get after a failed preload = %+v, want nil", got)
 	}
 }
+
+// An in-depth section is the analysis's statement of a point, not a repeat of
+// the transcript at its stamp, so the 30s moment bucket does not apply to it in
+// either direction: it is never dropped for landing beside a transcript or
+// chapter hit, and it never drops one. An unstamped section sits at 0s and
+// must not cost the video its opening transcript hit.
+func TestChooseExcerptsExemptsInDepthFromTheMomentBucket(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	hits := []rag.Hit{
+		{VideoID: "v1", Ordinal: 9, Text: "unstamped point", Kind: rag.KindInDepth, StartSeconds: 0},
+		{VideoID: "v1", Ordinal: 0, Text: "opening words", Kind: rag.KindTranscript, StartSeconds: 5},
+		{VideoID: "v1", Ordinal: 3, Text: "chapter at 4:00", Kind: rag.KindChapter, StartSeconds: 240},
+		{VideoID: "v1", Ordinal: 8, Text: "point made at 4:12", Kind: rag.KindInDepth, StartSeconds: 252},
+	}
+	testee := &server{videos: deps.Videos}
+	got := testee.chooseExcerpts(newVideoLookup(testee.videos, hits), hits, false)
+	kept := map[int]bool{}
+	for _, c := range got {
+		kept[c.hit.Ordinal] = true
+	}
+	// Three per video: the first three by rank, none lost to the bucket.
+	for _, ord := range []int{9, 0, 3} {
+		if !kept[ord] {
+			t.Errorf("ordinal %d dropped, kept %v", ord, kept)
+		}
+	}
+}

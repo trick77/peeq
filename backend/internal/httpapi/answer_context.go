@@ -320,17 +320,18 @@ func (s *server) chooseExcerpts(lookup *videoLookup, hits []rag.Hit, compare boo
 		// (rag.buildRows), so it is exempt from the moment bucket in BOTH
 		// directions: it is never suppressed by an earlier hit, and it must
 		// never claim bucket 0 either — doing so would drop the genuine
-		// transcript hit in the video's first thirty seconds.
-		isSummary := h.Kind == rag.KindSummary
+		// transcript hit in the video's first thirty seconds. An in-depth
+		// section is exempt the same way (see outsideMoments).
+		exempt := outsideMoments(h.Kind)
 		key := fmt.Sprintf("%s:%d", h.VideoID, h.StartSeconds/answerMomentBucket)
-		if !isSummary && seen[key] {
+		if !exempt && seen[key] {
 			continue
 		}
 		v := lookup.get(h.VideoID)
 		if v == nil {
 			continue
 		}
-		if !isSummary {
+		if !exempt {
 			seen[key] = true
 		}
 		cands = append(cands, excerptCandidate{hit: h, video: v})

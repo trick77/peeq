@@ -90,7 +90,12 @@ type searchResult struct {
 // A summary hit is exempt: it describes the whole video rather than a point in
 // it, carries no timestamp, and is badged differently — suppressing it because
 // some transcript hit landed near 0s would drop genuinely distinct information.
+// An in-depth hit is exempt outright (outsideMoments): each section is a
+// distinct point, so it neither collides with another nor with a moment.
 func (r *searchResult) admits(h rag.Hit) bool {
+	if h.Kind == rag.KindInDepth {
+		return true
+	}
 	if h.Kind == rag.KindSummary {
 		for _, m := range r.Matches {
 			if m.Kind == rag.KindSummary {
@@ -100,7 +105,7 @@ func (r *searchResult) admits(h rag.Hit) bool {
 		return true
 	}
 	for _, m := range r.Matches {
-		if m.Kind == rag.KindSummary {
+		if outsideMoments(m.Kind) {
 			continue
 		}
 		if abs(m.StartSeconds-h.StartSeconds) < minMomentGapSeconds {
@@ -108,6 +113,15 @@ func (r *searchResult) admits(h rag.Hit) bool {
 		}
 	}
 	return true
+}
+
+// outsideMoments reports whether a chunk kind is exempt from moment dedup in
+// both directions. The summary is whole-video and parked at 0s. An in-depth
+// section is the analysis of a point, not a repeat of the transcript at its
+// stamp — and one with no stamp is parked at 0s too, where claiming the moment
+// would drop the video's opening transcript hit.
+func outsideMoments(kind string) bool {
+	return kind == rag.KindSummary || kind == rag.KindInDepth
 }
 
 func abs(n int) int {
