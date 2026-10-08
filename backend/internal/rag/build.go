@@ -12,14 +12,15 @@ import (
 //
 //	1  transcript windows + one summary chunk
 //	2  the above, plus one chunk per chapter
+//	3  the above, plus one chunk per in-depth section
 //
 // Bump this whenever BuildVideoChunks starts or stops emitting a kind of chunk,
 // or changes how one is composed. Every video whose videos.embed_rev is below
-// the current value is stale, which is what the summarize worker gates on and
-// what the re-embed backfill sweeps for. Forgetting to bump it means new videos
-// get the new recipe and old ones silently keep the old one, with nothing to
+// the current value is stale. Nothing re-indexes a stale video on its own
+// (0019 dropped the sweep); a reprocess does. Forgetting to bump it means new
+// videos get the new recipe and old ones silently keep the old one, with nothing to
 // distinguish them afterwards.
-const ChunkRecipeRev = 2
+const ChunkRecipeRev = 3
 
 // Chapter is one entry of the videos.chapters JSON column. It mirrors
 // summarize.Chapter's wire shape; rag cannot import summarize (summarize
@@ -30,6 +31,15 @@ type Chapter struct {
 	Title string `json:"title"`
 }
 
+// InDepthSection is one "### heading [m:ss]" section of a video's in-depth
+// summary. summarize owns that format and parses it; rag only indexes the
+// result, for the same import-cycle reason as Chapter.
+type InDepthSection struct {
+	Heading      string
+	StartSeconds int
+	Body         string
+}
+
 // BuildVideoChunks is the single definition of what gets indexed for a video.
 //
 // It emits, in order:
@@ -37,13 +47,14 @@ type Chapter struct {
 //	transcript  overlapping ~600-token windows, timestamped from the cue index
 //	summary     the whole-video prose summary, one chunk, no timestamp
 //	chapter     each chapter's title plus the transcript spanning its range
+//	indepth     each in-depth section, heading plus paragraph, at its stamp
 //
-// Ordinals are assigned by a single counter across all three groups. This is
+// Ordinals are assigned by a single counter across all four groups. This is
 // load-bearing: search fuses hits keyed by video_id + ordinal, and rag.Chunk
 // restarts its own Ordinal at 0 on every call, so letting sub-chunk ordinals
 // through would make two unrelated chunks collide and silently merge in the
 // ranking.
-func BuildVideoChunks(parsed subtitles.Parsed, summaryText string, chapters []Chapter) []ChunkRow {
+func BuildVideoChunks(parsed subtitles.Parsed, summaryText string, chapters []Chapter, inDepth []InDepthSection) []ChunkRow {
 	rows := make([]ChunkRow, 0, 32)
 	next := func() int { return len(rows) }
 
@@ -76,15 +87,38 @@ func BuildVideoChunks(parsed subtitles.Parsed, summaryText string, chapters []Ch
 			rows = append(rows, r)
 		}
 	}
+
+	// A section is the in-depth summary's statement of one point with its
+	// reasoning: denser than the transcript window it came from, and anchored
+	// where the point is first made, so a hit seeks like a transcript one. The
+	// lead paragraph is not passed in: it restates what the summary chunk holds.
+	for _, s := range inDepth {
+		body := strings.TrimSpace(s.Body)
+		if body == "" {
+			continue
+		}
+		text := body
+		if h := strings.TrimSpace(s.Heading); h != "" {
+			text = h + "\n\n" + body
+		}
+		rows = append(rows, ChunkRow{
+			Ordinal:      next(),
+			Text:         text,
+			Kind:         KindInDepth,
+			TokenCount:   estimateTokens(text),
+			StartSeconds: max(s.StartSeconds, 0),
+		})
+	}
 	return rows
 }
 
 // Chunk kinds, as stored in transcript_chunks.kind and echoed to the UI, which
-// badges chapter and summary hits differently from transcript ones.
+// badges chapter, summary and in-depth hits differently from transcript ones.
 const (
 	KindTranscript = "transcript"
 	KindSummary    = "summary"
 	KindChapter    = "chapter"
+	KindInDepth    = "indepth"
 )
 
 // chapterRange pairs a chapter with the exclusive end of its span.

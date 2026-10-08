@@ -677,7 +677,7 @@ type askDiag struct {
 	// chunks failed differently from one that is mostly transcript: a summary is
 	// one vector averaging a whole video, so it matches broad questions loosely
 	// and answers them vaguely. The totals cannot say which happened.
-	excTranscript, excSummary, excChapter int
+	excTranscript, excSummary, excChapter, excInDepth int
 	// chosenIDs names the passages themselves, in the order the model read them,
 	// for the Debug line beside the Info one.
 	//
@@ -725,7 +725,7 @@ func (d *askDiag) attribute(lanes []rag.Lane, chosen []rag.Hit) {
 	// assigning, so they are the only ones that would carry a previous call's
 	// numbers into this one. Every other field overwrites and is idempotent by
 	// construction; these are reset so the whole function is.
-	d.excTranscript, d.excSummary, d.excChapter = 0, 0, 0
+	d.excTranscript, d.excSummary, d.excChapter, d.excInDepth = 0, 0, 0, 0
 	for _, h := range chosen {
 		read[key(h)] = true
 		d.chosenIDs = append(d.chosenIDs, key(h))
@@ -737,6 +737,8 @@ func (d *askDiag) attribute(lanes []rag.Lane, chosen []rag.Hit) {
 			d.excSummary++
 		case rag.KindChapter:
 			d.excChapter++
+		case rag.KindInDepth:
+			d.excInDepth++
 		default:
 			// Rows written before the kind column, and anything unrecognized,
 			// count as transcript — which is what Store.Upsert already defaults
@@ -802,9 +804,9 @@ func (d askDiag) log(q string, fused []rag.Hit) {
 	// "-" for a path that never had excerpts to attribute, matching semLaneDiag.
 	excerpts := "-"
 	if d.attributed {
-		excerpts = fmt.Sprintf("%d raw=%d topic=%d kw=%d floor=%d t%d/s%d/c%d",
+		excerpts = fmt.Sprintf("%d raw=%d topic=%d kw=%d floor=%d t%d/s%d/c%d/d%d",
 			d.excerpts, d.fromRaw, d.fromTopic, d.fromKeyword, d.fromFloor,
-			d.excTranscript, d.excSummary, d.excChapter)
+			d.excTranscript, d.excSummary, d.excChapter, d.excInDepth)
 	}
 	slog.Info("ask retrieval",
 		"q", q,

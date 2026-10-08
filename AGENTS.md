@@ -83,6 +83,8 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   the raw transcript and still carries sponsor reads; `forSummary` has them stripped so no chapter,
   key point or summary sentence can be drawn from one. See `summarize/sponsor.go`. Embedding
   deliberately keeps `parsed` — search is not narrowed.
+- In-depth text format has TWO parsers, lockstep: `summarize/indepth_parse.go` (what Ask indexes)
+  and `ui/src/inDepth.ts` (what the reader sees). Change both + `summarize/testdata/indepth_parse.*`.
 - Tests assert intent on `llmwiretest` synthetic models: `llm.ReasoningFor`/`ShortGateFrom` on a
   fake completer's ctx, `srv.Last().Reasoning()` vs `llmwiretest.MinimalSent`/`BalancedSent`,
   `MaxTokens()` vs answer cap + overhead. Never a real model id, wire spelling, level name or rate.

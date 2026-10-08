@@ -55,22 +55,34 @@ func (s *server) buildAnswerContext(lookup *videoLookup, hits []rag.Hit, compare
 			StartSeconds: c.hit.StartSeconds, Kind: c.hit.Kind,
 			Snippet: matchSnippet(c.hit),
 		})
-		// Sanitize BEFORE truncating, never after: stripping a sentinel out of
-		// already-shortened text can leave a dangling "</excerp" that whatever is
-		// written next completes.
 		// The chapter this moment falls in, when the video has chapters. It is
 		// what lets an answer say WHERE in a two-hour lecture something is
 		// covered, instead of leaving the model to infer a location from a
 		// transcript fragment that mentions none.
-		chapterAttr := ""
-		if ch := chapterAt(c.video, c.hit.StartSeconds); ch != "" {
-			chapterAttr = fmt.Sprintf(" chapter=%q", stripExcerptTags(ch))
-		}
-		excerpts = append(excerpts, fmt.Sprintf("<excerpt n=\"%d\" title=%q%s at=\"%ds\">\n%s\n</excerpt>",
-			n, stripExcerptTags(c.video.Title), chapterAttr, c.hit.StartSeconds,
-			truncateRunes(stripExcerptTags(c.hit.Text), answerExcerptRunes)))
+		excerpts = append(excerpts, formatExcerpt(n, c.video.Title, chapterAt(c.video, c.hit.StartSeconds), c.hit))
 	}
 	return sources, vids, excerpts, chosen
+}
+
+// formatExcerpt fences one passage for the answer prompt.
+//
+// kind="analysis" marks a summary or in-depth chunk: peeq's own condensed
+// reading of the video, not words spoken in it. The system prompt tells the
+// model to cite it but never to quote it as the speaker.
+//
+// Sanitize BEFORE truncating, never after: stripping a sentinel out of
+// already-shortened text can leave a dangling "</excerp" that whatever is
+// written next completes.
+func formatExcerpt(n int, title, chapter string, h rag.Hit) string {
+	attrs := fmt.Sprintf(" title=%q", stripExcerptTags(title))
+	if chapter != "" {
+		attrs += fmt.Sprintf(" chapter=%q", stripExcerptTags(chapter))
+	}
+	if h.Kind == rag.KindSummary || h.Kind == rag.KindInDepth {
+		attrs += ` kind="analysis"`
+	}
+	return fmt.Sprintf("<excerpt n=\"%d\"%s at=\"%ds\">\n%s\n</excerpt>",
+		n, attrs, h.StartSeconds, truncateRunes(stripExcerptTags(h.Text), answerExcerptRunes))
 }
 
 // coverageMaxVideos caps the retrieved-video list the panel shows under its

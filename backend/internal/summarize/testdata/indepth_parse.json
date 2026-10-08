@@ -1,0 +1,41 @@
+{
+  "lead": [
+    "The video asks whether a heat pump pays off in an old house. It does, once the flow temperature drops below 50 degrees.",
+    "The lead can run to a second paragraph."
+  ],
+  "sections": [
+    {
+      "heading": "Flow temperature decides it",
+      "stamp": "4:12",
+      "seconds": 252,
+      "body": [
+        "The presenter measures the flow temperature in every room.\nA second line of the same paragraph.",
+        "A second paragraph of the same section."
+      ]
+    },
+    {
+      "heading": "Radiators beat underfloor here",
+      "stamp": "12:30",
+      "seconds": 750,
+      "body": ["Body glued to its heading."]
+    },
+    {
+      "heading": "Insulation comes second",
+      "stamp": "1:02:05",
+      "seconds": 3725,
+      "body": ["Body three."]
+    },
+    {
+      "heading": "Stamp moved to the front",
+      "stamp": "0:45",
+      "seconds": 45,
+      "body": ["Body four."]
+    },
+    {
+      "heading": "No stamp at all",
+      "stamp": null,
+      "seconds": null,
+      "body": ["Body five."]
+    }
+  ]
+}

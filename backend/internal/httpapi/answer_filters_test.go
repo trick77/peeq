@@ -579,3 +579,31 @@ func TestAnswerLogsBothLaddersRungsWhenRelaxed(t *testing.T) {
 		t.Errorf("keyword_rungs carries one ladder's rungs against two ladders' ftsMs:\n%s", line)
 	}
 }
+
+// Summary and in-depth chunks are peeq's own reading of a video, not its
+// words. The excerpt says so, so the model never quotes a paraphrase as the
+// speaker; a transcript or chapter passage carries no such attribute.
+func TestExcerptMarksAnalysisPassages(t *testing.T) {
+	for _, tc := range []struct {
+		kind string
+		want bool
+	}{
+		{rag.KindTranscript, false},
+		{rag.KindChapter, false},
+		{"", false},
+		{rag.KindSummary, true},
+		{rag.KindInDepth, true},
+	} {
+		got := formatExcerpt(2, "A title", "", rag.Hit{Kind: tc.kind, StartSeconds: 30, Text: "text"})
+		if has := strings.Contains(got, ` kind="analysis"`); has != tc.want {
+			t.Errorf("kind %q: excerpt %q, analysis attribute = %v, want %v", tc.kind, got, has, tc.want)
+		}
+	}
+	got := formatExcerpt(2, "A title", "Intro", rag.Hit{Kind: rag.KindInDepth, StartSeconds: 30, Text: "text"})
+	if want := "<excerpt n=\"2\" title=\"A title\" chapter=\"Intro\" kind=\"analysis\" at=\"30s\">\ntext\n</excerpt>"; got != want {
+		t.Errorf("excerpt = %q, want %q", got, want)
+	}
+	if !strings.Contains(systemPrompt(t), `kind="analysis"`) {
+		t.Error("the system prompt never explains the analysis attribute")
+	}
+}

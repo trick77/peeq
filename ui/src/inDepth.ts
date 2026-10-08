@@ -2,6 +2,10 @@
 // a lead, then sections opened by "### Heading [m:ss]" lines. Plain text rather
 // than JSON so a reply cut short still renders every finished section, and a
 // reply that ignored the format renders as paragraphs.
+//
+// LOCKSTEP: summarize/indepth_parse.go parses the same text for Ask's index.
+// A rule changed here changes there too, and in the shared fixture
+// backend/internal/summarize/testdata/indepth_parse.{txt,json}.
 
 export type InDepthSection = {
   heading: string;

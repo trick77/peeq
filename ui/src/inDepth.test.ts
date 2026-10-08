@@ -1,5 +1,25 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import { parseInDepth, readMinutes } from "./inDepth";
+
+// The same sample and expected parse the Go parser reads
+// (summarize/indepth_parse_test.go), so the sections a reader sees are the
+// sections Ask searches. Directory resolved first, not new URL("../x"): see
+// enumsync.test.ts.
+const FIXTURE = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../backend/internal/summarize/testdata/indepth_parse",
+);
+
+describe("parseInDepth lockstep with Go", () => {
+  it("parses the shared fixture as the Go parser does", () => {
+    const text = readFileSync(`${FIXTURE}.txt`, "utf8");
+    const want = JSON.parse(readFileSync(`${FIXTURE}.json`, "utf8"));
+    expect(parseInDepth(text)).toEqual(want);
+  });
+});
 
 describe("parseInDepth", () => {
   it("splits the lead from headed sections and reads their stamps", () => {

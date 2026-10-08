@@ -37,7 +37,7 @@ func TestBuildVideoChunksEmitsAllThreeKinds(t *testing.T) {
 	rows := BuildVideoChunks(parsedFrom(cs), "a prose summary", []Chapter{
 		{TS: 0, Title: "Intro"},
 		{TS: 20, Title: "Minerals"},
-	})
+	}, nil)
 	got := kindsOf(rows)
 	if got[KindTranscript] == 0 {
 		t.Error("no transcript chunks")
@@ -65,7 +65,7 @@ func TestBuildVideoChunksOrdinalsAreUniqueAndDense(t *testing.T) {
 	rows := BuildVideoChunks(parsedFrom(cs), "summary text", []Chapter{
 		{TS: 0, Title: "One"},
 		{TS: 10, Title: "Two"},
-	})
+	}, nil)
 	if len(rows) < 4 {
 		t.Fatalf("expected several chunks, got %d", len(rows))
 	}
@@ -86,7 +86,7 @@ func TestChapterChunkCarriesTitleAndItsOwnSpan(t *testing.T) {
 	rows := BuildVideoChunks(parsedFrom(cs), "", []Chapter{
 		{TS: 10, Title: "Sodium"},
 		{TS: 20, Title: "Potassium"},
-	})
+	}, nil)
 	var sodium, potassium ChunkRow
 	for _, r := range rows {
 		if r.Kind != KindChapter {
@@ -126,7 +126,7 @@ func TestChapterWithNoTranscriptIsNotIndexed(t *testing.T) {
 	rows := BuildVideoChunks(parsedFrom(cs), "", []Chapter{
 		{TS: 0, Title: "Real"},
 		{TS: 9999, Title: "Beyond the end of the video"},
-	})
+	}, nil)
 	for _, r := range rows {
 		if r.Kind == KindChapter && strings.Contains(r.Text, "Beyond the end") {
 			t.Fatalf("empty chapter was indexed: %q", r.Text)
@@ -144,7 +144,7 @@ func TestChapterSplitsWhenTooLongAndKeepsTitleOnEveryPart(t *testing.T) {
 		texts[i] = strings.Repeat("some transcript words ", 20)
 	}
 	cs := cues(texts...)
-	rows := BuildVideoChunks(parsedFrom(cs), "", []Chapter{{TS: 0, Title: "Long"}})
+	rows := BuildVideoChunks(parsedFrom(cs), "", []Chapter{{TS: 0, Title: "Long"}}, nil)
 
 	parts := make([]ChunkRow, 0)
 	for _, r := range rows {
@@ -186,7 +186,7 @@ func TestNormalizeChaptersSortsAndDrops(t *testing.T) {
 		{TS: 10, Title: "Duplicate timestamp"},
 		{TS: 5, Title: "   "},
 		{TS: -3, Title: "Negative"},
-	})
+	}, nil)
 	titles := make([]string, 0)
 	for _, r := range rows {
 		if r.Kind != KindChapter {
@@ -204,7 +204,7 @@ func TestBuildVideoChunksWithoutChaptersMatchesRecipeOne(t *testing.T) {
 	// A video with no chapters must still index exactly as before: transcript
 	// windows plus one summary chunk, and nothing else.
 	cs := cues("some words", "more words")
-	rows := BuildVideoChunks(parsedFrom(cs), "the summary", nil)
+	rows := BuildVideoChunks(parsedFrom(cs), "the summary", nil, nil)
 	got := kindsOf(rows)
 	if got[KindChapter] != 0 {
 		t.Errorf("chapter chunks = %d, want 0", got[KindChapter])
@@ -219,8 +219,37 @@ func TestBuildVideoChunksWithoutChaptersMatchesRecipeOne(t *testing.T) {
 }
 
 func TestBuildVideoChunksBlankSummaryEmitsNoSummaryChunk(t *testing.T) {
-	rows := BuildVideoChunks(parsedFrom(cues("words here")), "   ", nil)
+	rows := BuildVideoChunks(parsedFrom(cues("words here")), "   ", nil, nil)
 	if kindsOf(rows)[KindSummary] != 0 {
 		t.Error("a blank summary must not be indexed")
+	}
+}
+
+func TestBuildVideoChunksIndexesEachInDepthSection(t *testing.T) {
+	cs := cues("intro words here", "more talk about sodium")
+	rows := BuildVideoChunks(parsedFrom(cs), "the summary", []Chapter{{TS: 0, Title: "Intro"}}, []InDepthSection{
+		{Heading: "Sodium drives the cramps", StartSeconds: 10, Body: "The speaker argues sodium, not water."},
+		{Heading: "Empty point", StartSeconds: 0, Body: "  "},
+		{Heading: "Potassium matters less", StartSeconds: 95, Body: "Evidence is thin."},
+	})
+	var got []ChunkRow
+	for _, r := range rows {
+		if r.Kind == KindInDepth {
+			got = append(got, r)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("indepth chunks = %d, want 2 (a section with no body is skipped): %+v", len(got), got)
+	}
+	if got[0].Text != "Sodium drives the cramps\n\nThe speaker argues sodium, not water." || got[0].StartSeconds != 10 {
+		t.Errorf("first section = %+v", got[0])
+	}
+	if got[1].StartSeconds != 95 || got[1].TokenCount == 0 {
+		t.Errorf("second section = %+v", got[1])
+	}
+	for i, r := range rows {
+		if r.Ordinal != i {
+			t.Fatalf("ordinal %d at index %d — indepth rows must share the one counter", r.Ordinal, i)
+		}
 	}
 }

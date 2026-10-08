@@ -442,6 +442,7 @@ func TestExcerptKindsAreCountedOncePerPassage(t *testing.T) {
 		{VideoID: "v1", Ordinal: 1, Kind: rag.KindTranscript},
 		{VideoID: "v1", Ordinal: 9, Kind: rag.KindSummary},
 		{VideoID: "v2", Ordinal: 4, Kind: rag.KindChapter},
+		{VideoID: "v2", Ordinal: 7, Kind: rag.KindInDepth},
 		// A row written before the kind column exists counts as transcript, which
 		// is what the store already defaults a blank kind to.
 		{VideoID: "v3", Ordinal: 2},
@@ -465,7 +466,10 @@ func TestExcerptKindsAreCountedOncePerPassage(t *testing.T) {
 	if d.excChapter != 1 {
 		t.Errorf("excChapter = %d, want 1", d.excChapter)
 	}
-	if got := d.excTranscript + d.excSummary + d.excChapter; got != d.excerpts {
+	if d.excInDepth != 1 {
+		t.Errorf("excInDepth = %d, want 1 — an in-depth section is not a transcript row", d.excInDepth)
+	}
+	if got := d.excTranscript + d.excSummary + d.excChapter + d.excInDepth; got != d.excerpts {
 		t.Errorf("kinds sum to %d but %d passages were read", got, d.excerpts)
 	}
 
@@ -473,7 +477,7 @@ func TestExcerptKindsAreCountedOncePerPassage(t *testing.T) {
 	// counters are the only fields filled by adding rather than assigning, so
 	// they are the only ones that could carry the first call into the second.
 	d.attribute(lanes, read)
-	if got := d.excTranscript + d.excSummary + d.excChapter; got != d.excerpts {
+	if got := d.excTranscript + d.excSummary + d.excChapter + d.excInDepth; got != d.excerpts {
 		t.Errorf("kinds sum to %d after a second attribute, want %d", got, d.excerpts)
 	}
 }

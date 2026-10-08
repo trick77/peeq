@@ -540,8 +540,16 @@ func (w *Worker) emit(videoID, status, phase string) {
 
 // embedAndStore rebuilds the video's chunks from the finished analysis and
 // replaces its index. The chunk recipe itself lives in rag.BuildVideoChunks.
+//
+// The in-depth text is read here rather than passed in: every caller runs
+// after the in-depth step, and a video whose step failed simply indexes no
+// sections until a reprocess writes them.
 func (w *Worker) embedAndStore(ctx context.Context, videoID string, parsed subtitles.Parsed, summaryText string, chapters []Chapter) error {
-	rows := rag.BuildVideoChunks(parsed, summaryText, toRagChapters(chapters))
+	inDepth, err := w.d.Videos.InDepth(videoID)
+	if err != nil {
+		return err
+	}
+	rows := rag.BuildVideoChunks(parsed, summaryText, toRagChapters(chapters), inDepthSections(inDepth))
 	if len(rows) == 0 {
 		return errors.New("no chunks")
 	}
