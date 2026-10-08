@@ -78,7 +78,7 @@ func formatExcerpt(n int, title, chapter string, h rag.Hit) string {
 	if chapter != "" {
 		attrs += fmt.Sprintf(" chapter=%q", stripExcerptTags(chapter))
 	}
-	if h.Kind == rag.KindSummary || h.Kind == rag.KindInDepth {
+	if rag.IsAnalysis(h.Kind) {
 		attrs += ` kind="analysis"`
 	}
 	return fmt.Sprintf("<excerpt n=\"%d\"%s at=\"%ds\">\n%s\n</excerpt>",
@@ -324,6 +324,16 @@ func (s *server) chooseExcerpts(lookup *videoLookup, hits []rag.Hit, compare boo
 		// section is exempt the same way (see outsideMoments).
 		exempt := outsideMoments(h.Kind)
 		key := fmt.Sprintf("%s:%d", h.VideoID, h.StartSeconds/answerMomentBucket)
+		// Parts of one split in-depth section share its stamp exactly: one
+		// point, so only the best-ranked part is kept. Its own key space, so
+		// it still never touches the moment buckets.
+		if h.Kind == rag.KindInDepth {
+			part := fmt.Sprintf("%s:indepth:%d", h.VideoID, h.StartSeconds)
+			if seen[part] {
+				continue
+			}
+			seen[part] = true
+		}
 		if !exempt && seen[key] {
 			continue
 		}

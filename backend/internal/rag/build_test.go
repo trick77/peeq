@@ -242,8 +242,8 @@ func TestBuildVideoChunksSplitsAnOversizedInDepthSection(t *testing.T) {
 		if !strings.HasPrefix(r.Text, "Everything\n\n") || r.StartSeconds != 42 {
 			t.Errorf("part = %.40q at %d, want the heading and the section stamp", r.Text, r.StartSeconds)
 		}
-		if r.TokenCount > DefaultChunkOptions().MaxTokens+estimateTokens("Everything\n\n") {
-			t.Errorf("part of %d tokens, want at most a window plus the heading", r.TokenCount)
+		if r.TokenCount > DefaultChunkOptions().MaxTokens {
+			t.Errorf("part of %d tokens, want at most a window, heading included", r.TokenCount)
 		}
 	}
 	if parts < 2 {

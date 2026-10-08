@@ -221,9 +221,9 @@ describe("ResultCards", () => {
 
   // An in-depth row is peeq's reading of a point, not the words at that
   // moment, so unlike a transcript or chapter row it says so. It keeps its
-  // timestamp and seeks like a moment; an unstamped one (0s) opens the video,
-  // as the summary does, rather than rewinding the resume position.
-  it("labels an in-depth match and seeks to it unless it has no stamp", async () => {
+  // timestamp and seeks like a moment — [0:00] included: an unstamped section
+  // is never indexed, so a 0 here is a real stamp.
+  it("labels an in-depth match and seeks to its stamp", async () => {
     const onOpen = vi.fn();
     const onOpenVideo = vi.fn();
     const { container } = renderCards(
@@ -236,7 +236,7 @@ describe("ResultCards", () => {
         },
         {
           start_seconds: 0,
-          snippet: "an unstamped point",
+          snippet: "an opening point",
           distance: 0.2,
           kind: "indepth",
         },
@@ -248,9 +248,9 @@ describe("ResultCards", () => {
     expect(container).toHaveTextContent("4:12");
     await userEvent.click(screen.getByText("flow temperature decides it"));
     expect(onOpen).toHaveBeenCalledWith("v1", 252);
-    await userEvent.click(screen.getByText("an unstamped point"));
-    expect(onOpenVideo).toHaveBeenCalledWith("v1");
-    expect(onOpen).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByText("an opening point"));
+    expect(onOpen).toHaveBeenCalledWith("v1", 0);
+    expect(onOpenVideo).not.toHaveBeenCalled();
   });
 
   // Retrieval order is bm25 rank or citation order — neither of which the

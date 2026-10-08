@@ -53,19 +53,27 @@ func TestParseInDepthMatchesTheSharedFixture(t *testing.T) {
 	}
 }
 
-// What gets indexed: one section each, paragraphs rejoined, an unstamped one
-// at 0 like the summary chunk. The lead is left out; the summary chunk
-// already carries it.
+// What gets indexed: one section each, paragraphs rejoined, the lead left out
+// (the summary chunk already carries it). A section with no stamp, or one past
+// the video's end, has nowhere to seek and is not indexed: parked at 0s it
+// would rewind the reader, borrow the first chapter's name and pose as a
+// moment. A real [0:00] stamp is kept.
 func TestInDepthSectionsForIndex(t *testing.T) {
-	got := inDepthSections("Lead.\n\n### First [1:05]\n\nOne.\n\nTwo.\n\n### Unstamped\n\nThree.")
+	body := "Lead.\n\n### Intro point [0:00]\n\nZero.\n\n### First [1:05]\n\nOne.\n\nTwo.\n\n" +
+		"### Unstamped\n\nThree.\n\n### Past the end [20:00]\n\nFour."
+	got := inDepthSections(body, 600)
 	want := []rag.InDepthSection{
+		{Heading: "Intro point", StartSeconds: 0, Body: "Zero."},
 		{Heading: "First", StartSeconds: 65, Body: "One.\n\nTwo."},
-		{Heading: "Unstamped", StartSeconds: 0, Body: "Three."},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("sections = %+v, want %+v", got, want)
 	}
-	if got := inDepthSections(""); got != nil {
+	// An unknown duration bounds nothing.
+	if got := inDepthSections(body, 0); len(got) != 3 {
+		t.Errorf("unknown duration: %d sections, want 3 (only the unstamped one dropped)", len(got))
+	}
+	if got := inDepthSections("", 600); got != nil {
 		t.Errorf("empty body = %+v, want nil", got)
 	}
 }

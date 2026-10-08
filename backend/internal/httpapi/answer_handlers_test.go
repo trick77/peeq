@@ -1557,8 +1557,8 @@ func TestVideoLookup_noStoreAndPreloadFailure(t *testing.T) {
 // An in-depth section is the analysis's statement of a point, not a repeat of
 // the transcript at its stamp, so the 30s moment bucket does not apply to it in
 // either direction: it is never dropped for landing beside a transcript or
-// chapter hit, and it never drops one. An unstamped section sits at 0s and
-// must not cost the video its opening transcript hit.
+// chapter hit, and it never drops one. A section stamped [0:00] must not cost
+// the video its opening transcript hit.
 func TestChooseExcerptsExemptsInDepthFromTheMomentBucket(t *testing.T) {
 	deps, _, _ := searchTestDepsWithStores(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "v1"}); err != nil {
@@ -1581,5 +1581,28 @@ func TestChooseExcerptsExemptsInDepthFromTheMomentBucket(t *testing.T) {
 		if !kept[ord] {
 			t.Errorf("ordinal %d dropped, kept %v", ord, kept)
 		}
+	}
+}
+
+// An oversized section is split into parts that share its stamp and heading.
+// They are one point, so only the best-ranked part takes a slot.
+func TestChooseExcerptsKeepsOnePartOfASplitSection(t *testing.T) {
+	deps, _, _ := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	hits := []rag.Hit{
+		{VideoID: "v1", Ordinal: 7, Text: "point, part one", Kind: rag.KindInDepth, StartSeconds: 252},
+		{VideoID: "v1", Ordinal: 8, Text: "point, part two", Kind: rag.KindInDepth, StartSeconds: 252},
+		{VideoID: "v1", Ordinal: 2, Text: "a transcript moment", Kind: rag.KindTranscript, StartSeconds: 900},
+	}
+	testee := &server{videos: deps.Videos}
+	got := testee.chooseExcerpts(newVideoLookup(testee.videos, hits), hits, false)
+	var ords []int
+	for _, c := range got {
+		ords = append(ords, c.hit.Ordinal)
+	}
+	if len(ords) != 2 || ords[0] != 7 || ords[1] != 2 {
+		t.Errorf("chose ordinals %v, want [7 2]: one part of the split section", ords)
 	}
 }

@@ -112,9 +112,13 @@ func BuildVideoChunks(parsed subtitles.Parsed, summaryText string, chapters []Ch
 		// A reply that put one heading over everything is one huge section;
 		// split it like a long chapter, heading on every part.
 		parts := []string{body}
-		if estimateTokens(prefix+body) > DefaultChunkOptions().MaxTokens {
+		if opts := DefaultChunkOptions(); estimateTokens(prefix+body) > opts.MaxTokens {
+			// The heading rides on every part, so it comes out of each
+			// part's budget rather than on top of it.
+			opts.MaxTokens -= estimateTokens(prefix)
+			opts.TargetTokens = min(opts.TargetTokens, opts.MaxTokens)
 			parts = parts[:0]
-			for _, p := range Chunk(body, DefaultChunkOptions()) {
+			for _, p := range Chunk(body, opts) {
 				parts = append(parts, p.Text)
 			}
 		}
@@ -140,6 +144,14 @@ const (
 	KindChapter    = "chapter"
 	KindInDepth    = "indepth"
 )
+
+// IsAnalysis reports whether a chunk kind is peeq's own reading of the video —
+// the summary or an in-depth section — rather than words from it. The answer
+// prompt labels these, and search exempts them from moment dedup. A new
+// analysis kind joins here, once.
+func IsAnalysis(kind string) bool {
+	return kind == KindSummary || kind == KindInDepth
+}
 
 // chapterRange pairs a chapter with the exclusive end of its span.
 type chapterRange struct {

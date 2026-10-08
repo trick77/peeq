@@ -128,13 +128,23 @@ func stampSeconds(stamp string) int {
 
 // inDepthSections is what Ask indexes from a stored in-depth body: each
 // section with its paragraphs rejoined. The lead is dropped (the summary chunk
-// already says it), and an unstamped section sits at 0 like the summary does.
-func inDepthSections(body string) []rag.InDepthSection {
+// already says it).
+//
+// A section with no stamp, or a stamp at or past the video's end, is dropped
+// too. Every hit seeks, so it would have to be parked somewhere: at 0s it
+// rewinds the reader's resume position, borrows the first chapter's name in
+// the Ask prompt and counts as a moment in Find. The prompt demands stamps, so
+// this costs only the rare reply that ignored it; its transcript stays
+// searchable. durationSeconds <= 0 is unknown and bounds nothing.
+func inDepthSections(body string, durationSeconds int) []rag.InDepthSection {
 	var out []rag.InDepthSection
 	for _, s := range parseInDepth(body).Sections {
+		if s.Seconds < 0 || (durationSeconds > 0 && s.Seconds >= durationSeconds) {
+			continue
+		}
 		out = append(out, rag.InDepthSection{
 			Heading:      s.Heading,
-			StartSeconds: max(s.Seconds, 0),
+			StartSeconds: s.Seconds,
 			Body:         strings.Join(s.Body, "\n\n"),
 		})
 	}

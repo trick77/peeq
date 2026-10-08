@@ -231,10 +231,8 @@ export function ResultCards({
                     // A summary chunk is stored at start_seconds 0 — it has no
                     // timestamp of its own — so seeking to it would rewind the
                     // video to the start and then overwrite the stored resume
-                    // position with 0. It opens the video instead, and so does
-                    // an in-depth section the model left unstamped.
-                    m.kind === "summary" ||
-                    (m.kind === "indepth" && m.start_seconds === 0)
+                    // position with 0. It opens the video instead.
+                    m.kind === "summary"
                       ? onOpenVideo(r.video.id)
                       : onOpen(r.video.id, m.start_seconds)
                   }
