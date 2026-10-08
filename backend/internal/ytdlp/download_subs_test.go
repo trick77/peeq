@@ -216,9 +216,10 @@ func TestDownload_holdsTheTurnThroughSubtitles(t *testing.T) {
 		ThrottleJitter: time.Nanosecond,
 		RandFloat64:    func() float64 { return 0 },
 		Sleep: func(ctx context.Context, d time.Duration) error {
-			// Only gaps taken inside the download's held turn; the queue's own
-			// gap for the waiting caller (after the release) is not one.
-			if d == 0 || ctx.Value(heldTurnKey{}) == nil {
+			// Only the gap taken inside the download (its ctx carries the
+			// download's call label); the queue's own gap for the waiting caller
+			// (after the release, on a bare ctx) is not one.
+			if d == 0 || callLabel(ctx) != id {
 				return nil
 			}
 			gaps = append(gaps, d)

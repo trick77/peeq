@@ -171,20 +171,45 @@ func TestFetchPendingThumbnail_cancelStopsBeforeTheFallback(t *testing.T) {
 	}
 }
 
-// TestFetchPendingThumbnail_refusalStopsBeforeTheFallback: a failure that is not
-// the CDN's answer about the url (a refusal while YouTube calls are paused, a
-// dead network) would meet the fallback the same way, so it is not tried.
+// refusal stands in for ytdlp.RefusedError, which media cannot import.
+type refusal struct{}
+
+func (refusal) Error() string { return "youtube paused" }
+func (refusal) Refused() bool { return true }
+
+// TestFetchPendingThumbnail_refusalStopsBeforeTheFallback: a refusal (YouTube
+// calls paused, no valid cookie) was never sent and would meet the fallback
+// the same way, so the fallback is not tried.
 func TestFetchPendingThumbnail_refusalStopsBeforeTheFallback(t *testing.T) {
 	calls := 0
-	refused := errors.New("youtube paused")
 	fetch := func(context.Context, string) (string, []byte, error) {
 		calls++
-		return "", nil, refused
+		return "", nil, refusal{}
 	}
-	if _, _, err := FetchPendingThumbnail(context.Background(), fetch, "vid1", "https://cdn.test/a.jpg"); !errors.Is(err, refused) {
+	if _, _, err := FetchPendingThumbnail(context.Background(), fetch, "vid1", "https://cdn.test/a.jpg"); !errors.As(err, new(refusal)) {
 		t.Fatalf("err = %v, want the refusal", err)
 	}
 	if calls != 1 {
 		t.Fatalf("fetcher called %d times, want 1", calls)
+	}
+}
+
+// TestFetchPendingThumbnail_timeoutFallsBack: a timeout or a network error on
+// the large variant says nothing about the small one, so it is tried.
+func TestFetchPendingThumbnail_timeoutFallsBack(t *testing.T) {
+	var urls []string
+	fetch := func(_ context.Context, url string) (string, []byte, error) {
+		urls = append(urls, url)
+		if len(urls) == 1 {
+			return "", nil, errors.New("fetch image: context deadline exceeded")
+		}
+		return "image/jpeg", []byte("jpeg"), nil
+	}
+	withYTHost(t, "https://cdn.test")
+	if _, data, err := FetchPendingThumbnail(context.Background(), fetch, "vid1", "https://cdn.test/vi/vid1/maxresdefault.jpg"); err != nil || len(data) == 0 {
+		t.Fatalf("fetch = %v, want the hqdefault fallback", err)
+	}
+	if len(urls) != 2 {
+		t.Fatalf("asked %v, want the large variant then the fallback", urls)
 	}
 }

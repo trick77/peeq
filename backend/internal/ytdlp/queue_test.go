@@ -349,6 +349,10 @@ func TestQueue_hungCallIsCutOff(t *testing.T) {
 	if !strings.Contains(logs.String(), "runtime ceiling hit") {
 		t.Fatalf("a ceiling kill was not logged at warn:\n%s", logs.String())
 	}
+	// It says which call hung, by its flags — never by its URL.
+	if !strings.Contains(logs.String(), "-J --skip-download") || strings.Contains(logs.String(), "youtu") {
+		t.Fatalf("ceiling warning must name the call by its flags and never log the URL:\n%s", logs.String())
+	}
 }
 
 // TestQueue_processesNeverOverlap drives real processes through the Runner:

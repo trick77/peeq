@@ -358,7 +358,7 @@ func run() error {
 
 	// captionWorker reads pending inbox videos: it fetches captions on their own
 	// and hands them to summarizeWorker, so a video can be judged before it is
-	// downloaded. It shares the yt-dlp pacer with the scans, and deliberately
+	// downloaded. It shares the YouTube queue with the scans, and deliberately
 	// does not mark its calls interactive — nobody is waiting on one.
 	captionWorker := captionfetch.NewWorker(captionfetch.Deps{
 		Fetcher:   runner,

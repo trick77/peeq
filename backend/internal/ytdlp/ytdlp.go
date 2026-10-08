@@ -151,7 +151,7 @@ type RunnerConfig struct {
 // One Runner is shared by every caller that touches YouTube — the download
 // worker, the scan scheduler, the metadata refresher, and the HTTP handlers
 // that resolve a channel or read a video's metadata on demand. That sharing is
-// what makes the pacer below global rather than per-caller; a second Runner
+// what makes the queue below global rather than per-caller; a second Runner
 // would silently double the call rate.
 type Runner struct {
 	cfg RunnerConfig
@@ -368,6 +368,12 @@ func (r *Runner) releaser() func(ran bool) {
 	return func(ran bool) { once.Do(func() { r.handOff(ran) }) }
 }
 
+// drawGap returns one gap: the floor (never under minThrottleFloor) plus a
+// random jitter.
+func (r *Runner) drawGap() time.Duration {
+	return r.effectiveThrottleFloor() + time.Duration(r.cfg.RandFloat64()*float64(r.cfg.ThrottleJitter))
+}
+
 // handOff gives the turn back. When a process ran, its exit starts the next
 // gap. If anyone is waiting, a dispatch picks the next caller once the gap has
 // run out; otherwise the Runner is free.
@@ -474,13 +480,13 @@ func IsInteractive(ctx context.Context) bool {
 // process is about to be launched.
 type startKey struct{}
 
-// WithStartHook marks ctx so fn is called at the moment a call leaves the pacer
+// WithStartHook marks ctx so fn is called at the moment a call leaves the queue
 // and the yt-dlp process is about to start — after the pause gate, the cookie
 // gate and the throttle wait, before exec.
 //
 // It exists because "the call was entered" and "the process is running" are not
 // the same instant, and callers that bound a call with an inactivity watchdog
-// or a wall-clock cap mean the second one. The pacer's whole job is to make a
+// or a wall-clock cap mean the second one. The queue's whole job is to make a
 // call wait its turn, so a timer armed on entry counts that deliberate wait as
 // though the process were hung: a deep enough queue in front of a job kills it
 // before yt-dlp ever runs, and it surfaces as a failure when nothing was wrong.
@@ -622,6 +628,14 @@ func (r *Runner) exec(ctx context.Context, args ...string) ([]byte, error) {
 // of buffering it silently. Download uses this so it shares the identical
 // cookie gate / queue path as Metadata rather than a parallel one.
 func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args ...string) ([]byte, error) {
+	return r.execCall(ctx, nil, onLine, args...)
+}
+
+// execCall is the single choke point every yt-dlp process goes through. held
+// is nil for an ordinary call, which takes its own turn; a caller holding the
+// turn for several calls (holdTurn) passes it, and the call neither queues
+// nor gives the turn back.
+func (r *Runner) execCall(ctx context.Context, held *heldTurn, onLine func(string), args ...string) ([]byte, error) {
 	// First pass: refuse early. A call that is paused or has no usable cookie
 	// must not take a turn or wait out a gap just to be refused
 	// afterwards. The text is discarded — see gates for why.
@@ -634,12 +648,11 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 	// shorten it. It is held until this function returns, i.e. until the
 	// process has exited, so no other yt-dlp can start meanwhile. A caller that
 	// already holds the turn for several calls (Download: media, then
-	// subtitles) passes it in ctx and keeps it across them.
+	// subtitles) passes it as held and keeps it across them.
 	//
 	// ran flips just before the process starts: anything returning earlier
 	// made no YouTube request and owes no gap.
 	ran := false
-	held, _ := ctx.Value(heldTurnKey{}).(*heldTurn)
 	if held == nil {
 		release, err := r.acquire(ctx)
 		if err != nil {
@@ -734,7 +747,7 @@ func (r *Runner) execWithProgress(ctx context.Context, onLine func(string), args
 				// The ceiling fired, not the caller: say so, since this is the
 				// event the ceiling exists for and the stderr dump goes to debug.
 				r.cfg.Logger.Warn("yt-dlp runtime ceiling hit",
-					"video_id", callLabel(ctx), "after", maxCallRuntime)
+					"video_id", callLabel(ctx), "args", argsWithoutURLs(args), "after", maxCallRuntime)
 			}
 			return nil, r.failed(ctx, stderr.String(), runErr)
 		}
@@ -802,6 +815,20 @@ const waitDelay = 10 * time.Second
 // metadata, captions, channel resolve), which normally takes seconds. A var so
 // a test can shorten it.
 var maxCallRuntime = 10 * time.Minute
+
+// argsWithoutURLs renders a call's arguments for a log line with every URL
+// left out (the logging rule: never a full URL), so the line still says what
+// kind of call it was — a channel tab listing, a metadata read, a resolve.
+func argsWithoutURLs(args []string) string {
+	kept := make([]string, 0, len(args))
+	for _, a := range args {
+		if strings.Contains(a, "://") {
+			continue
+		}
+		kept = append(kept, a)
+	}
+	return strings.Join(kept, " ")
+}
 
 // scanLinesCR is a bufio.SplitFunc like bufio.ScanLines but also splits on
 // bare '\r' (yt-dlp overwrites its progress line with '\r', not '\n').

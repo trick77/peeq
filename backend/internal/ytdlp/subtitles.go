@@ -53,7 +53,7 @@ func SummaryDir(mediaDir, videoID string) string {
 // caller retries later.
 //
 // Like every other Runner call this passes the cookie and pause gates, and it
-// goes through the pacer WITHOUT WithInteractive — nobody is waiting on it.
+// goes through the queue WITHOUT WithInteractive — nobody is waiting on it.
 func (r *Runner) Subtitles(ctx context.Context, videoID, rawURL, subLang string) (string, error) {
 	if videoID == "" {
 		return "", fmt.Errorf("ytdlp: subtitles requires a non-empty video id")

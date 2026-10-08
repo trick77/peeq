@@ -274,21 +274,21 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 	}
 
 	// One turn for the media call and the subtitle call after it (holdTurn
-	// says why). Refused before queueing, as execWithProgress would be, so a
-	// paused peeq does not wait for a turn only to be refused.
-	if _, gerr := r.gates(); gerr != nil {
-		return nil, &RefusedError{Err: gerr}
-	}
-	ctx, releaseTurn, err := r.holdTurn(ctx)
+	// says why).
+	turn, err := r.holdTurn(ctx)
 	if err != nil {
-		// Cancelled while queued: nothing ran, and a cancel removes the
-		// staging dir like any other non-retryable failure.
-		_ = os.RemoveAll(stagingDir)
+		// Refused (nothing to clean up, and a .part must survive for the
+		// requeued job), or cancelled while queued: nothing ran, and a
+		// cancel removes the staging dir like any other non-retryable
+		// failure.
+		if !IsRefused(err) {
+			_ = os.RemoveAll(stagingDir)
+		}
 		return nil, err
 	}
-	defer releaseTurn()
+	defer turn.done()
 
-	if _, execErr := r.execWithProgress(ctx, onLine, args...); execErr != nil {
+	if _, execErr := r.execCall(ctx, turn, onLine, args...); execErr != nil {
 		// A refusal (paused, no cookie, cookie flagged) means yt-dlp never ran:
 		// there is nothing of this attempt to clean up, and a .part left by an
 		// earlier rate-limited attempt must survive so the requeued job can
@@ -306,16 +306,16 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 			_ = os.RemoveAll(stagingDir)
 			return nil, err
 		}
-		if err := r.downloadSubtitles(ctx, req.VideoID, watchURL, subLang, stagingDir); err != nil {
+		if err := r.downloadSubtitles(ctx, turn, req.VideoID, watchURL, subLang, stagingDir); err != nil {
 			_ = os.RemoveAll(stagingDir)
 			return nil, err
 		}
 	}
 
 	// The YouTube calls are done; finalizing is local file work, so the turn
-	// goes back now rather than after it (release is once-only; the deferred
+	// goes back now rather than after it (done is once-only; the deferred
 	// call is a no-op).
-	releaseTurn()
+	turn.done()
 	result, err := finalizeDownload(stagingDir, r.cfg.MediaDir, req.VideoID, formatSelector)
 	if err != nil {
 		_ = os.RemoveAll(stagingDir)
@@ -338,9 +338,9 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 //     cookie, or the next job goes out with a cookie YouTube just rejected.
 //
 // A gate refusal (paused, no cookie) made no call and is swallowed with the rest.
-func (r *Runner) downloadSubtitles(ctx context.Context, videoID, watchURL, subLang, dir string) error {
+func (r *Runner) downloadSubtitles(ctx context.Context, turn *heldTurn, videoID, watchURL, subLang, dir string) error {
 	// Runs under the turn Download holds (holdTurn), so it never queues.
-	_, err := r.exec(ctx, subtitleArgs(dir, subLang, watchURL)...)
+	_, err := r.execCall(ctx, turn, nil, subtitleArgs(dir, subLang, watchURL)...)
 	switch {
 	case err == nil:
 		return nil

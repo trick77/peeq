@@ -190,6 +190,20 @@ func waitForVideoStatus(t *testing.T, h *harness, videoID, status string) {
 	})
 }
 
+// waitPausedAndRequeued waits for the worker to pause on jobID and for the
+// job's row to be written back, and fails unless it went back to pending.
+// Paused() alone is not enough: the flag is set BEFORE the requeue write on
+// purpose (outcome.go, lost-wakeup ordering), so a test reading the row right
+// after it can still see "running".
+func waitPausedAndRequeued(t *testing.T, h *harness, jobID int64) {
+	t.Helper()
+	waitFor(t, "worker paused", func() bool { return h.worker.Paused() })
+	waitFor(t, "job row written back", func() bool { return h.jobState(t, jobID).State != "running" })
+	if s := h.jobState(t, jobID).State; s != "pending" {
+		t.Fatalf("job %d state after the pause = %q, want pending (requeued, not failed)", jobID, s)
+	}
+}
+
 func runWorker(t *testing.T, w *Worker) context.CancelFunc {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -385,11 +399,8 @@ func TestWorker_blockPausesAndStopsClaiming(t *testing.T) {
 	job2 := h.enqueue(t, "two", 0)
 	runWorker(t, h.worker)
 
-	// The block pauses the worker.
-	waitFor(t, "worker paused", func() bool { return h.worker.Paused() })
-	// The flag is set BEFORE the requeue write (outcome.go, lost-wakeup
-	// ordering), so wait for the row itself rather than racing that write.
-	waitFor(t, "job1 requeued", func() bool { return h.jobState(t, job1).State != "running" })
+	// The block pauses the worker and requeues job1.
+	waitPausedAndRequeued(t, h, job1)
 
 	// job1 is back to pending with attempts NOT burned; cookie flipped.
 	j1 := h.jobState(t, job1)
@@ -561,10 +572,7 @@ func TestWorker_metadataPreflightPausesOnNoCookie(t *testing.T) {
 	job := h.enqueue(t, "vid1", 0)
 	runWorker(t, h.worker)
 
-	waitFor(t, "worker paused", func() bool { return h.worker.Paused() })
-	// The flag is set BEFORE the requeue write (outcome.go, lost-wakeup
-	// ordering), so wait for the row itself rather than racing that write.
-	waitFor(t, "job requeued", func() bool { return h.jobState(t, job).State != "running" })
+	waitPausedAndRequeued(t, h, job)
 
 	j := h.jobState(t, job)
 	if j.State != "pending" {
@@ -605,8 +613,9 @@ func TestWorker_resumeAfterCookieRepasteUnwedgesQueue(t *testing.T) {
 	job2 := h.enqueue(t, "two", 0)
 	runWorker(t, h.worker)
 
-	// The block stalls the queue: worker paused, neither job progresses.
-	waitFor(t, "worker paused", func() bool { return h.worker.Paused() })
+	// The block stalls the queue: worker paused, job1 requeued, neither job
+	// progresses.
+	waitPausedAndRequeued(t, h, job1)
 	time.Sleep(30 * time.Millisecond)
 	if h.jobState(t, job2).State != "pending" {
 		t.Fatal("job2 was claimed while the queue was wedged on a blocked cookie")

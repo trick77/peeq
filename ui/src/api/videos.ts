@@ -199,8 +199,9 @@ export function withVersion(url: string, version?: string): string {
   return version ? `${url}?v=${encodeURIComponent(version)}` : url;
 }
 
-// pendingThumbnailUrl points at the inbox thumbnail endpoint, which fetches and
-// caches a pending video's remote thumbnail server-side and serves it locally.
+// pendingThumbnailUrl points at the inbox thumbnail endpoint, which serves a
+// pending video's poster cached server-side; one not cached yet is queued for
+// a background fetch (a 404 meanwhile) and shows on a later page load.
 // It is distinct from thumbnailUrl because a pending item has no videos row: it
 // lives only in the channel_videos ledger, so the /api/videos/{id} route
 // wouldn't find it.

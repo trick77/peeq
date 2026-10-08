@@ -33,7 +33,7 @@ import (
 // pollInterval is how often the worker looks for a video to read.
 //
 // One video per tick, not a batch: every fetch is a yt-dlp call against
-// YouTube, and this loop shares the pacer with the scans and metadata
+// YouTube, and this loop shares the YouTube queue with the scans and metadata
 // refreshes that peeq's subscriptions actually depend on. A minute is fast
 // enough that a newly discovered video is usually summarized before the user
 // next opens the Inbox, and slow enough that a channel dumping its archive

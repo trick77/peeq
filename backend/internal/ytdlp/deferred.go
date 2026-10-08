@@ -79,7 +79,7 @@ func (dt *DeferredTimer) Stop() bool {
 
 // CallWithCap runs fn under a cap of d that starts when the Runner call inside
 // fn reaches exec — WithStartHook fires it — rather than when fn is entered,
-// so the pacer's queueing wait is never counted against the process. fn gets
+// so the queue wait is never counted against the process. fn gets
 // the context to hand the Runner; the cap cancels it. A non-positive d
 // disables the cap, as it does for DeferredTimer.
 //

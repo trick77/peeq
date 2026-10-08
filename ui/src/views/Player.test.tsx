@@ -3139,6 +3139,13 @@ describe("Player video host", () => {
       <Player videoId="v1" onDeleted={() => {}} />,
     );
     await waitFor(() => expect(document.querySelector("video")).toBeTruthy());
+    // Parked on the stage first (a later effect than the render): otherwise
+    // the "released" check below would pass on a host that was never parked.
+    await waitFor(() =>
+      expect(videoHostNode().parentElement).toBe(
+        container.querySelector(".stage-slot"),
+      ),
+    );
     const first = document.querySelector("video");
     rerender(<Player videoId="v1" visible={false} onDeleted={() => {}} />);
     expect(document.querySelector("video")).toBe(first);

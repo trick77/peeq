@@ -1621,7 +1621,10 @@ func TestChannelRefresh_artInTheBackground(t *testing.T) {
 	}
 
 	answered := make(chan int, 1)
-	go func() { answered <- postJSON(t, h, "/api/channels/UCart/refresh", nil).Code }()
+	// Logged in here: postJSON logs in itself and can t.Fatalf, which must not
+	// run on a goroutine other than the test's.
+	cookie := loginAndGetCookie(t, h)
+	go func() { answered <- postJSONWithCookie(t, h, cookie, "/api/channels/UCart/refresh", nil).Code }()
 	select {
 	case code := <-answered:
 		if code != http.StatusOK {
