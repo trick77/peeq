@@ -209,8 +209,11 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	//
 	// Best-effort: a channel with no banner, or a transient fetch failure, must
 	// not prevent the channel from being added.
-	s.storeChannelImage(r.Context(), ucid, channels.ImageAvatar, info.AvatarURL)
-	s.storeChannelImage(r.Context(), ucid, channels.ImageBanner, info.BannerURL)
+	//
+	// In the background: each image is a turn in the YouTube queue, a gap
+	// after the resolve above, so fetching both on the request would hold it
+	// open for a minute or more after the channel was already added.
+	s.storeChannelArtAsync(ucid, info.AvatarURL, info.BannerURL)
 
 	now := store.FormatTime(time.Now())
 	if err := s.channels.MarkAdded(ucid, now); err != nil {
@@ -544,7 +547,8 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 //
 // It runs while the caller waits rather than in the background: the user
 // pressed a button and the answer is either new metadata to re-render or a
-// reason it did not work.
+// reason it did not work. The artwork follows in the background (it is two
+// more turns in the YouTube queue) and shows on the next page load.
 func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil || s.metadata == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
@@ -576,7 +580,7 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 
 	// WithInteractive so this user-initiated refresh goes ahead of queued
 	// background work. WithoutCancel, not r.Context() straight through: a refresh
-	// can take minutes (the call running now, the gap, then two image turns), and
+	// can take minutes (waiting for the call running now, then the gap), and
 	// cancelling it because the reader closed the tab would land in the FAILURE
 	// path, which stamps resolve_ok = 0. The channel would then claim "last
 	// refresh failed" — the one state peeq uses to mean "this needs your
@@ -584,12 +588,22 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	// either way; only the response is lost.
 	//
 	// The cap runs from when yt-dlp starts rather than from here, for the same
-	// reason: "yt-dlp's throttle, then two image fetches" says outright that
-	// most of the elapsed time can be wait rather than work, and counting the
-	// wait against the process lands in that same resolve_ok = 0 path.
+	// reason: most of the elapsed time can be waiting for a turn rather than
+	// work, and counting the wait against the process lands in that same
+	// resolve_ok = 0 path.
+	//
+	// The artwork is not fetched on the request: each image is a turn in the
+	// YouTube queue, so it goes to the background, as on channel add.
+	var avatarURL, bannerURL string
+	deferArt := func(a, b string) { avatarURL, bannerURL = a, b }
 	var stalled bool
 	stalled, err = ytdlp.CallWithCap(ytdlp.WithInteractive(context.WithoutCancel(r.Context())), s.resolveCap,
-		func(cctx context.Context) error { return s.metadata.Resolve(cctx, id, c) })
+		func(cctx context.Context) error {
+			return s.metadata.Resolve(channelmeta.WithArtDeferred(cctx, deferArt), id, c)
+		})
+	if err == nil {
+		s.storeChannelArtAsync(id, avatarURL, bannerURL)
+	}
 	if err != nil {
 		if errors.Is(err, ytdlp.ErrNoCookie) {
 			writeJSONError(w, http.StatusConflict, "cookie required")
@@ -607,10 +621,8 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 		upstreamError(w, r, err, "refresh failed")
 		return
 	}
-	// No onChannelResolved here: that hook exists so a test can await the
-	// BACKGROUND goroutine (see Deps.OnChannelResolved). This path is
-	// synchronous, so the response itself is the signal, and firing it would
-	// hand waiting tests a second, unrelated wakeup.
+	// No onChannelResolved here: this path is synchronous, so the response is
+	// the signal. The background art fetch started above fires OnChannelArt.
 	writeJSON(w, map[string]any{"status": "ok"})
 }
 

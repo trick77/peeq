@@ -334,7 +334,7 @@ func run() error {
 		YoutubePaused:  settingsStore.Paused,
 		FailMonitor:    failMonitor,
 		Activity:       activityStore,
-		MediaDir:       cfg.MediaDir,
+		Images:         runner.FetchImage,
 	})
 
 	summarizeWorker := summarize.NewWorker(summarize.WorkerDeps{
@@ -378,6 +378,7 @@ func run() error {
 	metaRefresher := &channelmeta.Refresher{
 		Channels: channelsStore,
 		Resolver: runner,
+		Images:   runner.FetchImage,
 		MediaDir: cfg.MediaDir,
 	}
 	metaWorker := channelmeta.NewWorker(channelmeta.Deps{
@@ -478,6 +479,9 @@ func run() error {
 		Channels:        channelsStore,
 		ChannelResolver: runner,
 		Metadata:        metaRefresher,
+		Images:          runner.FetchImage,
+		QueueThumbnail:  scheduler.QueueThumbnail,
+		Background:      ctx,
 		Ledger:          ledgerStore,
 
 		Rag:               ragStore,

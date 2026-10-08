@@ -171,3 +171,27 @@ func TestDeferredTimer_withStartHook_capSurvivesAPacerWait(t *testing.T) {
 		t.Fatalf("queued call waited %d times, want 1 — no wait means this proves nothing", waits)
 	}
 }
+
+// TestCallWithCap_uncappedIsTheCallersCtx: work fn does after its capped
+// yt-dlp call (the refresher's image turns) runs on the caller's ctx, so a cap
+// that fires does not cancel it, while the caller's own cancel still does.
+func TestCallWithCap_uncappedIsTheCallersCtx(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	_, _ = CallWithCap(parent, time.Millisecond, func(c context.Context) error {
+		SignalStart(c) // arm the cap, as a running yt-dlp would
+		<-c.Done()     // the cap fires
+		u := Uncapped(c)
+		if u.Err() != nil {
+			t.Fatal("the uncapped ctx was cancelled by the cap")
+		}
+		cancelParent()
+		if u.Err() == nil {
+			t.Fatal("the uncapped ctx ignored the caller's cancel")
+		}
+		return c.Err()
+	})
+	if Uncapped(context.Background()) != context.Background() {
+		t.Fatal("outside CallWithCap, Uncapped must return ctx itself")
+	}
+}

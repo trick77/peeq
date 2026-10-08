@@ -2,6 +2,7 @@ package scan
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -9,8 +10,71 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
+
+// TestQueueThumbnail_skipsWaitingAndRecentlyFailed: the inbox asks for every
+// uncached poster on every load, and each fetch costs turns in the YouTube
+// queue. A poster already waiting is not queued twice, and one that failed is
+// left alone for thumbRetryAfter.
+func TestQueueThumbnail_skipsWaitingAndRecentlyFailed(t *testing.T) {
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	s := New(Deps{
+		Images: media.FetchImageBytes,
+		Now:    func() time.Time { return now },
+	})
+
+	s.QueueThumbnail("v1", "u")
+	s.QueueThumbnail("v1", "u")
+	if n := len(s.thumbs); n != 1 {
+		t.Fatalf("queued %d jobs for one poster, want 1", n)
+	}
+
+	<-s.thumbs
+	s.thumbDone("v1", thumbRetryAfter)
+	s.QueueThumbnail("v1", "u")
+	if n := len(s.thumbs); n != 0 {
+		t.Fatal("a poster that just failed was queued again")
+	}
+
+	now = now.Add(thumbRetryAfter)
+	s.QueueThumbnail("v1", "u")
+	if n := len(s.thumbs); n != 1 {
+		t.Fatalf("a poster that failed %v ago was not queued again", thumbRetryAfter)
+	}
+}
+
+// TestQueueThumbnail_pageNeverEvicts: the inbox asks for posters top to
+// bottom, so a request finding the queue full must not push out the posters
+// queued before it (the newest uploads, at the top of the page).
+func TestQueueThumbnail_pageNeverEvicts(t *testing.T) {
+	s := New(Deps{Images: media.FetchImageBytes})
+	for i := range prefetchQueueSize {
+		s.QueueThumbnail(fmt.Sprintf("v%d", i), "u")
+	}
+	s.QueueThumbnail("late", "u")
+	if first := <-s.thumbs; first.videoID != "v0" {
+		t.Fatalf("head of the queue = %s, want v0 — a page request evicted it", first.videoID)
+	}
+	if s.thumbWaiting["late"] {
+		t.Fatal("a poster that did not fit is still marked waiting, so it could never be asked again")
+	}
+}
+
+// TestQueueThumbnail_notWhileRefused: while YouTube calls are paused or the
+// cookie is not valid every fetch would be refused, so nothing is queued.
+func TestQueueThumbnail_notWhileRefused(t *testing.T) {
+	s := New(Deps{
+		Images:        media.FetchImageBytes,
+		CookieStatus:  func(context.Context) string { return "valid" },
+		YoutubePaused: func(context.Context) bool { return true },
+	})
+	s.QueueThumbnail("v1", "u")
+	if n := len(s.thumbs); n != 0 {
+		t.Fatalf("queued %d posters while paused, want 0", n)
+	}
+}
 
 // TestScan_runAbandonsInFlightPrefetchOnCancel: a thumbnail fetch in flight
 // when the loop is cancelled is abandoned promptly — Run returns, and the
@@ -35,7 +99,7 @@ func TestScan_runAbandonsInFlightPrefetchOnCancel(t *testing.T) {
 	defer close(release)
 
 	h := newScanHarness(t)
-	h.mediaDir = t.TempDir()
+	h.images = media.FetchImageBytes
 	h.sched = h.buildSched(h.jobs)
 	h.addAndSubscribe("UC1", false, "")
 	h.markBaselined("UC1", []string{"old1"})

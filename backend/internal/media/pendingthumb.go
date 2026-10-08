@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
-
-	"github.com/trick77/peeq/internal/sched"
 )
 
 // A pending (inbox) video has no downloaded media yet, so unlike a finished
@@ -16,33 +13,32 @@ import (
 // a broken-image glyph on the card.
 //
 // Since migration 0023 the caching itself belongs to the caller, which stores
-// the bytes in pending_thumbnails; this file is only the fetch, its candidate
-// order and its retry taxonomy.
+// the bytes in pending_thumbnails; this file is only the candidate order.
 
-// pendingThumbRetries is how many times a TRANSIENT fetch failure (a network
-// error or a 5xx) is retried for one candidate URL before giving up on it. A
-// permanent failure (a 4xx, or a 200 that isn't an image) is not retried — the
-// next candidate is tried instead.
-const pendingThumbRetries = 3
-
-// pendingThumbBackoff is the base backoff between transient retries; attempt N
-// waits N×this so a brief CDN blip clears before the next try.
-const pendingThumbBackoff = 300 * time.Millisecond
+// ImageFetcher downloads one image and returns its mime type and bytes.
+// Production passes ytdlp.Runner.FetchImage, which makes the request a turn in
+// the same serial queue as every yt-dlp call; FetchImageBytes is the bare wire
+// fetch underneath it.
+type ImageFetcher func(ctx context.Context, url string) (string, []byte, error)
 
 // ytThumbHost is YouTube's image CDN origin, split out as a package var only so
 // a test can point the hqdefault fallback at an httptest server instead of the
 // real network.
 var ytThumbHost = "https://i.ytimg.com"
 
-// FetchPendingThumbnail downloads videoID's inbox poster and returns its mime
-// and bytes for the caller to store.
+// FetchPendingThumbnail downloads videoID's inbox poster through fetch and
+// returns its mime and bytes for the caller to store.
 //
 // recordedURL is the variant the scan captured (usually the largest, which is
 // exactly the one that 404s when maxresdefault was never generated). hqdefault
 // is appended as a fallback because YouTube generates it for EVERY video, so it
 // is the guaranteed floor that makes "an inbox video always has a thumbnail"
 // actually hold.
-func FetchPendingThumbnail(ctx context.Context, videoID, recordedURL string) (string, []byte, error) {
+//
+// Each candidate is asked ONCE. Every request is a turn in the YouTube queue
+// (20s+ apart), so a retry is never cheap; a transient failure moves on to the
+// fallback, and a poster that still fails is fetched again by a later scan.
+func FetchPendingThumbnail(ctx context.Context, fetch ImageFetcher, videoID, recordedURL string) (string, []byte, error) {
 	if videoID == "" {
 		return "", nil, fmt.Errorf("pending thumbnail: empty video id")
 	}
@@ -61,22 +57,19 @@ func FetchPendingThumbnail(ctx context.Context, videoID, recordedURL string) (st
 
 	var lastErr error
 	for _, url := range candidates {
-		for attempt := 1; attempt <= pendingThumbRetries; attempt++ {
-			mime, data, err := FetchImageBytes(ctx, url)
-			if err == nil {
-				return mime, data, nil
-			}
-			lastErr = err
-			// A 4xx / non-image response won't heal by asking again — move on to
-			// the next candidate rather than burning retries on it.
-			if isPermanentFetchError(err) {
-				break
-			}
-			if attempt < pendingThumbRetries {
-				if !sched.Sleep(ctx, time.Duration(attempt)*pendingThumbBackoff) {
-					return "", nil, ctx.Err()
-				}
-			}
+		mime, data, err := fetch(ctx, url)
+		if err == nil {
+			return mime, data, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return "", nil, ctx.Err()
+		}
+		// Only an answer about THIS url (a status, or a body that is not an
+		// image) is a reason to try the next one. A refusal (paused, no
+		// cookie) or a network failure would meet the fallback the same way.
+		if !IsCDNAnswer(err) {
+			break
 		}
 	}
 
@@ -85,11 +78,18 @@ func FetchPendingThumbnail(ctx context.Context, videoID, recordedURL string) (st
 	return "", nil, fmt.Errorf("pending thumbnail %s: %w", videoID, lastErr)
 }
 
-// isPermanentFetchError reports whether a FetchImage error cannot be fixed by
-// retrying the SAME url: a 4xx status (the variant doesn't exist) or a 200 that
-// wasn't an image. Everything else (network errors, 5xx, timeouts) is treated
-// as transient and worth a retry.
-func isPermanentFetchError(err error) bool {
+// IsCDNAnswer reports whether err is the CDN's answer about one url — a status
+// or a non-image body — rather than a failure that would recur for any url.
+func IsCDNAnswer(err error) bool {
+	var se *FetchStatusError
+	return errors.As(err, &se) || errors.Is(err, ErrUnsupportedContentType)
+}
+
+// IsCDNRefusal reports whether err is the CDN saying this url has no image —
+// a 4xx, or a body that is not an image. Unlike a 5xx or a network failure it
+// will not change on the next ask, so it is the only failure worth
+// remembering.
+func IsCDNRefusal(err error) bool {
 	var se *FetchStatusError
 	if errors.As(err, &se) {
 		return se.StatusCode >= 400 && se.StatusCode < 500

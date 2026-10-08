@@ -2,11 +2,28 @@ package media
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 )
+
+// TestIsCDNRefusal: a 4xx or a non-image body is final; a 5xx or a network
+// failure is not, so a brief CDN outage does not lock a poster out.
+func TestIsCDNRefusal(t *testing.T) {
+	cases := map[error]bool{
+		&FetchStatusError{StatusCode: http.StatusNotFound}:           true,
+		ErrUnsupportedContentType:                                    true,
+		&FetchStatusError{StatusCode: http.StatusServiceUnavailable}: false,
+		errors.New("connection reset"):                               false,
+	}
+	for err, want := range cases {
+		if got := IsCDNRefusal(err); got != want {
+			t.Errorf("IsCDNRefusal(%v) = %v, want %v", err, got, want)
+		}
+	}
+}
 
 // jpegHandler writes a minimal valid JPEG response.
 func jpegHandler(w http.ResponseWriter, _ *http.Request) {
@@ -29,7 +46,7 @@ func TestFetchPendingThumbnail_fetchesRecordedURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(jpegHandler))
 	defer srv.Close()
 
-	mime, data, err := FetchPendingThumbnail(context.Background(), "vid1", srv.URL)
+	mime, data, err := FetchPendingThumbnail(context.Background(), FetchImageBytes, "vid1", srv.URL)
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -38,6 +55,24 @@ func TestFetchPendingThumbnail_fetchesRecordedURL(t *testing.T) {
 	}
 	if len(data) == 0 {
 		t.Fatal("no bytes returned")
+	}
+}
+
+// TestFetchPendingThumbnail_usesTheGivenFetcher: every request goes through the
+// fetcher the caller hands in, which in production is the YouTube queue.
+func TestFetchPendingThumbnail_usesTheGivenFetcher(t *testing.T) {
+	var urls []string
+	fetch := func(_ context.Context, url string) (string, []byte, error) {
+		urls = append(urls, url)
+		return "", nil, &FetchStatusError{StatusCode: http.StatusNotFound}
+	}
+	withYTHost(t, "https://cdn.test")
+	if _, _, err := FetchPendingThumbnail(context.Background(), fetch, "vid1", "https://cdn.test/vi/vid1/maxresdefault.jpg"); err == nil {
+		t.Fatal("expected an error when the fetcher fails every candidate")
+	}
+	want := []string{"https://cdn.test/vi/vid1/maxresdefault.jpg", "https://cdn.test/vi/vid1/hqdefault.jpg"}
+	if len(urls) != len(want) || urls[0] != want[0] || urls[1] != want[1] {
+		t.Fatalf("fetched %v, want %v", urls, want)
 	}
 }
 
@@ -58,7 +93,7 @@ func TestFetchPendingThumbnail_fallsBackToHqdefault(t *testing.T) {
 	defer fallback.Close()
 	withYTHost(t, fallback.URL)
 
-	_, data, err := FetchPendingThumbnail(context.Background(), "vid1", recorded.URL)
+	_, data, err := FetchPendingThumbnail(context.Background(), FetchImageBytes, "vid1", recorded.URL)
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -70,24 +105,28 @@ func TestFetchPendingThumbnail_fallsBackToHqdefault(t *testing.T) {
 	}
 }
 
-// TestFetchPendingThumbnail_retriesTransient asserts a transient 5xx is retried
-// rather than treated as terminal like a 4xx.
-func TestFetchPendingThumbnail_retriesTransient(t *testing.T) {
-	var calls int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if atomic.AddInt32(&calls, 1) == 1 {
-			http.Error(w, "try later", http.StatusInternalServerError)
-			return
-		}
+// TestFetchPendingThumbnail_neverRetriesAURL: every request is a turn in the
+// YouTube queue, so a transient failure moves on to the fallback instead of
+// asking the same URL again.
+func TestFetchPendingThumbnail_neverRetriesAURL(t *testing.T) {
+	var recordedHits, hqHits int32
+	recorded := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&recordedHits, 1)
+		http.Error(w, "try later", http.StatusInternalServerError)
+	}))
+	defer recorded.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hqHits, 1)
 		jpegHandler(w, r)
 	}))
-	defer srv.Close()
+	defer fallback.Close()
+	withYTHost(t, fallback.URL)
 
-	if _, _, err := FetchPendingThumbnail(context.Background(), "vid1", srv.URL); err != nil {
+	if _, _, err := FetchPendingThumbnail(context.Background(), FetchImageBytes, "vid1", recorded.URL); err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
-	if got := atomic.LoadInt32(&calls); got < 2 {
-		t.Fatalf("server called %d times, want >=2 (a 5xx must be retried)", got)
+	if recordedHits != 1 || hqHits != 1 {
+		t.Fatalf("recorded asked %d times, hqdefault %d, want once each", recordedHits, hqHits)
 	}
 }
 
@@ -100,7 +139,7 @@ func TestFetchPendingThumbnail_allFail(t *testing.T) {
 	defer notFound.Close()
 	withYTHost(t, notFound.URL)
 
-	if _, _, err := FetchPendingThumbnail(context.Background(), "vid1", notFound.URL); err == nil {
+	if _, _, err := FetchPendingThumbnail(context.Background(), FetchImageBytes, "vid1", notFound.URL); err == nil {
 		t.Fatal("expected an error when all candidates fail")
 	}
 }
@@ -108,40 +147,44 @@ func TestFetchPendingThumbnail_allFail(t *testing.T) {
 // TestFetchPendingThumbnail_guards covers the argument guard: an empty video id
 // errors before any fetch, since the hqdefault fallback url is built from it.
 func TestFetchPendingThumbnail_guards(t *testing.T) {
-	if _, _, err := FetchPendingThumbnail(context.Background(), "", "https://x/y.jpg"); err == nil {
+	if _, _, err := FetchPendingThumbnail(context.Background(), FetchImageBytes, "", "https://x/y.jpg"); err == nil {
 		t.Fatal("expected an error for an empty video id")
 	}
 }
 
-// TestFetchPendingThumbnail_unsupportedContentType asserts a 200 that isn't an
-// image is treated as permanent (isPermanentFetchError via ErrUnsupportedContentType),
-// so both candidates are tried once and the call errors without retrying.
-func TestFetchPendingThumbnail_unsupportedContentType(t *testing.T) {
-	html := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte("<html>nope</html>"))
-	}))
-	defer html.Close()
-	withYTHost(t, html.URL)
-
-	if _, _, err := FetchPendingThumbnail(context.Background(), "vid1", html.URL); err == nil {
-		t.Fatal("expected an error when every candidate serves a non-image body")
+// TestFetchPendingThumbnail_cancelStopsBeforeTheFallback: a cancelled context
+// (shutdown, a queue wait given up) ends the fetch instead of queueing the
+// fallback too.
+func TestFetchPendingThumbnail_cancelStopsBeforeTheFallback(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	fetch := func(context.Context, string) (string, []byte, error) {
+		calls++
+		cancel()
+		return "", nil, context.Canceled
+	}
+	if _, _, err := FetchPendingThumbnail(ctx, fetch, "vid1", "https://cdn.test/a.jpg"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if calls != 1 {
+		t.Fatalf("fetcher called %d times after cancel, want 1", calls)
 	}
 }
 
-// TestFetchPendingThumbnail_ctxCancelledDuringBackoff asserts a cancelled
-// context short-circuits the retry backoff rather than sleeping it out.
-func TestFetchPendingThumbnail_ctxCancelledDuringBackoff(t *testing.T) {
-	// A 5xx is transient, so the first attempt schedules a backoff — where the
-	// cancelled context is observed.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "later", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, _, err := FetchPendingThumbnail(ctx, "vid1", srv.URL); err == nil {
-		t.Fatal("expected an error when the context is cancelled")
+// TestFetchPendingThumbnail_refusalStopsBeforeTheFallback: a failure that is not
+// the CDN's answer about the url (a refusal while YouTube calls are paused, a
+// dead network) would meet the fallback the same way, so it is not tried.
+func TestFetchPendingThumbnail_refusalStopsBeforeTheFallback(t *testing.T) {
+	calls := 0
+	refused := errors.New("youtube paused")
+	fetch := func(context.Context, string) (string, []byte, error) {
+		calls++
+		return "", nil, refused
+	}
+	if _, _, err := FetchPendingThumbnail(context.Background(), fetch, "vid1", "https://cdn.test/a.jpg"); !errors.Is(err, refused) {
+		t.Fatalf("err = %v, want the refusal", err)
+	}
+	if calls != 1 {
+		t.Fatalf("fetcher called %d times, want 1", calls)
 	}
 }

@@ -98,6 +98,11 @@ func (dt *DeferredTimer) Stop() bool {
 // The timer is stopped on every exit, panics included: it is what disarms
 // the AfterFunc, and leaving it armed would hold the cancel alive for the rest
 // of the cap.
+//
+// The cap is meant for the yt-dlp call fn makes. Work fn does after it (the
+// channel refresher's image fetches) is a turn of its own in the queue and
+// must not spend the cap waiting for it; Uncapped hands such work the caller's
+// ctx back.
 func CallWithCap(ctx context.Context, d time.Duration, fn func(ctx context.Context) error) (stalled bool, err error) {
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -109,9 +114,22 @@ func CallWithCap(ctx context.Context, d time.Duration, fn func(ctx context.Conte
 		cancel()
 	})
 	defer t.Stop()
-	err = fn(WithStartHook(cctx, t.Start))
+	err = fn(context.WithValue(WithStartHook(cctx, t.Start), uncappedKey{}, ctx))
 	returned.Store(true)
 	t.Stop()
 	stalled = fired.Load() && err != nil && ctx.Err() == nil
 	return stalled, err
+}
+
+// uncappedKey carries the ctx CallWithCap was given, before its cap.
+type uncappedKey struct{}
+
+// Uncapped returns the ctx a CallWithCap was called with — cancelled by the
+// caller, not by the cap — or ctx itself outside one. For work inside fn that
+// queues for a turn of its own after the capped call.
+func Uncapped(ctx context.Context) context.Context {
+	if parent, ok := ctx.Value(uncappedKey{}).(context.Context); ok {
+		return parent
+	}
+	return ctx
 }

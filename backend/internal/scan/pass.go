@@ -206,7 +206,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		// peeq rather than loading i.ytimg.com in the browser. Only 'pending' —
 		// seen/queued/unavailable rows never appear in the inbox. The serve
 		// endpoint self-heals anything this misses.
-		if entry.State == channelvideos.StatePending && s.d.MediaDir != "" {
+		if entry.State == channelvideos.StatePending && s.d.Images != nil {
 			s.queueThumbnail(entry.VideoID, entry.ThumbnailURL)
 		}
 	}

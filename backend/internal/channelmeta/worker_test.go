@@ -17,6 +17,7 @@ import (
 
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
@@ -411,7 +412,7 @@ func TestWorker_dueRotationBeatsTheBacklog(t *testing.T) {
 func TestResolve_escapesTheIDIntoOneSegment(t *testing.T) {
 	s := newTestStore(t)
 	r := &fakeResolver{info: ytdlp.ChannelInfo{Name: "X"}}
-	f := &Refresher{Channels: s, Resolver: r, MediaDir: t.TempDir(), Logger: quietLogger()}
+	f := &Refresher{Channels: s, Resolver: r, Images: media.FetchImageBytes, MediaDir: t.TempDir(), Logger: quietLogger()}
 
 	if err := f.Resolve(context.Background(), "../../watch?v=abc", nil); err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -433,7 +434,7 @@ func TestResolve_escapesTheIDIntoOneSegment(t *testing.T) {
 func TestResolve_failureOnAnUnknownChannelIsRemembered(t *testing.T) {
 	s := newTestStore(t)
 	r := &fakeResolver{err: errors.New("nope")}
-	f := &Refresher{Channels: s, Resolver: r, MediaDir: t.TempDir(), Logger: quietLogger()}
+	f := &Refresher{Channels: s, Resolver: r, Images: media.FetchImageBytes, MediaDir: t.TempDir(), Logger: quietLogger()}
 
 	if err := f.Resolve(context.Background(), "UCghost", nil); err == nil {
 		t.Fatal("resolve error was swallowed")
@@ -467,7 +468,7 @@ func TestResolve_refusesADifferentChannel(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 	r := &fakeResolver{info: ytdlp.ChannelInfo{UCID: "UCsomeoneElse", Name: "Someone Else"}}
-	f := &Refresher{Channels: s, Resolver: r, MediaDir: t.TempDir(), Logger: quietLogger()}
+	f := &Refresher{Channels: s, Resolver: r, Images: media.FetchImageBytes, MediaDir: t.TempDir(), Logger: quietLogger()}
 
 	if err := f.Resolve(context.Background(), "UCa", cached); err == nil {
 		t.Fatal("resolving to a different channel was accepted")
@@ -499,7 +500,7 @@ func TestResolve_refusesADifferentChannel(t *testing.T) {
 func TestResolve_mismatchOnAnUnknownChannelIsRemembered(t *testing.T) {
 	s := newTestStore(t)
 	r := &fakeResolver{info: ytdlp.ChannelInfo{UCID: "UCsomeoneElse", Name: "Someone Else"}}
-	f := &Refresher{Channels: s, Resolver: r, MediaDir: t.TempDir(), Logger: quietLogger()}
+	f := &Refresher{Channels: s, Resolver: r, Images: media.FetchImageBytes, MediaDir: t.TempDir(), Logger: quietLogger()}
 
 	if err := f.Resolve(context.Background(), "UCghost", nil); err == nil {
 		t.Fatal("resolving to a different channel was accepted")
@@ -539,7 +540,7 @@ func TestResolve_handlePrecedence(t *testing.T) {
 				t.Fatalf("get: %v", err)
 			}
 			r := &fakeResolver{info: ytdlp.ChannelInfo{UCID: "UCa", Name: "Uncanny", Handle: "@fromytdlp"}}
-			f := &Refresher{Channels: s, Resolver: r, MediaDir: t.TempDir(), Logger: quietLogger()}
+			f := &Refresher{Channels: s, Resolver: r, Images: media.FetchImageBytes, MediaDir: t.TempDir(), Logger: quietLogger()}
 
 			if err := f.Resolve(context.Background(), "UCa", cached); err != nil {
 				t.Fatalf("resolve: %v", err)
@@ -955,7 +956,7 @@ func TestResolve_storesArtworkOnTheRow(t *testing.T) {
 	r := &fakeResolver{info: ytdlp.ChannelInfo{
 		Name: "X", AvatarURL: srv.URL + "/avatar", BannerURL: srv.URL + "/banner",
 	}}
-	f := &Refresher{Channels: s, Resolver: r, MediaDir: t.TempDir(), Logger: quietLogger()}
+	f := &Refresher{Channels: s, Resolver: r, Images: media.FetchImageBytes, MediaDir: t.TempDir(), Logger: quietLogger()}
 
 	if err := f.Resolve(context.Background(), "UC1", nil); err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -993,7 +994,7 @@ func TestResolve_failedImageFetchKeepsWhatIsStored(t *testing.T) {
 		t.Fatalf("seed avatar: %v", err)
 	}
 	r := &fakeResolver{info: ytdlp.ChannelInfo{Name: "X", AvatarURL: dead.URL + "/avatar"}}
-	f := &Refresher{Channels: s, Resolver: r, MediaDir: t.TempDir(), Logger: quietLogger()}
+	f := &Refresher{Channels: s, Resolver: r, Images: media.FetchImageBytes, MediaDir: t.TempDir(), Logger: quietLogger()}
 
 	if err := f.Resolve(context.Background(), "UC1", nil); err != nil {
 		t.Fatalf("resolve: %v", err)

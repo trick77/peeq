@@ -200,9 +200,10 @@ func (w *Worker) refresh(ctx context.Context, cached *channels.Channel) {
 	// mean "this needs your attention" — so the channel got flagged for having
 	// been patient.
 	//
-	// Resolve makes exactly one Runner call (Resolver.ResolveChannel), so the
-	// hook fires once and the cap then covers that call plus the two image
-	// fetches after it, which is the work this bound is actually about.
+	// Resolve makes exactly one yt-dlp call (Resolver.ResolveChannel), so the
+	// hook fires once and the cap covers that call. The two image fetches
+	// after it are turns of their own in the YouTube queue and run on the
+	// uncapped ctx (ytdlp.Uncapped), so waiting for them cannot fire it.
 	//
 	// A cap that fired means yt-dlp really did stall — the hook only arms the
 	// timer once the process is running — so it is reported as such rather

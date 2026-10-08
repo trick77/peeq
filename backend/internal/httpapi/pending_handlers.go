@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/trick77/peeq/internal/channelvideos"
-	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 )
@@ -359,12 +358,11 @@ func (s *server) removePendingThumbnail(id string) {
 }
 
 // handlePendingThumbnail serves a pending (inbox) video's poster from its
-// ledger row, fetching and caching it from YouTube on first request (and
-// re-fetching if it was never cached). This is what keeps an inbox card from
-// loading
-// i.ytimg.com directly in the browser, and — via the hqdefault fallback and
-// the UI's gradient placeholder on a 404 — from ever showing a broken-image
-// glyph. See media.EnsurePendingThumbnail.
+// ledger row, and queues a background fetch for one it does not have yet.
+// This is what keeps an inbox card from loading i.ytimg.com directly in the
+// browser, and — via the hqdefault fallback and the UI's gradient placeholder
+// on a 404 — from ever showing a broken-image glyph. See
+// media.FetchPendingThumbnail.
 func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) {
 	if s.ledger == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
@@ -400,19 +398,21 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 			notFoundCached(w, r)
 			return
 		}
-		// Not cached yet — fetch it now and keep it. The scan prefetches these,
-		// so this is the fill-in for an item the prefetch missed or lost.
-		mime, data, ferr := media.FetchPendingThumbnail(r.Context(), id, e.ThumbnailURL)
-		if ferr != nil {
-			// Both candidates failed. The UI renders its gradient placeholder on
-			// a 404, exactly like a downloaded video with no poster.
-			notFoundCached(w, r)
+		// Not cached yet. The scan prefetches these, so this is the fill-in for
+		// an item the prefetch missed or lost — queued, not fetched here: every
+		// poster is a turn in the YouTube queue, and a page of uncached cards
+		// would hold a request open per card for as long as that takes. The UI
+		// renders its gradient placeholder on the uncached 404 meanwhile, and
+		// the poster shows on the next page load after it has arrived.
+		// One that is not on its way (backing off after a failure, refused
+		// while YouTube calls are paused) gets the cached 404, so the browser
+		// stops asking for a while.
+		if s.queueThumb != nil && s.queueThumb(id, e.ThumbnailURL) {
+			notFoundPending(w, r)
 			return
 		}
-		if serr := s.ledger.SetThumbnail(id, mime, data); serr != nil {
-			slog.Warn("store pending thumbnail failed", "video_id", id, "err", serr)
-		}
-		t = &channelvideos.Thumbnail{Mime: mime, Bytes: data}
+		notFoundCached(w, r)
+		return
 	}
 	imageOwnedDay.apply(w, r)
 	serveStoredImage(w, r, t.Mime, t.Bytes, t.UpdatedAt)

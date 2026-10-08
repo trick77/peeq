@@ -149,6 +149,15 @@ func notFoundCached(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+// notFoundPending is the 404 for an image that has been queued for a
+// background fetch: not cached, so the browser asks again on the next page
+// load and gets the image as soon as it has arrived. The repeat asks are
+// cheap: the queue skips a poster already waiting or recently failed.
+func notFoundPending(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.NotFound(w, r)
+}
+
 // etagFor returns a strong, quoted ETag for a blob of bytes.
 //
 // The quotes are not cosmetic: http.ServeContent parses the header with
