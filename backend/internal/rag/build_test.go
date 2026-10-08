@@ -225,6 +225,32 @@ func TestBuildVideoChunksBlankSummaryEmitsNoSummaryChunk(t *testing.T) {
 	}
 }
 
+// A reply that put one heading over everything is one huge section. It is
+// split like a long chapter, heading on every part, so no chunk outgrows what
+// the transcript windows are sized to.
+func TestBuildVideoChunksSplitsAnOversizedInDepthSection(t *testing.T) {
+	long := strings.TrimSpace(strings.Repeat("word ", 2000))
+	rows := BuildVideoChunks(parsedFrom(cues("x")), "", nil, []InDepthSection{
+		{Heading: "Everything", StartSeconds: 42, Body: long},
+	})
+	var parts int
+	for _, r := range rows {
+		if r.Kind != KindInDepth {
+			continue
+		}
+		parts++
+		if !strings.HasPrefix(r.Text, "Everything\n\n") || r.StartSeconds != 42 {
+			t.Errorf("part = %.40q at %d, want the heading and the section stamp", r.Text, r.StartSeconds)
+		}
+		if r.TokenCount > DefaultChunkOptions().MaxTokens+estimateTokens("Everything\n\n") {
+			t.Errorf("part of %d tokens, want at most a window plus the heading", r.TokenCount)
+		}
+	}
+	if parts < 2 {
+		t.Fatalf("parts = %d, want the section split", parts)
+	}
+}
+
 func TestBuildVideoChunksIndexesEachInDepthSection(t *testing.T) {
 	cs := cues("intro words here", "more talk about sodium")
 	rows := BuildVideoChunks(parsedFrom(cs), "the summary", []Chapter{{TS: 0, Title: "Intro"}}, []InDepthSection{

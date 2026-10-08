@@ -22,3 +22,10 @@ Body four.
 ### No stamp at all
 
 Body five.
+
+### ﻿BOM before the heading [5:00]﻿
+
+Body six.
+### Not a heading here
+
+Ends with NEL

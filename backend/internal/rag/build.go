@@ -22,6 +22,14 @@ import (
 // distinguish them afterwards.
 const ChunkRecipeRev = 3
 
+// SearchableRecipeRev is the oldest recipe whose index still counts as
+// searchable (videos.Video.Indexed). It is separate from ChunkRecipeRev because
+// a recipe that only ADDS a kind leaves the older index working: rev 3 added
+// in-depth sections, and with nothing to re-index the library on its own,
+// tying Indexed to the newest rev would mark every video analysed before it
+// "not searchable yet". Raise it only when an older index is genuinely unfit.
+const SearchableRecipeRev = 2
+
 // Chapter is one entry of the videos.chapters JSON column. It mirrors
 // summarize.Chapter's wire shape; rag cannot import summarize (summarize
 // imports rag), and duplicating three fields is cheaper than a shared package
@@ -97,17 +105,29 @@ func BuildVideoChunks(parsed subtitles.Parsed, summaryText string, chapters []Ch
 		if body == "" {
 			continue
 		}
-		text := body
+		prefix := ""
 		if h := strings.TrimSpace(s.Heading); h != "" {
-			text = h + "\n\n" + body
+			prefix = h + "\n\n"
 		}
-		rows = append(rows, ChunkRow{
-			Ordinal:      next(),
-			Text:         text,
-			Kind:         KindInDepth,
-			TokenCount:   estimateTokens(text),
-			StartSeconds: max(s.StartSeconds, 0),
-		})
+		// A reply that put one heading over everything is one huge section;
+		// split it like a long chapter, heading on every part.
+		parts := []string{body}
+		if estimateTokens(prefix+body) > DefaultChunkOptions().MaxTokens {
+			parts = parts[:0]
+			for _, p := range Chunk(body, DefaultChunkOptions()) {
+				parts = append(parts, p.Text)
+			}
+		}
+		for _, p := range parts {
+			text := prefix + p
+			rows = append(rows, ChunkRow{
+				Ordinal:      next(),
+				Text:         text,
+				Kind:         KindInDepth,
+				TokenCount:   estimateTokens(text),
+				StartSeconds: max(s.StartSeconds, 0),
+			})
+		}
 	}
 	return rows
 }

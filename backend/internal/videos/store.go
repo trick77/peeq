@@ -97,7 +97,8 @@ type Video struct {
 	EmbedDim      int
 	// EmbedRev is the CONTENT recipe the stored chunks follow (which kinds of
 	// chunk exist), as opposed to EmbedModel/EmbedDim which describe the model.
-	// Below rag.ChunkRecipeRev means the index is stale and needs rebuilding.
+	// Below rag.SearchableRecipeRev means the index is unusable and needs
+	// rebuilding; below rag.ChunkRecipeRev only that it lacks a newer kind.
 	// Ask Indexed() rather than comparing here — see the note on that method.
 	EmbedRev int
 	Category string
@@ -133,7 +134,9 @@ type Video struct {
 }
 
 // Indexed reports whether the video's stored chunks are usable by search right
-// now: embedded at all, and against the current chunk recipe.
+// now: embedded at all, and against a recipe search can still use
+// (rag.SearchableRecipeRev, which trails rag.ChunkRecipeRev when a recipe only
+// added a kind).
 //
 // Both halves are needed, and this is the single definition of that pair. Model
 // alone is not enough because embed_model is set once and never cleared, so a
@@ -147,7 +150,7 @@ type Video struct {
 // longer shows up as a summary failure, and "here is your summary, but this
 // video is not findable yet" is otherwise unsayable.
 func (v Video) Indexed() bool {
-	return v.EmbedModel != "" && v.EmbedRev >= rag.ChunkRecipeRev
+	return v.EmbedModel != "" && v.EmbedRev >= rag.SearchableRecipeRev
 }
 
 // Store persists video rows.

@@ -17,25 +17,42 @@
       "heading": "Radiators beat underfloor here",
       "stamp": "12:30",
       "seconds": 750,
-      "body": ["Body glued to its heading."]
+      "body": [
+        "Body glued to its heading."
+      ]
     },
     {
       "heading": "Insulation comes second",
       "stamp": "1:02:05",
       "seconds": 3725,
-      "body": ["Body three."]
+      "body": [
+        "Body three."
+      ]
     },
     {
       "heading": "Stamp moved to the front",
       "stamp": "0:45",
       "seconds": 45,
-      "body": ["Body four."]
+      "body": [
+        "Body four."
+      ]
     },
     {
       "heading": "No stamp at all",
       "stamp": null,
       "seconds": null,
-      "body": ["Body five."]
+      "body": [
+        "Body five."
+      ]
+    },
+    {
+      "heading": "BOM before the heading",
+      "stamp": "5:00",
+      "seconds": 300,
+      "body": [
+        "Body six.\n### Not a heading\u2028here",
+        "Ends with NEL\u0085"
+      ]
     }
   ]
 }

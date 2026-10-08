@@ -1979,9 +1979,9 @@ func TestVideosCategory_writeFailure500(t *testing.T) {
 }
 
 // `indexed` is derived, not stored, and both halves of the test matter: a video
-// embedded against an older chunk recipe is not findable in any useful sense,
-// and embed_model is set once and never cleared, so it cannot answer alone.
-func TestVideoDTO_indexedNeedsBothAModelAndACurrentRecipe(t *testing.T) {
+// embedded against a recipe older than rag.SearchableRecipeRev is not findable
+// in any useful sense, and embed_model is set once and never cleared, so it cannot answer alone.
+func TestVideoDTO_indexedNeedsBothAModelAndASearchableRecipe(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		video videos.Video
@@ -1989,7 +1989,10 @@ func TestVideoDTO_indexedNeedsBothAModelAndACurrentRecipe(t *testing.T) {
 	}{
 		{"never embedded", videos.Video{}, false},
 		{"embedded, current recipe", videos.Video{EmbedModel: "e5", EmbedRev: rag.ChunkRecipeRev}, true},
-		{"embedded, stale recipe", videos.Video{EmbedModel: "e5", EmbedRev: rag.ChunkRecipeRev - 1}, false},
+		{"embedded, recipe too old to search", videos.Video{EmbedModel: "e5", EmbedRev: rag.SearchableRecipeRev - 1}, false},
+		// A recipe that only ADDED a chunk kind leaves the older index fully
+		// searchable; calling it unfindable would flag the whole library.
+		{"embedded, older but searchable recipe", videos.Video{EmbedModel: "e5", EmbedRev: rag.SearchableRecipeRev}, true},
 		{"recipe current but never embedded", videos.Video{EmbedRev: rag.ChunkRecipeRev}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

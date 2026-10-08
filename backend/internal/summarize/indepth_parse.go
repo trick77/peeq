@@ -15,13 +15,25 @@ import (
 // searches. Both read testdata/indepth_parse.{txt,json}; a rule added to one
 // side goes into the other and into that fixture.
 //
-// Whitespace classes are widened to JavaScript's \s where the two regexp
-// engines differ (Go's \s is ASCII only), so a non-breaking space splits and
-// collapses the same on both sides.
+// Whitespace follows JavaScript, not Go: JS \s and trim() take U+FEFF and not
+// U+0085, unicode.IsSpace the reverse, Go's regexp \s is ASCII only, and JS "."
+// stops at \r, U+2028 and U+2029. jsSpaceClass and isJSSpace encode that.
+
+// jsSpaceClass is JavaScript's \s as a Go character class.
+const jsSpaceClass = `[\t\n\v\f\r \p{Zs}\x{2028}\x{2029}\x{FEFF}]`
+
+// isJSSpace is JavaScript's \s and trim() set: unicode.IsSpace minus U+0085,
+// plus U+FEFF.
+func isJSSpace(r rune) bool {
+	return r == 0xFEFF || (r != 0x85 && unicode.IsSpace(r))
+}
+
+func jsTrim(s string) string { return strings.TrimFunc(s, isJSSpace) }
 
 // inDepthHeading is a heading line: "###" and its text. The space after the
-// hashes is optional — models drop it often enough to matter.
-var inDepthHeading = regexp.MustCompile(`^###\s*(.+)$`)
+// hashes is optional — models drop it often enough to matter. The text class
+// is JS ".", which does not cross a line terminator.
+var inDepthHeading = regexp.MustCompile(`^###` + jsSpaceClass + `*([^\r\n\x{2028}\x{2029}]+)$`)
 
 // inDepthStamp is the stamp, in square or round brackets, anywhere in the
 // heading — models move it to the front or glue a period after it.
@@ -29,7 +41,7 @@ var inDepthStamp = regexp.MustCompile(`[\[(](\d{1,2}(?::\d{2}){1,2})[\])]`)
 
 var (
 	inDepthBold      = regexp.MustCompile(`\*\*|__`)
-	inDepthParaBreak = regexp.MustCompile(`\n[\s\v\p{Zs}\x{2028}\x{2029}\x{FEFF}]*\n`)
+	inDepthParaBreak = regexp.MustCompile(`\n` + jsSpaceClass + `*\n`)
 )
 
 type parsedInDepth struct {
@@ -57,7 +69,7 @@ func parseInDepth(text string) parsedInDepth {
 	}
 	var sections []open
 	for _, line := range strings.Split(text, "\n") {
-		if m := inDepthHeading.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+		if m := inDepthHeading.FindStringSubmatch(jsTrim(line)); m != nil {
 			h, s := readInDepthHeading(m[1])
 			sections = append(sections, open{heading: h, stamp: s})
 		} else if len(sections) > 0 {
@@ -88,9 +100,9 @@ func readInDepthHeading(raw string) (heading, stamp string) {
 		stamp = raw[loc[2]:loc[3]]
 		text = raw[:loc[0]] + raw[loc[1]:]
 	}
-	text = strings.Join(strings.Fields(inDepthBold.ReplaceAllString(text, "")), " ")
+	text = strings.Join(strings.FieldsFunc(inDepthBold.ReplaceAllString(text, ""), isJSSpace), " ")
 	heading = strings.TrimFunc(text, func(r rune) bool {
-		return unicode.IsSpace(r) || strings.ContainsRune(".:–—-", r)
+		return isJSSpace(r) || strings.ContainsRune(".:–—-", r)
 	})
 	return heading, stamp
 }
@@ -98,7 +110,7 @@ func readInDepthHeading(raw string) (heading, stamp string) {
 func inDepthParagraphs(lines []string) []string {
 	var out []string
 	for _, p := range inDepthParaBreak.Split(strings.Join(lines, "\n"), -1) {
-		if p = strings.TrimSpace(p); p != "" {
+		if p = jsTrim(p); p != "" {
 			out = append(out, p)
 		}
 	}
