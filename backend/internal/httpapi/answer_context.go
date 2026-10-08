@@ -55,22 +55,34 @@ func (s *server) buildAnswerContext(lookup *videoLookup, hits []rag.Hit, compare
 			StartSeconds: c.hit.StartSeconds, Kind: c.hit.Kind,
 			Snippet: matchSnippet(c.hit),
 		})
-		// Sanitize BEFORE truncating, never after: stripping a sentinel out of
-		// already-shortened text can leave a dangling "</excerp" that whatever is
-		// written next completes.
 		// The chapter this moment falls in, when the video has chapters. It is
 		// what lets an answer say WHERE in a two-hour lecture something is
 		// covered, instead of leaving the model to infer a location from a
 		// transcript fragment that mentions none.
-		chapterAttr := ""
-		if ch := chapterAt(c.video, c.hit.StartSeconds); ch != "" {
-			chapterAttr = fmt.Sprintf(" chapter=%q", stripExcerptTags(ch))
-		}
-		excerpts = append(excerpts, fmt.Sprintf("<excerpt n=\"%d\" title=%q%s at=\"%ds\">\n%s\n</excerpt>",
-			n, stripExcerptTags(c.video.Title), chapterAttr, c.hit.StartSeconds,
-			truncateRunes(stripExcerptTags(c.hit.Text), answerExcerptRunes)))
+		excerpts = append(excerpts, formatExcerpt(n, c.video.Title, chapterAt(c.video, c.hit.StartSeconds), c.hit))
 	}
 	return sources, vids, excerpts, chosen
+}
+
+// formatExcerpt fences one passage for the answer prompt.
+//
+// kind="analysis" marks a summary or in-depth chunk: peeq's own condensed
+// reading of the video, not words spoken in it. The system prompt tells the
+// model to cite it but never to quote it as the speaker.
+//
+// Sanitize BEFORE truncating, never after: stripping a sentinel out of
+// already-shortened text can leave a dangling "</excerp" that whatever is
+// written next completes.
+func formatExcerpt(n int, title, chapter string, h rag.Hit) string {
+	attrs := fmt.Sprintf(" title=%q", stripExcerptTags(title))
+	if chapter != "" {
+		attrs += fmt.Sprintf(" chapter=%q", stripExcerptTags(chapter))
+	}
+	if rag.IsAnalysis(h.Kind) {
+		attrs += ` kind="analysis"`
+	}
+	return fmt.Sprintf("<excerpt n=\"%d\"%s at=\"%ds\">\n%s\n</excerpt>",
+		n, attrs, h.StartSeconds, truncateRunes(stripExcerptTags(h.Text), answerExcerptRunes))
 }
 
 // coverageMaxVideos caps the retrieved-video list the panel shows under its
@@ -308,17 +320,19 @@ func (s *server) chooseExcerpts(lookup *videoLookup, hits []rag.Hit, compare boo
 		// (rag.buildRows), so it is exempt from the moment bucket in BOTH
 		// directions: it is never suppressed by an earlier hit, and it must
 		// never claim bucket 0 either — doing so would drop the genuine
-		// transcript hit in the video's first thirty seconds.
-		isSummary := h.Kind == rag.KindSummary
+		// transcript hit in the video's first thirty seconds. An in-depth
+		// section is exempt the same way: it is the analysis of a point, not a
+		// repeat of the transcript at its stamp.
+		exempt := rag.IsAnalysis(h.Kind)
 		key := fmt.Sprintf("%s:%d", h.VideoID, h.StartSeconds/answerMomentBucket)
-		if !isSummary && seen[key] {
+		if !exempt && seen[key] {
 			continue
 		}
 		v := lookup.get(h.VideoID)
 		if v == nil {
 			continue
 		}
-		if !isSummary {
+		if !exempt {
 			seen[key] = true
 		}
 		cands = append(cands, excerptCandidate{hit: h, video: v})

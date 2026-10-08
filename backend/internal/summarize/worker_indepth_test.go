@@ -3,11 +3,13 @@ package summarize
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/trick77/peeq/internal/llm"
+	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/videos"
 )
 
@@ -76,6 +78,26 @@ func wantInDepth(t *testing.T, h *workerHarness, id, want string) {
 	}
 }
 
+// inDepthChunks lists the video's indexed in-depth sections as "start text".
+func inDepthChunks(t *testing.T, h *workerHarness, id string) []string {
+	t.Helper()
+	rows, err := h.db.Query(`SELECT start_seconds, text FROM transcript_chunks WHERE video_id = ? AND kind = ? ORDER BY ordinal`, id, rag.KindInDepth)
+	if err != nil {
+		t.Fatalf("query chunks: %v", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var start int
+		var text string
+		if err := rows.Scan(&start, &text); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, fmt.Sprintf("%d %s", start, text))
+	}
+	return out
+}
+
 func TestWorker_writesTheInDepthSummary(t *testing.T) {
 	h := newWorkerHarness(t)
 	seedDownloaded(t, h, "d1")
@@ -87,6 +109,10 @@ func TestWorker_writesTheInDepthSummary(t *testing.T) {
 	wantInDepth(t, h, "d1", inDepthReply)
 	if c.calls["indepth"] != 1 || c.calls["keypoints"] != 1 {
 		t.Fatalf("calls = %v, want one in-depth and one key-points call", c.calls)
+	}
+	// Its sections are what Ask searches, so the same job indexes them.
+	if got := inDepthChunks(t, h, "d1"); len(got) != 1 || got[0] != "0 A point\n\nBody." {
+		t.Fatalf("indepth chunks = %q, want the one section at its stamp", got)
 	}
 }
 
@@ -109,6 +135,9 @@ func TestWorker_inDepthFailureIsBestEffort(t *testing.T) {
 		t.Fatalf("status=%q key_points=%q indexed=%v, want the core analysis complete", v.SummaryStatus, v.KeyPoints, v.Indexed())
 	}
 	wantInDepth(t, h, "d2", "")
+	if got := inDepthChunks(t, h, "d2"); len(got) != 0 {
+		t.Fatalf("indepth chunks = %q, want none without an in-depth text", got)
+	}
 	var state string
 	if err := h.db.QueryRow(`SELECT state FROM summary_jobs WHERE video_id = ?`, "d2").Scan(&state); err != nil || state != "done" {
 		t.Fatalf("job state = %q, %v; want done", state, err)

@@ -283,10 +283,11 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		outcome := "done_inbox"
 		if video.ChannelKeepReads {
 			// No chapters: an inbox read never runs the key-points step that
-			// produces them, so this index is transcript and summary only.
+			// produces them, so this index is transcript, summary and the
+			// in-depth sections written just above.
 			w.emit(video.ID, videos.SummaryDone, PhaseEmbedding)
 			ectx, edone := run.step("embedding")
-			if err := w.embedAndStore(ectx, video.ID, parsed, summary, nil); err != nil {
+			if err := w.embedAndStore(ectx, video, parsed, summary, nil); err != nil {
 				return true, w.failJob(ctx, job, video, run, err.Error())
 			}
 			edone()
@@ -393,7 +394,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		// mid-attempt is the embed below, and a second attempt that sees the
 		// raised value has genuinely already been indexed from this summary.
 		if !video.Indexed() {
-			if eerr := w.embedAndStore(kctx, video.ID, parsed, summary, ytChapters); eerr != nil {
+			if eerr := w.embedAndStore(kctx, video, parsed, summary, ytChapters); eerr != nil {
 				w.d.Logger.Warn("summarize worker: fallback embedding failed",
 					append(run.ident(), "err", eerr)...)
 			} else {
@@ -446,7 +447,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// to step 5/5 (it reads phase, falling back to status).
 	w.emit(video.ID, videos.SummaryDone, PhaseEmbedding)
 	ectx, edone := run.step("embedding")
-	if err := w.embedAndStore(ectx, video.ID, parsed, summary, chapters); err != nil {
+	if err := w.embedAndStore(ectx, video, parsed, summary, chapters); err != nil {
 		// requeueJob, not failJob: the summary is written, marked done and already
 		// rendering in the Player. Failing the job here used to set
 		// summary_status='error', so the Player said "Summarization failed" above
@@ -540,8 +541,20 @@ func (w *Worker) emit(videoID, status, phase string) {
 
 // embedAndStore rebuilds the video's chunks from the finished analysis and
 // replaces its index. The chunk recipe itself lives in rag.BuildVideoChunks.
-func (w *Worker) embedAndStore(ctx context.Context, videoID string, parsed subtitles.Parsed, summaryText string, chapters []Chapter) error {
-	rows := rag.BuildVideoChunks(parsed, summaryText, toRagChapters(chapters))
+//
+// The in-depth text is read here rather than passed in: every caller runs
+// after the in-depth step, and a video whose step failed simply indexes no
+// sections until a reprocess writes them. It stays best-effort here too: a
+// failed read indexes without sections rather than failing the core index.
+func (w *Worker) embedAndStore(ctx context.Context, video *videos.Video, parsed subtitles.Parsed, summaryText string, chapters []Chapter) error {
+	videoID := video.ID
+	inDepth, err := w.d.Videos.InDepth(videoID)
+	if err != nil {
+		w.d.Logger.Warn("summarize worker: in-depth read failed, indexing without it", "video_id", videoID, "err", err)
+		inDepth = ""
+	}
+	rows := rag.BuildVideoChunks(parsed, summaryText, toRagChapters(chapters),
+		inDepthSections(inDepth, int(video.DurationSeconds)))
 	if len(rows) == 0 {
 		return errors.New("no chunks")
 	}

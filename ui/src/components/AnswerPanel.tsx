@@ -608,12 +608,15 @@ function CiteMark({
     source.kind === "summary"
       ? "the summary"
       : formatDuration(source.start_seconds);
+  // An in-depth section is the analysis's reading of that moment, not the
+  // transcript of it; the name says so.
+  const inDepth = source.kind === "indepth";
   return (
     <button
       type="button"
       className={tight ? "cite tight" : "cite"}
-      title={`${source.title} · ${at}`}
-      aria-label={`Source ${source.display}: ${source.title} at ${at}`}
+      title={`${source.title} · ${at}${inDepth ? " · in depth" : ""}`}
+      aria-label={`Source ${source.display}: ${source.title} at ${at}${inDepth ? ", in depth" : ""}`}
       onClick={() => onOpen(source.video_id, source.start_seconds)}
     >
       {source.display}

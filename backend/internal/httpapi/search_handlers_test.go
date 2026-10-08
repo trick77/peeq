@@ -1724,3 +1724,45 @@ func TestSearch_readsPastThePreloadLazily(t *testing.T) {
 		t.Fatalf("v2 should be found past the preload and v1 skipped, body = %s", rec.Body.String())
 	}
 }
+
+// Find shows an in-depth section beside the transcript at the same moment:
+// one is what was said, the other the analysis of it.
+func TestSearchKeepsInDepthAlongsideTheSameMoment(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "talk"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "electrolytes said at four minutes", Kind: rag.KindTranscript, StartSeconds: 250},
+		{Ordinal: 1, Text: "Electrolytes decide it\n\nthe analysis of electrolytes", Kind: rag.KindInDepth, StartSeconds: 252},
+	})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	body := doReq(t, h, cookie, http.MethodGet, "/api/search?q=electrolytes", nil).Body.String()
+	for _, kind := range []string{rag.KindTranscript, rag.KindInDepth} {
+		if !strings.Contains(body, `"kind":"`+kind+`"`) {
+			t.Errorf("%s hit suppressed by the other at the same moment: %s", kind, body)
+		}
+	}
+}
+
+// Two sections the model stamped alike are two rows: a section is never
+// split, so a shared stamp says nothing about sameness.
+func TestSearchKeepsDistinctInDepthSectionsAtOneStamp(t *testing.T) {
+	deps, _, ragStore := searchTestDepsWithStores(t)
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "talk"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
+		{Ordinal: 0, Text: "One point\n\nelectrolytes and sodium", Kind: rag.KindInDepth, StartSeconds: 252},
+		{Ordinal: 1, Text: "Another point\n\nelectrolytes and heat", Kind: rag.KindInDepth, StartSeconds: 252},
+	})
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	body := doReq(t, h, cookie, http.MethodGet, "/api/search?q=electrolytes", nil).Body.String()
+	if n := strings.Count(body, `"kind":"indepth"`); n != 2 {
+		t.Errorf("in-depth rows = %d, want 2: %s", n, body)
+	}
+}

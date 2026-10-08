@@ -269,11 +269,26 @@ export function ResultCards({
 // This replaces the raw vector distance that used to sit at the end of the row.
 // That number was retrieval diagnostics — it is meaningless for a bm25-ranked
 // keyword hit, and it told a user nothing they could act on.
+//
+// In depth earns a label for the summary's reason: it is peeq's reading of a
+// point, not the words said at that moment, and the row would otherwise pass
+// for a transcript quote. It keeps its timestamp because it seeks like one.
 function MatchLead({ match }: { match: SearchMatch }) {
   if (match.kind === "summary") {
     return <span className="badge">Summary</span>;
   }
-  return <span className="ts mono">{formatDuration(match.start_seconds)}</span>;
+  const ts = (
+    <span className="ts mono">{formatDuration(match.start_seconds)}</span>
+  );
+  if (match.kind === "indepth") {
+    return (
+      <>
+        {ts}
+        <span className="badge">In depth</span>
+      </>
+    );
+  }
+  return ts;
 }
 
 // Snippet renders a search preview, marking the terms that matched. The

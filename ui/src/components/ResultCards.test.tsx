@@ -219,6 +219,40 @@ describe("ResultCards", () => {
     expect(container).toHaveTextContent("5:00");
   });
 
+  // An in-depth row is peeq's reading of a point, not the words at that
+  // moment, so unlike a transcript or chapter row it says so. It keeps its
+  // timestamp and seeks like a moment — [0:00] included: an unstamped section
+  // is never indexed, so a 0 here is a real stamp.
+  it("labels an in-depth match and seeks to its stamp", async () => {
+    const onOpen = vi.fn();
+    const onOpenVideo = vi.fn();
+    const { container } = renderCards(
+      group("downloaded", [
+        {
+          start_seconds: 252,
+          snippet: "flow temperature decides it",
+          distance: 0.1,
+          kind: "indepth",
+        },
+        {
+          start_seconds: 0,
+          snippet: "an opening point",
+          distance: 0.2,
+          kind: "indepth",
+        },
+      ]),
+      { onOpen, onOpenVideo },
+    );
+
+    expect(screen.getAllByText("In depth")).toHaveLength(2);
+    expect(container).toHaveTextContent("4:12");
+    await userEvent.click(screen.getByText("flow temperature decides it"));
+    expect(onOpen).toHaveBeenCalledWith("v1", 252);
+    await userEvent.click(screen.getByText("an opening point"));
+    expect(onOpen).toHaveBeenCalledWith("v1", 0);
+    expect(onOpenVideo).not.toHaveBeenCalled();
+  });
+
   // Retrieval order is bm25 rank or citation order — neither of which the
   // reader can see. The timestamps they CAN see were running backwards: a
   // chapter hit late in the video sat above a transcript hit near the start.

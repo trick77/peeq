@@ -333,6 +333,39 @@ describe("AnswerPanel", () => {
     expect(onOpen).toHaveBeenCalledWith("v1", 1140);
   });
 
+  // An in-depth section is peeq's reading of the video, not its words. The
+  // mark still seeks to where the point is made, and its name says which kind
+  // of passage the claim rests on.
+  it("names an in-depth source and seeks to its section", () => {
+    const onOpen = vi.fn();
+    const inDepth = {
+      ...sources[0],
+      n: 5,
+      start_seconds: 252,
+      kind: "indepth",
+      snippet: "flow temperature decides it",
+    };
+    render(
+      <Panel
+        state={state({
+          text: "It argues so.[5]",
+          sources: [...sources, inDepth],
+        })}
+        onOpen={onOpen}
+      />,
+    );
+    const mark = document.querySelector(".answer-body .cite") as HTMLElement;
+    expect(mark).toHaveAccessibleName(
+      "Source 1: Why Athletes Cramp at 4:12, in depth",
+    );
+    expect(mark).toHaveAttribute(
+      "title",
+      "Why Athletes Cramp · 4:12 · in depth",
+    );
+    fireEvent.click(mark);
+    expect(onOpen).toHaveBeenCalledWith("v1", 252);
+  });
+
   // A mark against a comma or a full stop drops its own gap: the punctuation
   // already leaves one, and both together read as a stray space.
   it("closes a mark up against the comma or full stop it follows", () => {

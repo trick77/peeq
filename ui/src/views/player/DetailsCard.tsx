@@ -12,14 +12,15 @@ import {
 } from "../../format";
 
 // KIND_LABELS names each chunk kind the pipeline writes (rag/build.go's
-// KindTranscript/KindSummary/KindChapter). A kind with no entry here is shown
-// under its own wire word rather than dropped: a row saying "keyframe 12" is
-// odd-looking but true, and silently omitting it would make the rows stop
-// adding up to the group's other counts.
+// KindTranscript/KindSummary/KindChapter/KindInDepth). A kind with no entry here
+// is shown under its own wire word rather than dropped: a row saying
+// "keyframe 12" is odd-looking but true, and silently omitting it would make
+// the rows stop adding up to the group's other counts.
 const KIND_LABELS: Record<string, string> = {
   transcript: "Transcript",
   chapter: "Chapters",
   summary: "Summary",
+  indepth: "In depth",
 };
 
 function kindLabel(kind: string): string {
