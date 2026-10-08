@@ -41,46 +41,66 @@ type thumbJob struct {
 // turn in the YouTube queue, and a page of uncached cards would otherwise hold
 // a request open per card for as long as the queue takes.
 //
-// Not queued: a poster already waiting, one that failed within
-// thumbRetryAfter, any poster while YouTube calls are refused (paused, or no
-// valid cookie — it would only be refused again), and any poster while the
-// queue is full. The page asks for posters top to bottom, so letting a
-// request evict the oldest job would push out the newest uploads at the top
-// of the inbox; the next page load asks again.
-func (s *Scheduler) QueueThumbnail(videoID, url string) {
+// It reports whether the poster is on its way: queued now or already
+// waiting. Not queued, and false: one backing off after a failure
+// (thumbRetryAfter or thumbTransientRetry), any poster while YouTube calls are
+// refused (paused, or no valid cookie — it would only be refused again), and
+// any poster while the queue is full. The page asks for posters top to
+// bottom, so letting a request evict the oldest job would push out the newest
+// uploads at the top of the inbox; a later page load asks again.
+func (s *Scheduler) QueueThumbnail(videoID, url string) bool {
 	if s.d.Images == nil {
-		return
+		return false
 	}
+	claimed, waiting := s.markWaiting(videoID)
+	if !claimed {
+		return waiting
+	}
+	// Checked after the in-memory claim: the gate reads the database, and
+	// most asks are for a poster already waiting or backing off.
 	if s.d.CookieStatus != nil && !s.gate.Open(context.Background()) {
-		return
-	}
-	if !s.markWaiting(videoID) {
-		return
+		s.thumbDone(videoID, 0)
+		return false
 	}
 	select {
 	case s.thumbs <- thumbJob{videoID: videoID, url: url}:
+		return true
 	default:
 		s.thumbDone(videoID, 0)
+		return false
 	}
 }
 
-// markWaiting claims videoID for the queue, reporting false when it is
-// already waiting or a failure has it backing off. Expired back-offs are
-// pruned on the way, so the map does not grow for the life of the process.
-func (s *Scheduler) markWaiting(videoID string) bool {
+// thumbPruneAt is how many back-offs may pile up before markWaiting sweeps
+// the expired ones out.
+const thumbPruneAt = 256
+
+// markWaiting claims videoID for the queue. claimed is false when it is
+// already waiting (waiting true) or backing off after a failure. Only the
+// asked-for id's back-off is checked; the whole map is swept for expired ones
+// only once it has grown, so a page of posters costs no full scans.
+func (s *Scheduler) markWaiting(videoID string) (claimed, waiting bool) {
 	s.thumbMu.Lock()
 	defer s.thumbMu.Unlock()
 	now := s.d.Now()
-	for id, at := range s.thumbRetryAt {
-		if !now.Before(at) {
-			delete(s.thumbRetryAt, id)
+	if s.thumbWaiting[videoID] {
+		return false, true
+	}
+	if at, ok := s.thumbRetryAt[videoID]; ok {
+		if now.Before(at) {
+			return false, false
+		}
+		delete(s.thumbRetryAt, videoID)
+	}
+	if len(s.thumbRetryAt) > thumbPruneAt {
+		for id, at := range s.thumbRetryAt {
+			if !now.Before(at) {
+				delete(s.thumbRetryAt, id)
+			}
 		}
 	}
-	if _, backingOff := s.thumbRetryAt[videoID]; backingOff || s.thumbWaiting[videoID] {
-		return false
-	}
 	s.thumbWaiting[videoID] = true
-	return true
+	return true, false
 }
 
 // queueThumbnail hands a newly-pending video's poster to the drainer without
@@ -92,7 +112,7 @@ func (s *Scheduler) markWaiting(videoID string) bool {
 // A scan's discoveries are the newest uploads, so when the queue is full the
 // OLDEST waiting job makes room for this one.
 func (s *Scheduler) queueThumbnail(videoID, url string) {
-	if !s.markWaiting(videoID) {
+	if claimed, _ := s.markWaiting(videoID); !claimed {
 		return
 	}
 	job := thumbJob{videoID: videoID, url: url}

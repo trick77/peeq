@@ -404,10 +404,14 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 		// would hold a request open per card for as long as that takes. The UI
 		// renders its gradient placeholder on the uncached 404 meanwhile, and
 		// the poster shows on the next page load after it has arrived.
-		if s.queueThumb != nil {
-			s.queueThumb(id, e.ThumbnailURL)
+		// One that is not on its way (backing off after a failure, refused
+		// while YouTube calls are paused) gets the cached 404, so the browser
+		// stops asking for a while.
+		if s.queueThumb != nil && s.queueThumb(id, e.ThumbnailURL) {
+			notFoundPending(w, r)
+			return
 		}
-		notFoundPending(w, r)
+		notFoundCached(w, r)
 		return
 	}
 	imageOwnedDay.apply(w, r)

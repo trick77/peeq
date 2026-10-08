@@ -1614,7 +1614,7 @@ func TestChannelRefresh_artInTheBackground(t *testing.T) {
 		UCID: "UCart", Name: "Art", AvatarURL: srv.URL + "/a", BannerURL: srv.URL + "/b",
 	}})
 	artDone := make(chan string, 1)
-	deps.OnChannelResolved = func(id string) { artDone <- id }
+	deps.OnChannelArt = func(id string) { artDone <- id }
 	h := New(deps)
 	if err := deps.Channels.Upsert(channels.Channel{ID: "UCart", Name: "Art"}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -3266,7 +3266,7 @@ func TestPendingThumbnail_queuesOnMiss(t *testing.T) {
 
 	var queued []string
 	h := newPendingTestServerWith(t, func(d *Deps) {
-		d.QueueThumbnail = func(videoID, url string) { queued = append(queued, videoID+" "+url) }
+		d.QueueThumbnail = func(videoID, url string) bool { queued = append(queued, videoID+" "+url); return true }
 	})
 	h.seedChannel("UC1")
 	if err := h.ledger.Insert(channelvideos.Entry{
@@ -3289,6 +3289,29 @@ func TestPendingThumbnail_queuesOnMiss(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&hits); n != 0 {
 		t.Fatalf("origin hit %d times on the request, want 0", n)
+	}
+}
+
+// TestPendingThumbnail_notOnItsWayIsCached: a poster the queue will not fetch
+// now (backing off after a failure, YouTube calls paused) gets the cached 404,
+// so the browser stops asking for a while instead of on every load.
+func TestPendingThumbnail_notOnItsWayIsCached(t *testing.T) {
+	h := newPendingTestServerWith(t, func(d *Deps) {
+		d.QueueThumbnail = func(string, string) bool { return false }
+	})
+	h.seedChannel("UC1")
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "pt7", ChannelID: "UC1", Title: "A", URL: "https://www.youtube.com/watch?v=pt7",
+		ThumbnailURL: "https://cdn.test/x.jpg", State: "pending",
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	rec := h.getRaw(t, "/api/pending/pt7/thumbnail")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != cacheImageMissing {
+		t.Fatalf("Cache-Control = %q, want %q", cc, cacheImageMissing)
 	}
 }
 
@@ -3332,7 +3355,7 @@ func TestChannelAdd_storesArtworkOnTheRow(t *testing.T) {
 	// The art is fetched after the response, each image a turn in the YouTube
 	// queue; the hook says when that background work is done.
 	artDone := make(chan string, 1)
-	deps.OnChannelResolved = func(id string) { artDone <- id }
+	deps.OnChannelArt = func(id string) { artDone <- id }
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 

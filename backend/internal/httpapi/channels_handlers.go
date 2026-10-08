@@ -547,7 +547,8 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 //
 // It runs while the caller waits rather than in the background: the user
 // pressed a button and the answer is either new metadata to re-render or a
-// reason it did not work.
+// reason it did not work. The artwork follows in the background (it is two
+// more turns in the YouTube queue) and shows on the next page load.
 func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil || s.metadata == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
@@ -620,9 +621,8 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 		upstreamError(w, r, err, "refresh failed")
 		return
 	}
-	// The resolve itself fires no onChannelResolved: it is synchronous, so the
-	// response is the signal. The background art fetch started above does fire
-	// it when done (see Deps.OnChannelResolved).
+	// No onChannelResolved here: this path is synchronous, so the response is
+	// the signal. The background art fetch started above fires OnChannelArt.
 	writeJSON(w, map[string]any{"status": "ok"})
 }
 

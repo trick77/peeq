@@ -481,6 +481,7 @@ func run() error {
 		Metadata:        metaRefresher,
 		Images:          runner.FetchImage,
 		QueueThumbnail:  scheduler.QueueThumbnail,
+		Background:      ctx,
 		Ledger:          ledgerStore,
 
 		Rag:               ragStore,

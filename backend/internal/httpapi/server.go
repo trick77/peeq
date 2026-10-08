@@ -7,6 +7,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/trick77/peeq/internal/auth"
@@ -111,10 +112,17 @@ type Deps struct {
 	// ytdlp.Runner.FetchImage, so each image is a turn in the YouTube queue.
 	// Optional: when nil, channels are added without art.
 	Images media.ImageFetcher
+	// Background is the process lifetime: cancelled at shutdown. Background
+	// work the handlers start (a channel's art fetch) runs on it, so a
+	// shutdown stops it waiting for a turn. Optional: nil means never.
+	Background context.Context
+	// OnChannelArt fires when a background art fetch for a channel settles.
+	// Test-only, like OnChannelResolved. nil in production.
+	OnChannelArt func(channelID string)
 	// QueueThumbnail asks for an inbox poster to be fetched in the background
-	// (scan.Scheduler.QueueThumbnail). Optional: when nil, a missing poster just
-	// stays the placeholder.
-	QueueThumbnail func(videoID, url string)
+	// (scan.Scheduler.QueueThumbnail) and reports whether it is on its way.
+	// Optional: when nil, a missing poster just stays the placeholder.
+	QueueThumbnail func(videoID, url string) bool
 
 	// Ledger is the per-channel scan ledger (channel_videos) backing the
 	// pending API. Optional: when nil, the pending endpoints return 503.
@@ -175,10 +183,9 @@ type Deps struct {
 	// settings flag.
 	OnResumeYoutube func()
 
-	// OnChannelResolved fires after a background channel goroutine settles,
-	// successfully or not: a metadata resolve, or the art fetch after adding a
-	// channel. Test-only: it exists so a test can wait for the goroutine
-	// instead of sleeping. nil in production.
+	// OnChannelResolved fires after a background channel-metadata resolve
+	// settles, successfully or not. Test-only: it exists so a test can wait
+	// for the goroutine instead of sleeping. nil in production.
 	OnChannelResolved func(channelID string)
 
 	// ResolveCap bounds a channel metadata resolve once yt-dlp has started.
@@ -257,7 +264,13 @@ type server struct {
 	ytdlp        YTDLPVersioner
 
 	images     media.ImageFetcher
-	queueThumb func(videoID, url string)
+	background context.Context
+	onArt      func(channelID string)
+	// artMu guards artInFlight: channels whose art is being fetched, so a
+	// repeated Refresh does not queue the same two turns again.
+	artMu       sync.Mutex
+	artInFlight map[string]bool
+	queueThumb  func(videoID, url string) bool
 
 	channels        *channels.Store
 	channelResolver ChannelResolver
@@ -317,8 +330,11 @@ func New(d Deps) http.Handler {
 		streamAccess:   d.StreamAccess,
 		ytdlp:          d.YTDLP,
 
-		images:     d.Images,
-		queueThumb: d.QueueThumbnail,
+		images:      d.Images,
+		background:  d.Background,
+		onArt:       d.OnChannelArt,
+		artInFlight: map[string]bool{},
+		queueThumb:  d.QueueThumbnail,
 
 		channels:        d.Channels,
 		channelResolver: d.ChannelResolver,

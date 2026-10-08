@@ -40,16 +40,29 @@ func (s *server) serveChannelImage(w http.ResponseWriter, r *http.Request, kind 
 	serveStoredImage(w, r, img.Mime, img.Bytes, img.UpdatedAt)
 }
 
-// storeChannelArtAsync fetches a just-added channel's avatar and banner in the
-// background and stores them on its row; the page shows them on its next load.
-// onChannelResolved fires when it is done, so a test can await it.
+// storeChannelArtAsync fetches a just-added or refreshed channel's avatar and
+// banner in the background and stores them on its row; the page shows them on
+// its next load. onArt fires when it is done, so a test can await it.
 //
 // Detached from the request, which has already answered: each image is a turn
-// in the YouTube queue. On the interactive lane, because a person just added
-// the channel and is looking at it.
+// in the YouTube queue. On the interactive lane, because a person is looking
+// at the channel. On the process-lifetime ctx, so a shutdown stops it waiting
+// for a turn. One fetch per channel at a time: a repeated Refresh while one is
+// queued does not queue the same two turns again.
 func (s *server) storeChannelArtAsync(channelID, avatarURL, bannerURL string) {
 	if s.channels == nil || s.images == nil || (avatarURL == "" && bannerURL == "") {
 		return
+	}
+	s.artMu.Lock()
+	if s.artInFlight[channelID] {
+		s.artMu.Unlock()
+		return
+	}
+	s.artInFlight[channelID] = true
+	s.artMu.Unlock()
+	base := s.background
+	if base == nil {
+		base = context.Background()
 	}
 	go func() {
 		defer func() {
@@ -58,11 +71,14 @@ func (s *server) storeChannelArtAsync(channelID, avatarURL, bannerURL string) {
 			if r := recover(); r != nil {
 				slog.Error("channel art: recovered from panic", "channel_id", channelID, "panic", r)
 			}
-			if s.onChannelResolved != nil {
-				s.onChannelResolved(channelID)
+			s.artMu.Lock()
+			delete(s.artInFlight, channelID)
+			s.artMu.Unlock()
+			if s.onArt != nil {
+				s.onArt(channelID)
 			}
 		}()
-		ctx := ytdlp.WithInteractive(context.Background())
+		ctx := ytdlp.WithInteractive(base)
 		s.storeChannelImage(ctx, channelID, channels.ImageAvatar, avatarURL)
 		s.storeChannelImage(ctx, channelID, channels.ImageBanner, bannerURL)
 	}()
