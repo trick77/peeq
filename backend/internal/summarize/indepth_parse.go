@@ -131,9 +131,10 @@ func stampSeconds(stamp string) int {
 // already says it).
 //
 // A section with no stamp, or a stamp at or past the video's end, is dropped
-// too. Every hit seeks, so it would have to be parked somewhere: at 0s it
-// rewinds the reader's resume position, borrows the first chapter's name in
-// the Ask prompt and counts as a moment in Find. The prompt demands stamps, so
+// too. Every hit claims a moment, so it would have to be parked at a false
+// one: 0s, where it seeks to a start that is not where the point is made,
+// borrows the first chapter's name in the Ask prompt and counts as a moment
+// in Find. A real [0:00] stamp is kept. The prompt demands stamps, so
 // this costs only the rare reply that ignored it; its transcript stays
 // searchable. durationSeconds <= 0 is unknown and bounds nothing.
 func inDepthSections(body string, durationSeconds int) []rag.InDepthSection {

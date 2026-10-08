@@ -105,33 +105,25 @@ func BuildVideoChunks(parsed subtitles.Parsed, summaryText string, chapters []Ch
 		if body == "" {
 			continue
 		}
-		prefix := ""
+		text := body
 		if h := strings.TrimSpace(s.Heading); h != "" {
-			prefix = h + "\n\n"
+			text = h + "\n\n" + body
 		}
-		// A reply that put one heading over everything is one huge section;
-		// split it like a long chapter, heading on every part.
-		parts := []string{body}
-		if opts := DefaultChunkOptions(); estimateTokens(prefix+body) > opts.MaxTokens {
-			// The heading rides on every part, so it comes out of each
-			// part's budget rather than on top of it.
-			opts.MaxTokens -= estimateTokens(prefix)
-			opts.TargetTokens = min(opts.TargetTokens, opts.MaxTokens)
-			parts = parts[:0]
-			for _, p := range Chunk(body, opts) {
-				parts = append(parts, p.Text)
-			}
+		// A malformed reply can make one section huge: a heading over
+		// everything, or a paragraph on the heading line. Cut it to its first
+		// window, never split it: split parts would share the section's stamp,
+		// and nothing could tell them from two distinct sections stamped alike.
+		// The transcript it came from stays fully indexed.
+		if opts := DefaultChunkOptions(); estimateTokens(text) > opts.MaxTokens {
+			text = Chunk(text, opts)[0].Text
 		}
-		for _, p := range parts {
-			text := prefix + p
-			rows = append(rows, ChunkRow{
-				Ordinal:      next(),
-				Text:         text,
-				Kind:         KindInDepth,
-				TokenCount:   estimateTokens(text),
-				StartSeconds: max(s.StartSeconds, 0),
-			})
-		}
+		rows = append(rows, ChunkRow{
+			Ordinal:      next(),
+			Text:         text,
+			Kind:         KindInDepth,
+			TokenCount:   estimateTokens(text),
+			StartSeconds: max(s.StartSeconds, 0),
+		})
 	}
 	return rows
 }

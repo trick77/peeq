@@ -55,9 +55,9 @@ func TestParseInDepthMatchesTheSharedFixture(t *testing.T) {
 
 // What gets indexed: one section each, paragraphs rejoined, the lead left out
 // (the summary chunk already carries it). A section with no stamp, or one past
-// the video's end, has nowhere to seek and is not indexed: parked at 0s it
-// would rewind the reader, borrow the first chapter's name and pose as a
-// moment. A real [0:00] stamp is kept.
+// the video's end, has no true moment and is not indexed: parked at 0s it
+// would seek to the wrong place, borrow the first chapter's name and pose as
+// a moment. A real [0:00] stamp is kept.
 func TestInDepthSectionsForIndex(t *testing.T) {
 	body := "Lead.\n\n### Intro point [0:00]\n\nZero.\n\n### First [1:05]\n\nOne.\n\nTwo.\n\n" +
 		"### Unstamped\n\nThree.\n\n### Past the end [20:00]\n\nFour."

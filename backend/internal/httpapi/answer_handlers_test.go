@@ -1584,25 +1584,19 @@ func TestChooseExcerptsExemptsInDepthFromTheMomentBucket(t *testing.T) {
 	}
 }
 
-// An oversized section is split into parts that share its stamp and heading.
-// They are one point, so only the best-ranked part takes a slot.
-func TestChooseExcerptsKeepsOnePartOfASplitSection(t *testing.T) {
+// Two sections the model stamped alike are still two points: a section is
+// never split, so a shared stamp says nothing about sameness.
+func TestChooseExcerptsKeepsDistinctSectionsAtOneStamp(t *testing.T) {
 	deps, _, _ := searchTestDepsWithStores(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", Title: "v1"}); err != nil {
 		t.Fatal(err)
 	}
 	hits := []rag.Hit{
-		{VideoID: "v1", Ordinal: 7, Text: "point, part one", Kind: rag.KindInDepth, StartSeconds: 252},
-		{VideoID: "v1", Ordinal: 8, Text: "point, part two", Kind: rag.KindInDepth, StartSeconds: 252},
-		{VideoID: "v1", Ordinal: 2, Text: "a transcript moment", Kind: rag.KindTranscript, StartSeconds: 900},
+		{VideoID: "v1", Ordinal: 7, Text: "one point", Kind: rag.KindInDepth, StartSeconds: 252},
+		{VideoID: "v1", Ordinal: 8, Text: "another point", Kind: rag.KindInDepth, StartSeconds: 252},
 	}
 	testee := &server{videos: deps.Videos}
-	got := testee.chooseExcerpts(newVideoLookup(testee.videos, hits), hits, false)
-	var ords []int
-	for _, c := range got {
-		ords = append(ords, c.hit.Ordinal)
-	}
-	if len(ords) != 2 || ords[0] != 7 || ords[1] != 2 {
-		t.Errorf("chose ordinals %v, want [7 2]: one part of the split section", ords)
+	if got := testee.chooseExcerpts(newVideoLookup(testee.videos, hits), hits, false); len(got) != 2 {
+		t.Errorf("chose %d excerpts, want both sections", len(got))
 	}
 }

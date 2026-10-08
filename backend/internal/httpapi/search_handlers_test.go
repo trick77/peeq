@@ -1747,22 +1747,22 @@ func TestSearchKeepsInDepthAlongsideTheSameMoment(t *testing.T) {
 	}
 }
 
-// Find shows one row per in-depth section, not one per split part: the parts
-// share a stamp and heading and would read as the same row repeated.
-func TestSearchShowsOneRowPerSplitInDepthSection(t *testing.T) {
+// Two sections the model stamped alike are two rows: a section is never
+// split, so a shared stamp says nothing about sameness.
+func TestSearchKeepsDistinctInDepthSectionsAtOneStamp(t *testing.T) {
 	deps, _, ragStore := searchTestDepsWithStores(t)
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1", Title: "talk"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	seedChunks(t, ragStore, "v1", []rag.ChunkRow{
-		{Ordinal: 0, Text: "Point\n\nelectrolytes part one", Kind: rag.KindInDepth, StartSeconds: 252},
-		{Ordinal: 1, Text: "Point\n\nelectrolytes part two", Kind: rag.KindInDepth, StartSeconds: 252},
+		{Ordinal: 0, Text: "One point\n\nelectrolytes and sodium", Kind: rag.KindInDepth, StartSeconds: 252},
+		{Ordinal: 1, Text: "Another point\n\nelectrolytes and heat", Kind: rag.KindInDepth, StartSeconds: 252},
 	})
 	h := New(deps)
 	cookie := loginAndGetCookie(t, h)
 
 	body := doReq(t, h, cookie, http.MethodGet, "/api/search?q=electrolytes", nil).Body.String()
-	if n := strings.Count(body, `"kind":"indepth"`); n != 1 {
-		t.Errorf("in-depth rows = %d, want 1: %s", n, body)
+	if n := strings.Count(body, `"kind":"indepth"`); n != 2 {
+		t.Errorf("in-depth rows = %d, want 2: %s", n, body)
 	}
 }

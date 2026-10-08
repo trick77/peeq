@@ -225,29 +225,30 @@ func TestBuildVideoChunksBlankSummaryEmitsNoSummaryChunk(t *testing.T) {
 	}
 }
 
-// A reply that put one heading over everything is one huge section. It is
-// split like a long chapter, heading on every part, so no chunk outgrows what
-// the transcript windows are sized to.
-func TestBuildVideoChunksSplitsAnOversizedInDepthSection(t *testing.T) {
+// A malformed reply can make one section huge: a heading over everything, or
+// a whole paragraph on the heading line. It is cut to one window, never split:
+// split parts share the section's stamp, and telling them apart from two
+// distinct sections at one stamp needs an identity no chunk carries. The
+// transcript the section came from stays fully indexed.
+func TestBuildVideoChunksCutsAnOversizedInDepthSectionToOneWindow(t *testing.T) {
 	long := strings.TrimSpace(strings.Repeat("word ", 2000))
-	rows := BuildVideoChunks(parsedFrom(cues("x")), "", nil, []InDepthSection{
-		{Heading: "Everything", StartSeconds: 42, Body: long},
-	})
-	var parts int
-	for _, r := range rows {
-		if r.Kind != KindInDepth {
-			continue
+	for name, sec := range map[string]InDepthSection{
+		"long body":    {Heading: "Everything", StartSeconds: 42, Body: long},
+		"long heading": {Heading: long, StartSeconds: 42, Body: "short body"},
+	} {
+		rows := BuildVideoChunks(parsedFrom(cues("x")), "", nil, []InDepthSection{sec})
+		var got []ChunkRow
+		for _, r := range rows {
+			if r.Kind == KindInDepth {
+				got = append(got, r)
+			}
 		}
-		parts++
-		if !strings.HasPrefix(r.Text, "Everything\n\n") || r.StartSeconds != 42 {
-			t.Errorf("part = %.40q at %d, want the heading and the section stamp", r.Text, r.StartSeconds)
+		if len(got) != 1 {
+			t.Fatalf("%s: %d in-depth chunks, want 1", name, len(got))
 		}
-		if r.TokenCount > DefaultChunkOptions().MaxTokens {
-			t.Errorf("part of %d tokens, want at most a window, heading included", r.TokenCount)
+		if got[0].StartSeconds != 42 || got[0].TokenCount > DefaultChunkOptions().MaxTokens {
+			t.Errorf("%s: chunk at %d of %d tokens, want the stamp and at most a window", name, got[0].StartSeconds, got[0].TokenCount)
 		}
-	}
-	if parts < 2 {
-		t.Fatalf("parts = %d, want the section split", parts)
 	}
 }
 

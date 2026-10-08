@@ -283,7 +283,8 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		outcome := "done_inbox"
 		if video.ChannelKeepReads {
 			// No chapters: an inbox read never runs the key-points step that
-			// produces them, so this index is transcript and summary only.
+			// produces them, so this index is transcript, summary and the
+			// in-depth sections written just above.
 			w.emit(video.ID, videos.SummaryDone, PhaseEmbedding)
 			ectx, edone := run.step("embedding")
 			if err := w.embedAndStore(ectx, video, parsed, summary, nil); err != nil {

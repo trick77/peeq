@@ -321,19 +321,10 @@ func (s *server) chooseExcerpts(lookup *videoLookup, hits []rag.Hit, compare boo
 		// directions: it is never suppressed by an earlier hit, and it must
 		// never claim bucket 0 either — doing so would drop the genuine
 		// transcript hit in the video's first thirty seconds. An in-depth
-		// section is exempt the same way (see outsideMoments).
-		exempt := outsideMoments(h.Kind)
+		// section is exempt the same way: it is the analysis of a point, not a
+		// repeat of the transcript at its stamp.
+		exempt := rag.IsAnalysis(h.Kind)
 		key := fmt.Sprintf("%s:%d", h.VideoID, h.StartSeconds/answerMomentBucket)
-		// Parts of one split in-depth section share its stamp exactly: one
-		// point, so only the best-ranked part is kept. Its own key space, so
-		// it still never touches the moment buckets.
-		if h.Kind == rag.KindInDepth {
-			part := fmt.Sprintf("%s:indepth:%d", h.VideoID, h.StartSeconds)
-			if seen[part] {
-				continue
-			}
-			seen[part] = true
-		}
 		if !exempt && seen[key] {
 			continue
 		}
