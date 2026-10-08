@@ -3122,8 +3122,11 @@ describe("Player video host", () => {
     // …and the host is then parked in the stage's slot, so on the player page
     // the video still sits exactly where it always did. Both hold at once, and
     // that is the whole trick: the element's owner and its location came apart.
-    expect(videoHostNode().parentElement).toBe(
-      container.querySelector(".stage-slot"),
+    // The parking is a later effect than the render, so it gets its own wait.
+    await waitFor(() =>
+      expect(videoHostNode().parentElement).toBe(
+        container.querySelector(".stage-slot"),
+      ),
     );
   });
 

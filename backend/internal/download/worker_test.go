@@ -387,6 +387,9 @@ func TestWorker_blockPausesAndStopsClaiming(t *testing.T) {
 
 	// The block pauses the worker.
 	waitFor(t, "worker paused", func() bool { return h.worker.Paused() })
+	// The flag is set BEFORE the requeue write (outcome.go, lost-wakeup
+	// ordering), so wait for the row itself rather than racing that write.
+	waitFor(t, "job1 requeued", func() bool { return h.jobState(t, job1).State != "running" })
 
 	// job1 is back to pending with attempts NOT burned; cookie flipped.
 	j1 := h.jobState(t, job1)
@@ -559,6 +562,9 @@ func TestWorker_metadataPreflightPausesOnNoCookie(t *testing.T) {
 	runWorker(t, h.worker)
 
 	waitFor(t, "worker paused", func() bool { return h.worker.Paused() })
+	// The flag is set BEFORE the requeue write (outcome.go, lost-wakeup
+	// ordering), so wait for the row itself rather than racing that write.
+	waitFor(t, "job requeued", func() bool { return h.jobState(t, job).State != "running" })
 
 	j := h.jobState(t, job)
 	if j.State != "pending" {
