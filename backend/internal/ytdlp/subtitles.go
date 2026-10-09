@@ -113,8 +113,9 @@ const (
 )
 
 // subtitleArgs is the caption-only yt-dlp invocation, writing into dir. Both
-// Subtitles and Download's caption step run exactly this, so the .vtt summarized
-// from the inbox and the one fetched with the media cannot drift apart.
+// Subtitles and Download's caption step build their flags here, so the .vtt
+// summarized from the inbox and the one fetched with the media cannot drift
+// apart; only the drawn --sleep-subtitles value differs between two calls.
 func (r *Runner) subtitleArgs(dir, subLang, watchURL string) []string {
 	sleep := subtitleSleepFloor + time.Duration(r.cfg.RandFloat64()*float64(subtitleSleepJitter))
 	return []string{

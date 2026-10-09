@@ -125,15 +125,7 @@ UPDATE channel_videos
 // double-handled error, a future caller) must not push the count negative and
 // hand a row an extra rung.
 func (s *Store) ReturnCaptionAttempt(videoID string) error {
-	_, err := s.db.ExecContext(context.Background(), `
-UPDATE channel_videos
-   SET caption_attempts        = MAX(caption_attempts - 1, 0),
-       next_caption_attempt_at = NULL
- WHERE video_id = ?`, videoID)
-	if err != nil {
-		return fmt.Errorf("return caption attempt %s: %w", videoID, err)
-	}
-	return nil
+	return s.DeferCaptionAttempt(videoID, 0)
 }
 
 // DeferCaptionAttempt gives back the rung RecordCaptionAttempt burned, like
@@ -142,6 +134,7 @@ UPDATE channel_videos
 //
 // This is for a rate-limited last rung: the call ran and was refused, so the
 // video must not settle, and it must not be asked again on the next tick.
+// Each such rung is one call a day for as long as the video stays pending.
 func (s *Store) DeferCaptionAttempt(videoID string, delaySeconds int) error {
 	_, err := s.db.ExecContext(context.Background(), `
 UPDATE channel_videos
