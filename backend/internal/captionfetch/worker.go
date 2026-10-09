@@ -72,6 +72,7 @@ type Ledger interface {
 	NextCaptionCandidate() (*channelvideos.CaptionCandidate, error)
 	RecordCaptionAttempt(videoID string, delaySeconds int) error
 	ReturnCaptionAttempt(videoID string) error
+	DeferCaptionAttempt(videoID string, delaySeconds int) error
 	SetCaptionLastError(videoID, msg string) error
 	MarkCaptionSettled(videoID string) error
 }
@@ -196,6 +197,15 @@ func (w *Worker) pass(ctx context.Context) {
 		// again, so the reason goes on the row. Redacted: the text leaves the
 		// log handler's reach here.
 		w.recordOutcome(c.VideoID, logx.RedactErr(err).Error())
+		if last && rateLimited(err) {
+			// A 429 means YouTube refused captions it may well have: the same
+			// videos fail every attempt while others go through. Settling would
+			// write them off for good, so the last rung waits a day and repeats.
+			if derr := w.d.Ledger.DeferCaptionAttempt(c.VideoID, int(Backoff[len(Backoff)-1].Seconds())); derr != nil {
+				w.d.Logger.Error("captionfetch: defer attempt failed", "video_id", c.VideoID, "err", derr)
+			}
+			return
+		}
 		if last {
 			w.settleWithout(c)
 		}
@@ -347,6 +357,13 @@ func refused(err error) bool {
 		errors.Is(err, ytdlp.ErrPaused) ||
 		errors.Is(err, ytdlp.ErrCookieExpired) ||
 		errors.Is(err, ytdlp.ErrBlocked)
+}
+
+// rateLimited reports whether err is yt-dlp's retryable class: HTTP 429 or a
+// 5xx, never a verdict on whether the video has captions.
+func rateLimited(err error) bool {
+	var re *ytdlp.RetryableError
+	return errors.As(err, &re)
 }
 
 // storeTranscript reads the .vtt yt-dlp just fetched into the row and removes

@@ -181,3 +181,33 @@ func TestFoundSubtitle(t *testing.T) {
 		t.Fatalf("rel = %q, want %q", rel, want)
 	}
 }
+
+// The caption download waits 120-180s after the player request, inside the one
+// run (yt-dlp#13831: a caption fetched right after the player answers 429).
+// The window's ends are pinned through RandFloat64; the gap between calls
+// cannot stand in for it, since it never falls between those two requests.
+func TestSubtitles_sleepsBeforeTheCaptionDownload(t *testing.T) {
+	for _, tc := range []struct {
+		rnd  float64
+		want string
+	}{
+		{0, "--sleep-subtitles 120 "},
+		{0.999, "--sleep-subtitles 179 "},
+	} {
+		mediaDir := t.TempDir()
+		capture := filepath.Join(t.TempDir(), "argv")
+		r := subsRunner(t, mediaDir, capture, "true")
+		r.cfg.RandFloat64 = func() float64 { return tc.rnd }
+
+		if _, err := r.Subtitles(context.Background(), "sleepVid012", "https://youtu.be/sleepVid012", "en"); err != nil {
+			t.Fatalf("Subtitles: %v", err)
+		}
+		argv, err := os.ReadFile(capture)
+		if err != nil {
+			t.Fatalf("read capture: %v", err)
+		}
+		if !strings.Contains(string(argv), tc.want) {
+			t.Fatalf("rand %v: argv = %q, want %q", tc.rnd, argv, tc.want)
+		}
+	}
+}

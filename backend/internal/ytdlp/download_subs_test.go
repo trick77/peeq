@@ -78,7 +78,7 @@ func TestDownload_requestsSubtitlesAndCapturesLanguage(t *testing.T) {
 	}
 	// The same flags the inbox caption fetch sends: both build them with
 	// subtitleArgs, so the two .vtt files cannot differ.
-	for _, want := range []string{"--skip-download", "--write-subs", "--write-auto-subs", "--sub-langs en ", "--convert-subs vtt"} {
+	for _, want := range []string{"--skip-download", "--write-subs", "--write-auto-subs", "--sub-langs en ", "--convert-subs vtt", "--sleep-subtitles "} {
 		if !strings.Contains(subs, want) {
 			t.Fatalf("caption call missing %q: %q", want, subs)
 		}
