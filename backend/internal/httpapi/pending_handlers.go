@@ -168,6 +168,7 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.removePendingThumbnail(e.VideoID)
+		s.publishInboxChanged(e.VideoID)
 		status := "queued"
 		if v.Status == videos.StatusDownloaded {
 			status = "already_downloaded"
@@ -201,6 +202,7 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.removePendingThumbnail(e.VideoID)
+	s.publishInboxChanged(e.VideoID)
 	writeJSON(w, map[string]string{"status": "queued"})
 }
 
@@ -256,6 +258,7 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 	if e.State == channelvideos.StatePending && !s.dropInboxRead(r, e, id) {
 		s.removePendingThumbnail(id)
 	}
+	s.publishInboxChanged(id)
 	writeJSON(w, map[string]string{"status": "ignored"})
 }
 

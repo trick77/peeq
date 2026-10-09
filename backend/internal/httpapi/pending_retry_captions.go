@@ -42,5 +42,6 @@ func (s *server) handlePendingRetryCaptions(w http.ResponseWriter, r *http.Reque
 		writeJSONError(w, http.StatusConflict, "captions cannot be retried for this video")
 		return
 	}
+	s.publishInboxChanged(id)
 	writeJSON(w, map[string]string{"status": "retrying"})
 }

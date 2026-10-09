@@ -911,6 +911,95 @@ describe("Inbox", () => {
       ).toBeInTheDocument();
     });
   });
+  describe("live refresh", () => {
+    it("refetches when liveTick moves and shows the new item", async () => {
+      const { rerender } = render(<Inbox liveTick={0} />);
+      await screen.findByText("Second pending video");
+      const itemC = baseItem({ video_id: "v3", title: "Freshly scanned" });
+      vi.mocked(listPending).mockResolvedValue([itemA, itemB, itemC]);
+
+      rerender(<Inbox liveTick={1} />);
+
+      expect(await screen.findByText("Freshly scanned")).toBeInTheDocument();
+      expect(listPending).toHaveBeenCalledTimes(2);
+    });
+
+    it("drops a card another tab decided on", async () => {
+      const { rerender } = render(<Inbox liveTick={0} />);
+      await screen.findByText("Second pending video");
+      vi.mocked(listPending).mockResolvedValue([itemB]);
+
+      rerender(<Inbox liveTick={1} />);
+
+      await waitFor(() =>
+        expect(screen.queryByText("First pending video")).toBeNull(),
+      );
+    });
+
+    it("a refresh that works clears the error a failed load left", async () => {
+      vi.mocked(listPending).mockRejectedValueOnce(new Error("backend down"));
+      const { rerender } = render(<Inbox liveTick={0} />);
+      expect(await screen.findByText(/backend down/)).toBeInTheDocument();
+
+      rerender(<Inbox liveTick={1} />);
+
+      await screen.findByText("Second pending video");
+      expect(screen.queryByText(/backend down/)).toBeNull();
+    });
+
+    it("a slow mount load cannot overwrite a newer refresh", async () => {
+      let mountAnswer!: (list: PendingItem[]) => void;
+      vi.mocked(listPending).mockImplementationOnce(
+        () => new Promise((r) => (mountAnswer = r)),
+      );
+      const itemC = baseItem({ video_id: "v3", title: "Freshly scanned" });
+      vi.mocked(listPending).mockResolvedValue([itemA, itemB, itemC]);
+      const { rerender } = render(<Inbox liveTick={0} />);
+
+      rerender(<Inbox liveTick={1} />);
+      await screen.findByText("Freshly scanned");
+
+      mountAnswer([itemA, itemB]);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.getByText("Freshly scanned")).toBeInTheDocument();
+    });
+
+    it("the tick it mounts with fetches nothing extra", async () => {
+      render(<Inbox liveTick={7} />);
+      await screen.findByText("Second pending video");
+      await new Promise((r) => setTimeout(r, 600));
+      expect(listPending).toHaveBeenCalledTimes(1);
+    });
+
+    // A list fetched before a click must not resurrect the card the click
+    // just removed: the stale answer is thrown away and asked again.
+    it("a refetch that started before an Ignore does not bring the card back", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<Inbox liveTick={0} />);
+      await screen.findByText("Second pending video");
+
+      let answer!: (list: PendingItem[]) => void;
+      vi.mocked(listPending).mockImplementationOnce(
+        () => new Promise((r) => (answer = r)),
+      );
+      rerender(<Inbox liveTick={1} />);
+      await waitFor(() => expect(listPending).toHaveBeenCalledTimes(2));
+
+      const card = screen
+        .getByText("First pending video")
+        .closest(".card") as HTMLElement;
+      await user.click(within(card).getByRole("button", { name: "Ignore" }));
+      await waitFor(() =>
+        expect(screen.queryByText("First pending video")).toBeNull(),
+      );
+
+      vi.mocked(listPending).mockResolvedValue([itemB]);
+      answer([itemA, itemB]);
+
+      await waitFor(() => expect(listPending).toHaveBeenCalledTimes(3));
+      expect(screen.queryByText("First pending video")).toBeNull();
+    });
+  });
 });
 
 // The summary marker and the card's click target — the two things the Inbox
@@ -962,7 +1051,7 @@ describe("Inbox summaries", () => {
     render(<Inbox onOpen={vi.fn()} />);
 
     const card = async (title: string) =>
-      (await screen.findByText(title)).closest("article") as HTMLElement;
+      (await screen.findByText(title)).closest(".card") as HTMLElement;
 
     // The read state is a button, not a label: the summary is the offer, and
     // the marker is where it gets made.
@@ -1236,7 +1325,7 @@ describe("Inbox summaries", () => {
     render(<Inbox onOpen={onOpen} />);
 
     const title = await screen.findByText("First pending video");
-    const card = title.closest("article") as HTMLElement;
+    const card = title.closest(".card") as HTMLElement;
     await userEvent.click(card.querySelector(".thumb") as HTMLElement);
 
     expect(onOpen).not.toHaveBeenCalled();

@@ -1081,5 +1081,7 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 	for _, rf := range refs {
 		media.RemoveVideoFiles(s.mediaDir, rf.MediaPath)
 	}
+	// The channel's pending cards went with the cascade.
+	s.publishInboxChanged("")
 	writeJSON(w, map[string]string{"status": "deleted"})
 }

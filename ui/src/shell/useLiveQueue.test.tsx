@@ -195,6 +195,48 @@ describe("useLiveQueue", () => {
     await waitFor(() => expect(result.current.pendingCount).toBe(1));
   });
 
+  it("every frame that can change an Inbox card bumps inboxTick", async () => {
+    const { result } = renderHook(() => useLiveQueue(true));
+    await waitFor(() => expect(pushFrame).not.toBeNull());
+    const start = result.current.inboxTick;
+
+    act(() => {
+      pushFrame!({ event: "inbox", data: { video_id: "v1" } });
+    });
+    expect(result.current.inboxTick).toBe(start + 1);
+    // Another tab's decision moves the count too.
+    await waitFor(() => expect(countPending).toHaveBeenCalledTimes(2));
+
+    act(() => {
+      pushFrame!({ event: "activity", data: { id: 1, kind: "scan" } });
+    });
+    act(() => {
+      pushFrame!({
+        event: "summary",
+        data: { video_id: "v1", status: "done", phase: "" },
+      });
+    });
+    expect(result.current.inboxTick).toBe(start + 3);
+
+    // A phase frame with the same status moves no card.
+    act(() => {
+      pushFrame!({
+        event: "summary",
+        data: { video_id: "v1", status: "done", phase: "embedding" },
+      });
+    });
+    expect(result.current.inboxTick).toBe(start + 3);
+
+    // A progress tick says nothing about the Inbox.
+    act(() => {
+      pushFrame!({
+        event: "progress",
+        data: { job_id: 1, percent: 1, speed: "", eta: "" },
+      });
+    });
+    expect(result.current.inboxTick).toBe(start + 3);
+  });
+
   it("refreshStatus re-reads every light and resolves once they have landed", async () => {
     const { result } = renderHook(() => useLiveQueue(true));
     await waitFor(() => expect(result.current.cookieStatus).toBe("valid"));

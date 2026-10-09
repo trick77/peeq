@@ -28,6 +28,9 @@ import { INBOX_SORT_OPTIONS } from "./Library";
 // i.ytimg.com in the browser and falls back to the shared gradient placeholder
 // instead of a broken-image glyph when a poster is missing.
 
+// How long a burst of live frames is gathered before the Inbox refetches.
+const LIVE_REFRESH_MS = 300;
+
 // sortKey is the date an item orders by: its publish date when known, else
 // the day the scan discovered it. This mirrors the Library's air_* clauses'
 // COALESCE(published_at, date(created_at)) ORDER BY, so a dateless row (one
@@ -278,6 +281,7 @@ export function Inbox({
   search = "",
   onSearchChange,
   onQueued,
+  liveTick,
 }: {
   /**
    * Reports the inbox's size to App, which feeds the rail's badge. `undefined`
@@ -315,6 +319,12 @@ export function Inbox({
   // onQueued — fired after a video is queued for download, so App can seed the
   // queue poll and the item shows on Queue right away (mirrors the Add view).
   onQueued?: () => void;
+  /**
+   * Moves whenever the live stream says an Inbox card may have changed: a scan
+   * found videos, a caption fetch or summary moved on, another tab decided on
+   * one. The value means nothing; a change triggers a quiet refetch.
+   */
+  liveTick?: number;
 } = {}) {
   const [items, setItems] = useState<PendingItem[]>([]);
   // Whether the first fetch has settled. Without it an empty `items` means two
@@ -390,35 +400,102 @@ export function Inbox({
     };
   }, []);
 
+  // Every list request goes through fetchList: the mount load (loud) and each
+  // live refresh (quiet). Live refreshes are debounced, because one scan or
+  // summary arrives as a burst of frames and each would otherwise be its own
+  // /api/pending.
+  //
+  // Only the newest request may land. A slow mount load answering after a
+  // refresh would otherwise put the older list back over the newer one.
+  //
+  // `removals` counts every card taken off locally. A list requested before a
+  // Download or Ignore can land after it, still holding the card the click
+  // just removed; applying it would bring that card back. Such an answer is
+  // thrown away and asked for again.
+  //
+  // A quiet failure keeps the list on screen and leaves any error alone; the
+  // next tick retries. A quiet success clears only an error a failed list
+  // left, never one from a Download or Ignore the user is still reading.
+  const requests = useRef(0);
+  const removals = useRef(0);
+  const listFailed = useRef(false);
+  const settled = useRef(false);
+  const refreshTimer = useRef<number | undefined>(undefined);
+
   function load() {
     setError(null);
+    fetchList(false);
+  }
+
+  function scheduleRefresh() {
+    window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = window.setTimeout(
+      () => fetchList(true),
+      LIVE_REFRESH_MS,
+    );
+  }
+
+  function fetchList(quiet: boolean) {
+    const seq = ++requests.current;
+    const asked = removals.current;
+    const current = () => alive.current && seq === requests.current;
     listPending()
       .then((list) => {
-        if (!alive.current) return;
-        setItems(list);
+        if (!current()) return;
+        if (asked !== removals.current) {
+          scheduleRefresh();
+          return;
+        }
+        // An unchanged answer keeps the array, so a tick that changed nothing
+        // re-renders no card.
+        setItems((prev) =>
+          JSON.stringify(prev) === JSON.stringify(list) ? prev : list,
+        );
         setCountKnown(true);
+        if (listFailed.current) {
+          listFailed.current = false;
+          setError(null);
+        }
+        settle();
       })
       .catch((e: Error) => {
-        if (!alive.current) return;
+        if (!current()) return;
+        // Before the first list has settled there is nothing on screen to
+        // keep, so even a refresh's failure has to be shown.
+        if (quiet && settled.current) return;
+        listFailed.current = true;
         setError(e.message);
         // The count is no longer known — the effect above tells the rail so
         // rather than leaving it on the last number that happened to arrive.
         // undefined draws no pill; a stale 5 claims five items are waiting,
         // which is exactly what the failed request could not confirm.
         setCountKnown(false);
-      })
-      // Settled, not succeeded: a failed fetch has also finished telling us what
-      // it can, and leaving the page on "Loading…" under its own error message
-      // would claim the request is still running.
-      .finally(() => {
-        if (alive.current) setLoaded(true);
+        // Settled, not succeeded: a failed fetch has also finished telling us
+        // what it can, and leaving the page on "Loading…" under its own error
+        // message would claim the request is still running.
+        settle();
       });
+  }
+
+  function settle() {
+    settled.current = true;
+    setLoaded(true);
   }
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => () => window.clearTimeout(refreshTimer.current), []);
+  // The tick the page mounts with is already covered by the mount fetch.
+  const seenTick = useRef(liveTick);
+  useEffect(() => {
+    if (liveTick === seenTick.current) return;
+    seenTick.current = liveTick;
+    scheduleRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveTick]);
 
   // The distinct channels present, sorted by name. The Library's category row
   // is the master here: its chips sit in a fixed order that does not depend on
@@ -521,6 +598,7 @@ export function Inbox({
   // Every card removal goes through here — single Download, Ignore and each
   // step of Download all — so the hover lock is armed in one place.
   function remove(videoID: string) {
+    removals.current++;
     setHoverLocked(true);
     setItems((prev) => prev.filter((i) => i.video_id !== videoID));
   }

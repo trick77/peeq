@@ -32,6 +32,7 @@ export type LiveQueue = {
   summaryPhaseByVideoId: Record<string, string>;
   summaryEvent: SummaryEvent | null;
   liveActivity: ActivityEvent[];
+  inboxTick: number;
   pendingCount: number | undefined;
   setPendingCount: (n: number | undefined) => void;
   cookieStatus: string | undefined;
@@ -103,6 +104,11 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
   // "activity" SSE event. The Activity page loads its own history and merges
   // these in by id, so the single session SSE subscription stays here.
   const [liveActivity, setLiveActivity] = useState<ActivityEvent[]>([]);
+  // Bumped by every frame that can change what an Inbox card says or whether
+  // it is there at all: a scan or retention (activity), a summary phase, the
+  // caption fetcher or another tab's decision (inbox), and a reconnect. The
+  // Inbox refetches on a change; the value itself means nothing.
+  const [inboxTick, setInboxTick] = useState(0);
   const [cookieStatus, setCookieStatus] = useState<string | undefined>(
     undefined,
   );
@@ -118,6 +124,8 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
     youtube_pause_reason: "",
   });
   const jobsRef = useRef<Job[]>([]);
+  // The last summary status seen per video, so only a change bumps inboxTick.
+  const lastSummaryStatus = useRef<Record<string, string>>({});
   useEffect(() => {
     jobsRef.current = jobs;
   }, [jobs]);
@@ -313,8 +321,9 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
     refreshSummaries,
   ]);
 
-  // The one SSE stream carries download "progress", summary "summary", and
-  // background-work "activity" events (see the shared hub in main.go). Every
+  // The one SSE stream carries download "progress", summary "summary",
+  // background-work "activity" and Inbox-card "inbox" events (see the shared
+  // hub in main.go). Every
   // dependency here is stable for the hook's lifetime, so the handler is too,
   // and the subscription effect below never re-opens the stream on a render.
   const handleEvent = useCallback(
@@ -324,6 +333,7 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
         // Keep a bounded buffer of the newest events; the Activity page merges
         // them into its log by id, so a live row appears without a reload.
         setLiveActivity((prev) => [...prev, e].slice(-ACTIVITY_BUFFER));
+        setInboxTick((n) => n + 1);
         // A scan that surfaced new videos changes the Inbox count, and
         // retention can remove rows from under it. Activity events are rare by
         // design (the scheduler's silence rule writes nothing for a scan that
@@ -332,8 +342,20 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
         refreshPending();
         return;
       }
+      if (evt.event === "inbox") {
+        setInboxTick((n) => n + 1);
+        refreshPending();
+        return;
+      }
       if (evt.event === "summary") {
         const s = evt.data as SummaryEventData;
+        // Only a status change moves an Inbox card; the phase frames between
+        // (map, reduce, embed) arrive seconds apart, past any debounce, and
+        // each would refetch the whole Inbox for nothing.
+        if (s.video_id && lastSummaryStatus.current[s.video_id] !== s.status) {
+          lastSummaryStatus.current[s.video_id] = s.status ?? "";
+          setInboxTick((n) => n + 1);
+        }
         if (s.video_id) {
           setSummaryPhaseByVideoId((prev) => ({
             ...prev,
@@ -377,6 +399,7 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
   // The stream carries deltas, not state: whatever happened while it was
   // down (a restart, a proxy timeout) is re-read once it is back.
   const catchUp = useCallback(() => {
+    setInboxTick((n) => n + 1);
     refreshQueue();
     refreshSummaries();
     refreshPending();
@@ -399,6 +422,7 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
     summaryPhaseByVideoId,
     summaryEvent,
     liveActivity,
+    inboxTick,
     pendingCount,
     setPendingCount,
     cookieStatus,
