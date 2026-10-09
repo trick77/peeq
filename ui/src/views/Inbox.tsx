@@ -28,6 +28,9 @@ import { INBOX_SORT_OPTIONS } from "./Library";
 // i.ytimg.com in the browser and falls back to the shared gradient placeholder
 // instead of a broken-image glyph when a poster is missing.
 
+// How long a burst of live frames is gathered before the Inbox refetches.
+const LIVE_REFRESH_MS = 300;
+
 // sortKey is the date an item orders by: its publish date when known, else
 // the day the scan discovered it. This mirrors the Library's air_* clauses'
 // COALESCE(published_at, date(created_at)) ORDER BY, so a dateless row (one
@@ -278,6 +281,7 @@ export function Inbox({
   search = "",
   onSearchChange,
   onQueued,
+  liveTick,
 }: {
   /**
    * Reports the inbox's size to App, which feeds the rail's badge. `undefined`
@@ -315,6 +319,12 @@ export function Inbox({
   // onQueued — fired after a video is queued for download, so App can seed the
   // queue poll and the item shows on Queue right away (mirrors the Add view).
   onQueued?: () => void;
+  /**
+   * Moves whenever the live stream says an Inbox card may have changed: a scan
+   * found videos, a caption fetch or summary moved on, another tab decided on
+   * one. The value means nothing; a change triggers a quiet refetch.
+   */
+  liveTick?: number;
 } = {}) {
   const [items, setItems] = useState<PendingItem[]>([]);
   // Whether the first fetch has settled. Without it an empty `items` means two
@@ -420,6 +430,50 @@ export function Inbox({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Live refresh. Debounced, because one scan or summary arrives as a burst of
+  // frames and each would otherwise be its own /api/pending.
+  //
+  // Quiet: no "Loading…", and a failure keeps the list on screen and leaves
+  // any error the user is reading alone. The next tick or a reload retries.
+  //
+  // `removals` counts every card taken off locally. A list requested before a
+  // Download or Ignore can land after it, still holding the card the click
+  // just removed; applying it would bring that card back. Such an answer is
+  // thrown away and asked for again.
+  const removals = useRef(0);
+  const refreshTimer = useRef<number | undefined>(undefined);
+  function scheduleRefresh() {
+    window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = window.setTimeout(refresh, LIVE_REFRESH_MS);
+  }
+  function refresh() {
+    const asked = removals.current;
+    listPending()
+      .then((list) => {
+        if (!alive.current) return;
+        if (asked !== removals.current) {
+          scheduleRefresh();
+          return;
+        }
+        // An unchanged answer keeps the array, so a tick that changed nothing
+        // re-renders no card.
+        setItems((prev) =>
+          JSON.stringify(prev) === JSON.stringify(list) ? prev : list,
+        );
+        setCountKnown(true);
+      })
+      .catch(() => {});
+  }
+  useEffect(() => () => window.clearTimeout(refreshTimer.current), []);
+  // The tick the page mounts with is already covered by the mount fetch.
+  const seenTick = useRef(liveTick);
+  useEffect(() => {
+    if (liveTick === seenTick.current) return;
+    seenTick.current = liveTick;
+    scheduleRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveTick]);
+
   // The distinct channels present, sorted by name. The Library's category row
   // is the master here: its chips sit in a fixed order that does not depend on
   // what the grid happens to hold, so a chip stays where the eye last left it.
@@ -521,6 +575,7 @@ export function Inbox({
   // Every card removal goes through here — single Download, Ignore and each
   // step of Download all — so the hover lock is armed in one place.
   function remove(videoID: string) {
+    removals.current++;
     setHoverLocked(true);
     setItems((prev) => prev.filter((i) => i.video_id !== videoID));
   }

@@ -370,6 +370,15 @@ func run() error {
 		// ever ask YouTube for different caption languages, the transcript
 		// summarized from the Inbox is not the one the library ends up with.
 		DefaultSubLang: cfg.DefaultSubLang,
+		// The card's caption state lives on rows this worker writes and no
+		// other event covers, so an open Inbox learns it changed here.
+		OnChange: func(videoID string) {
+			data, err := json.Marshal(map[string]string{"video_id": videoID})
+			if err != nil {
+				return
+			}
+			sseHub.Publish("inbox", string(data))
+		},
 	})
 
 	// metaRefresher is shared: the HTTP layer resolves a channel the first time

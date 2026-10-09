@@ -293,6 +293,7 @@ export function App() {
     summaryPhaseByVideoId,
     summaryEvent,
     liveActivity,
+    inboxTick,
     pendingCount,
     setPendingCount,
     cookieStatus,
@@ -656,6 +657,7 @@ export function App() {
               summaryPhaseByVideoId={summaryPhaseByVideoId}
               onCancelDownload={onCancelDownload}
               liveActivity={liveActivity}
+              inboxTick={inboxTick}
               // Same precedence the banner uses: the kill-switch outranks a full
               // disk, which outranks the cookie pause. Up next names the cause
               // because each one has a different way out — only the kill-switch
@@ -714,6 +716,7 @@ function ViewSwitch({
   summaryPhaseByVideoId,
   onCancelDownload,
   liveActivity,
+  inboxTick,
   stalled,
   inboxOrder,
   setInboxOrder,
@@ -762,6 +765,7 @@ function ViewSwitch({
   summaryPhaseByVideoId: Record<string, string>;
   onCancelDownload: (jobId: number) => Promise<void>;
   liveActivity: ActivityEvent[];
+  inboxTick: number;
   /** Why YouTube work is stopped, if it is — only Up next's empty state uses it. */
   stalled?: "youtube" | "disk" | "cookie";
   /**
@@ -852,6 +856,7 @@ function ViewSwitch({
           search={inboxSearch}
           onSearchChange={onInboxSearchChange}
           onQueued={onQueued}
+          liveTick={inboxTick}
         />
       );
     case "upnext":

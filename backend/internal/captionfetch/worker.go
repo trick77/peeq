@@ -108,6 +108,9 @@ type Deps struct {
 	// after downloading are different files, and the summary carried over
 	// describes text the library does not have.
 	DefaultSubLang string
+	// OnChange, when set, is told once per attempt that reached YouTube: such
+	// an attempt can change what the video's Inbox card shows. Optional.
+	OnChange func(videoID string)
 	// PollInterval defaults to pollInterval.
 	PollInterval time.Duration
 	Logger       *slog.Logger
@@ -169,6 +172,15 @@ func (w *Worker) pass(ctx context.Context) {
 		w.d.Logger.Error("captionfetch: record attempt failed", "video_id", c.VideoID, "err", err)
 		return
 	}
+	// From here the attempt is spent, and whatever it writes (last error,
+	// no_transcript, a queued summary) is something the Inbox card shows. A
+	// gated fetch gives the rung back and changed nothing, so it opts out.
+	changed := true
+	defer func() {
+		if changed && w.d.OnChange != nil {
+			w.d.OnChange(c.VideoID)
+		}
+	}()
 
 	// The videos row is created before the fetch, not after, so a video whose
 	// captions never arrive still has somewhere to record that fact — the
@@ -190,6 +202,7 @@ func (w *Worker) pass(ctx context.Context) {
 				w.d.Logger.Error("captionfetch: return attempt failed", "video_id", c.VideoID, "err", rerr)
 			}
 			w.d.Logger.Debug("captionfetch: gated", "video_id", c.VideoID, "err", err)
+			changed = false
 			return
 		}
 		w.d.Logger.Warn("captionfetch: fetch failed", "video_id", c.VideoID, "attempt", c.Attempts+1, "err", err)
