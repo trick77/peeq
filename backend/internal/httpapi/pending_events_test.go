@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/trick77/peeq/internal/channelvideos"
@@ -41,6 +42,35 @@ func TestPending_publishesInboxEvent(t *testing.T) {
 		default:
 			t.Fatalf("POST %s published no event", c.path)
 		}
+	}
+}
+
+// TestChannelDelete_publishesInboxEvent: deleting a channel cascades its
+// pending cards away, so every open Inbox has to drop them.
+func TestChannelDelete_publishesInboxEvent(t *testing.T) {
+	hub := sse.NewHub()
+	h := newPendingTestServerWith(t, func(d *Deps) { d.SSEHub = hub })
+	h.seedChannel("UC1")
+	if err := h.channels.MarkAdded("UC1", "2026-01-01 00:00:00"); err != nil {
+		t.Fatalf("mark added: %v", err)
+	}
+	ch, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/channels/UC1", nil)
+	req.AddCookie(loginAndGetCookie(t, h))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case ev := <-ch:
+		if ev.Name != "inbox" || ev.Data != `{}` {
+			t.Fatalf("event = %+v", ev)
+		}
+	default:
+		t.Fatal("channel delete published no event")
 	}
 }
 

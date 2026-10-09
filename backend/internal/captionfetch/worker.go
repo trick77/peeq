@@ -198,11 +198,14 @@ func (w *Worker) pass(ctx context.Context) {
 		// spent; in particular the last rung must not settle the video as
 		// no_transcript, which nothing ever revisits.
 		if ctx.Err() != nil || refused(err) {
+			// Unchanged only once the rung is back: a failed return leaves it
+			// spent, which the card's caption state does show.
 			if rerr := w.d.Ledger.ReturnCaptionAttempt(c.VideoID); rerr != nil {
 				w.d.Logger.Error("captionfetch: return attempt failed", "video_id", c.VideoID, "err", rerr)
+			} else {
+				changed = false
 			}
 			w.d.Logger.Debug("captionfetch: gated", "video_id", c.VideoID, "err", err)
-			changed = false
 			return
 		}
 		w.d.Logger.Warn("captionfetch: fetch failed", "video_id", c.VideoID, "attempt", c.Attempts+1, "err", err)

@@ -372,13 +372,7 @@ func run() error {
 		DefaultSubLang: cfg.DefaultSubLang,
 		// The card's caption state lives on rows this worker writes and no
 		// other event covers, so an open Inbox learns it changed here.
-		OnChange: func(videoID string) {
-			data, err := json.Marshal(map[string]string{"video_id": videoID})
-			if err != nil {
-				return
-			}
-			sseHub.Publish("inbox", string(data))
-		},
+		OnChange: func(videoID string) { httpapi.PublishInboxChanged(sseHub, videoID) },
 	})
 
 	// metaRefresher is shared: the HTTP layer resolves a channel the first time

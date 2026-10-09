@@ -218,6 +218,15 @@ describe("useLiveQueue", () => {
     });
     expect(result.current.inboxTick).toBe(start + 3);
 
+    // A phase frame with the same status moves no card.
+    act(() => {
+      pushFrame!({
+        event: "summary",
+        data: { video_id: "v1", status: "done", phase: "embedding" },
+      });
+    });
+    expect(result.current.inboxTick).toBe(start + 3);
+
     // A progress tick says nothing about the Inbox.
     act(() => {
       pushFrame!({

@@ -400,57 +400,48 @@ export function Inbox({
     };
   }, []);
 
-  function load() {
-    setError(null);
-    listPending()
-      .then((list) => {
-        if (!alive.current) return;
-        setItems(list);
-        setCountKnown(true);
-      })
-      .catch((e: Error) => {
-        if (!alive.current) return;
-        setError(e.message);
-        // The count is no longer known — the effect above tells the rail so
-        // rather than leaving it on the last number that happened to arrive.
-        // undefined draws no pill; a stale 5 claims five items are waiting,
-        // which is exactly what the failed request could not confirm.
-        setCountKnown(false);
-      })
-      // Settled, not succeeded: a failed fetch has also finished telling us what
-      // it can, and leaving the page on "Loading…" under its own error message
-      // would claim the request is still running.
-      .finally(() => {
-        if (alive.current) setLoaded(true);
-      });
-  }
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Live refresh. Debounced, because one scan or summary arrives as a burst of
-  // frames and each would otherwise be its own /api/pending.
+  // Every list request goes through fetchList: the mount load (loud) and each
+  // live refresh (quiet). Live refreshes are debounced, because one scan or
+  // summary arrives as a burst of frames and each would otherwise be its own
+  // /api/pending.
   //
-  // Quiet: no "Loading…", and a failure keeps the list on screen and leaves
-  // any error the user is reading alone. The next tick or a reload retries.
+  // Only the newest request may land. A slow mount load answering after a
+  // refresh would otherwise put the older list back over the newer one.
   //
   // `removals` counts every card taken off locally. A list requested before a
   // Download or Ignore can land after it, still holding the card the click
   // just removed; applying it would bring that card back. Such an answer is
   // thrown away and asked for again.
+  //
+  // A quiet failure keeps the list on screen and leaves any error alone; the
+  // next tick retries. A quiet success clears only an error a failed list
+  // left, never one from a Download or Ignore the user is still reading.
+  const requests = useRef(0);
   const removals = useRef(0);
+  const listFailed = useRef(false);
+  const settled = useRef(false);
   const refreshTimer = useRef<number | undefined>(undefined);
+
+  function load() {
+    setError(null);
+    fetchList(false);
+  }
+
   function scheduleRefresh() {
     window.clearTimeout(refreshTimer.current);
-    refreshTimer.current = window.setTimeout(refresh, LIVE_REFRESH_MS);
+    refreshTimer.current = window.setTimeout(
+      () => fetchList(true),
+      LIVE_REFRESH_MS,
+    );
   }
-  function refresh() {
+
+  function fetchList(quiet: boolean) {
+    const seq = ++requests.current;
     const asked = removals.current;
+    const current = () => alive.current && seq === requests.current;
     listPending()
       .then((list) => {
-        if (!alive.current) return;
+        if (!current()) return;
         if (asked !== removals.current) {
           scheduleRefresh();
           return;
@@ -461,9 +452,41 @@ export function Inbox({
           JSON.stringify(prev) === JSON.stringify(list) ? prev : list,
         );
         setCountKnown(true);
+        if (listFailed.current) {
+          listFailed.current = false;
+          setError(null);
+        }
+        settle();
       })
-      .catch(() => {});
+      .catch((e: Error) => {
+        if (!current()) return;
+        // Before the first list has settled there is nothing on screen to
+        // keep, so even a refresh's failure has to be shown.
+        if (quiet && settled.current) return;
+        listFailed.current = true;
+        setError(e.message);
+        // The count is no longer known — the effect above tells the rail so
+        // rather than leaving it on the last number that happened to arrive.
+        // undefined draws no pill; a stale 5 claims five items are waiting,
+        // which is exactly what the failed request could not confirm.
+        setCountKnown(false);
+        // Settled, not succeeded: a failed fetch has also finished telling us
+        // what it can, and leaving the page on "Loading…" under its own error
+        // message would claim the request is still running.
+        settle();
+      });
   }
+
+  function settle() {
+    settled.current = true;
+    setLoaded(true);
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => () => window.clearTimeout(refreshTimer.current), []);
   // The tick the page mounts with is already covered by the mount fetch.
   const seenTick = useRef(liveTick);

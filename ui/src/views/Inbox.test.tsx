@@ -936,6 +936,34 @@ describe("Inbox", () => {
       );
     });
 
+    it("a refresh that works clears the error a failed load left", async () => {
+      vi.mocked(listPending).mockRejectedValueOnce(new Error("backend down"));
+      const { rerender } = render(<Inbox liveTick={0} />);
+      expect(await screen.findByText(/backend down/)).toBeInTheDocument();
+
+      rerender(<Inbox liveTick={1} />);
+
+      await screen.findByText("Second pending video");
+      expect(screen.queryByText(/backend down/)).toBeNull();
+    });
+
+    it("a slow mount load cannot overwrite a newer refresh", async () => {
+      let mountAnswer!: (list: PendingItem[]) => void;
+      vi.mocked(listPending).mockImplementationOnce(
+        () => new Promise((r) => (mountAnswer = r)),
+      );
+      const itemC = baseItem({ video_id: "v3", title: "Freshly scanned" });
+      vi.mocked(listPending).mockResolvedValue([itemA, itemB, itemC]);
+      const { rerender } = render(<Inbox liveTick={0} />);
+
+      rerender(<Inbox liveTick={1} />);
+      await screen.findByText("Freshly scanned");
+
+      mountAnswer([itemA, itemB]);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.getByText("Freshly scanned")).toBeInTheDocument();
+    });
+
     it("the tick it mounts with fetches nothing extra", async () => {
       render(<Inbox liveTick={7} />);
       await screen.findByText("Second pending video");

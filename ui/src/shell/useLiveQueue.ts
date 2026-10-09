@@ -124,6 +124,8 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
     youtube_pause_reason: "",
   });
   const jobsRef = useRef<Job[]>([]);
+  // The last summary status seen per video, so only a change bumps inboxTick.
+  const lastSummaryStatus = useRef<Record<string, string>>({});
   useEffect(() => {
     jobsRef.current = jobs;
   }, [jobs]);
@@ -346,8 +348,14 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
         return;
       }
       if (evt.event === "summary") {
-        setInboxTick((n) => n + 1);
         const s = evt.data as SummaryEventData;
+        // Only a status change moves an Inbox card; the phase frames between
+        // (map, reduce, embed) arrive seconds apart, past any debounce, and
+        // each would refetch the whole Inbox for nothing.
+        if (s.video_id && lastSummaryStatus.current[s.video_id] !== s.status) {
+          lastSummaryStatus.current[s.video_id] = s.status ?? "";
+          setInboxTick((n) => n + 1);
+        }
         if (s.video_id) {
           setSummaryPhaseByVideoId((prev) => ({
             ...prev,
