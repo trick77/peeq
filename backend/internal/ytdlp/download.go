@@ -340,7 +340,7 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 // A gate refusal (paused, no cookie) made no call and is swallowed with the rest.
 func (r *Runner) downloadSubtitles(ctx context.Context, turn *heldTurn, videoID, watchURL, subLang, dir string) error {
 	// Runs under the turn Download holds (holdTurn), so it never queues.
-	_, err := r.execCall(ctx, turn, nil, subtitleArgs(dir, subLang, watchURL)...)
+	_, err := r.execCall(ctx, turn, nil, r.subtitleArgs(dir, subLang, watchURL)...)
 	switch {
 	case err == nil:
 		return nil

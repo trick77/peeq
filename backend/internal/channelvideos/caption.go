@@ -136,6 +136,24 @@ UPDATE channel_videos
 	return nil
 }
 
+// DeferCaptionAttempt gives back the rung RecordCaptionAttempt burned, like
+// ReturnCaptionAttempt, but keeps the row waiting delaySeconds rather than
+// making it due at once.
+//
+// This is for a rate-limited last rung: the call ran and was refused, so the
+// video must not settle, and it must not be asked again on the next tick.
+func (s *Store) DeferCaptionAttempt(videoID string, delaySeconds int) error {
+	_, err := s.db.ExecContext(context.Background(), `
+UPDATE channel_videos
+   SET caption_attempts        = MAX(caption_attempts - 1, 0),
+       next_caption_attempt_at = datetime('now', ?)
+ WHERE video_id = ?`, fmt.Sprintf("+%d seconds", delaySeconds), videoID)
+	if err != nil {
+		return fmt.Errorf("defer caption attempt %s: %w", videoID, err)
+	}
+	return nil
+}
+
 // SetCaptionLastError records how the latest caption fetch for videoID ended:
 // the failure's text, or "" for a call that ran cleanly. See migration 0034.
 //

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 )
 
 // SummaryDirName is the directory under MediaDir that holds captions fetched
@@ -83,7 +85,7 @@ func (r *Runner) Subtitles(ctx context.Context, videoID, rawURL, subLang string)
 
 	ctx = withCallLabel(ctx, videoID)
 
-	if _, execErr := r.exec(ctx, subtitleArgs(dir, subLang, watchURL)...); execErr != nil {
+	if _, execErr := r.exec(ctx, r.subtitleArgs(dir, subLang, watchURL)...); execErr != nil {
 		// Leave the directory: an empty one costs an inode and the next
 		// attempt reuses it. Removing it here would race a concurrent read of
 		// a caption this same video fetched on an earlier attempt.
@@ -93,10 +95,28 @@ func (r *Runner) Subtitles(ctx context.Context, videoID, rawURL, subLang string)
 	return foundSubtitle(r.cfg.MediaDir, dir, videoID)
 }
 
+// subtitleSleepFloor and subtitleSleepJitter set yt-dlp's wait between the
+// player request and the caption download: floor + rand[0, jitter).
+//
+// YouTube answers a caption download that follows the player request within
+// seconds with HTTP 429, on the same videos every attempt, at a call rate far
+// below any limit and with Chrome impersonation in place. yt-dlp's maintainers
+// give a wait of at least 60s as the workaround (yt-dlp#13831). The queue's gap
+// cannot provide it: it separates two runs, and both requests are one run.
+//
+// The run holds the YouTube turn through the wait. That stays under
+// maxCallRuntime, and under the download watchdog, which sees the gap before
+// the caption step plus this.
+const (
+	subtitleSleepFloor  = 120 * time.Second
+	subtitleSleepJitter = 60 * time.Second
+)
+
 // subtitleArgs is the caption-only yt-dlp invocation, writing into dir. Both
 // Subtitles and Download's caption step run exactly this, so the .vtt summarized
 // from the inbox and the one fetched with the media cannot drift apart.
-func subtitleArgs(dir, subLang, watchURL string) []string {
+func (r *Runner) subtitleArgs(dir, subLang, watchURL string) []string {
+	sleep := subtitleSleepFloor + time.Duration(r.cfg.RandFloat64()*float64(subtitleSleepJitter))
 	return []string{
 		"--skip-download",
 		"--write-subs",
@@ -105,6 +125,7 @@ func subtitleArgs(dir, subLang, watchURL string) []string {
 		"--convert-subs", "vtt",
 		"--no-playlist",
 		"--socket-timeout", "30",
+		"--sleep-subtitles", strconv.Itoa(int(sleep.Seconds())),
 		"-o", filepath.Join(dir, "%(id)s.%(ext)s"),
 		watchURL,
 	}

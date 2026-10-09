@@ -425,3 +425,54 @@ func TestCaptionArrival_removesTheCaptionDirectory(t *testing.T) {
 		t.Fatalf("caption directory survived the read (err = %v)", err)
 	}
 }
+
+// TestRateLimitOnTheLastRungDoesNotSettle: YouTube answers some videos' caption
+// download with 429 on every attempt while their captions exist. Settling
+// those as no_transcript writes off captions YouTube has; a 429 on the last
+// rung instead keeps the rung and comes back a day later, until it lands.
+func TestRateLimitOnTheLastRungDoesNotSettle(t *testing.T) {
+	h := newHarness(t)
+	limited := &ytdlp.RetryableError{Reason: "rate limited or server error", Detail: "HTTP Error 429"}
+	errs := make([]error, channelvideos.CaptionMaxAttempts+1)
+	for i := range errs {
+		errs[i] = limited
+	}
+	rel := filepath.Join(ytdlp.SummaryDirName, "v1", "v1.en.vtt")
+	f := &fetcher{errs: errs, results: append(make([]string, len(errs)), rel)}
+	w := h.worker(f)
+
+	for range errs {
+		w.pass(context.Background())
+		var attempts int
+		var wait sql.NullFloat64
+		if err := h.db.QueryRow(`SELECT caption_attempts,
+		       (julianday(next_caption_attempt_at) - julianday('now')) * 24
+		  FROM channel_videos WHERE video_id = 'v1'`).Scan(&attempts, &wait); err != nil {
+			t.Fatalf("read ledger: %v", err)
+		}
+		if attempts >= channelvideos.CaptionMaxAttempts {
+			t.Fatalf("attempts = %d after a 429; the ladder must not run out on one", attempts)
+		}
+		if attempts == channelvideos.CaptionMaxAttempts-1 && (wait.Float64 < 23.9 || wait.Float64 > 24.1) {
+			t.Fatalf("next attempt in %.2fh on the last rung, want 24h", wait.Float64)
+		}
+		mustBeDue(t, h)
+	}
+
+	v, err := h.videos.Get("v1")
+	if err != nil || v == nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.SummaryStatus == videos.SummaryNoTranscript {
+		t.Fatal("a rate-limited video settled as no_transcript")
+	}
+	if msg, _ := h.ledger.CaptionLastError("v1"); msg == "" {
+		t.Fatal("the 429 must stay on the row as the latest outcome")
+	}
+
+	writeCaption(t, h, rel)
+	w.pass(context.Background())
+	if tr, err := h.videos.GetTranscript("v1"); err != nil || tr == nil {
+		t.Fatalf("transcript after the 429s cleared: %v, err %v", tr, err)
+	}
+}
