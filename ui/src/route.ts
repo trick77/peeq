@@ -17,7 +17,7 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
+  useInsertionEffect,
   useRef,
   useState,
 } from "react";
@@ -194,7 +194,9 @@ export function useRoute(): {
     parsePath(window.location.pathname),
   );
   const routeRef = useRef(route);
-  useLayoutEffect(() => {
+  // Before every layout effect of the commit: a child's layout effect that
+  // navigates writes routeRef after this sync, never before it.
+  useInsertionEffect(() => {
     routeRef.current = route;
   });
 

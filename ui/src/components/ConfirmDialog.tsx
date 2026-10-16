@@ -1,7 +1,7 @@
 import {
   useEffect,
   useId,
-  useLayoutEffect,
+  useInsertionEffect,
   useRef,
   type ReactNode,
 } from "react";
@@ -39,7 +39,7 @@ export function ConfirmDialog({
   // per open, not on every parent re-render (callers pass a fresh inline arrow
   // each time — a new identity that would otherwise re-run this effect).
   const onCancelRef = useRef(onCancel);
-  useLayoutEffect(() => {
+  useInsertionEffect(() => {
     onCancelRef.current = onCancel;
   });
 

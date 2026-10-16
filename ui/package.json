@@ -7,6 +7,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint . --max-warnings 0 && npm run format:check",
     "test": "vitest run",
+    "test:watch": "vitest",
     "format": "prettier --write 'src/**/*.{ts,tsx,css}' '*.ts'",
     "format:check": "prettier --check 'src/**/*.{ts,tsx,css}' '*.ts'"
   },

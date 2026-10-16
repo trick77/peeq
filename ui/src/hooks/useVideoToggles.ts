@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef } from "react";
+import { useCallback, useInsertionEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { setFavorite, setWatched } from "../api";
 import type { LibraryVideo } from "../api/types";
@@ -27,7 +27,7 @@ export function useVideoToggles(
 } {
   const videosRef = useRef(videos);
   const handlersRef = useRef(handlers);
-  useLayoutEffect(() => {
+  useInsertionEffect(() => {
     videosRef.current = videos;
     handlersRef.current = handlers;
   });

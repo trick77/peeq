@@ -1,7 +1,7 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
+  useInsertionEffect,
   useRef,
   useState,
 } from "react";
@@ -282,7 +282,7 @@ export function Library({
   // Stable, like the toggles: VideoCard is memoised, and a handler made fresh
   // on every render would defeat that for every card in the grid.
   const onQueuedRef = useRef(onQueued);
-  useLayoutEffect(() => {
+  useInsertionEffect(() => {
     onQueuedRef.current = onQueued;
   });
   const openVideo = useStableCallback(onOpenVideo);

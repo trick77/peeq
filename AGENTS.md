@@ -107,8 +107,9 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   Mount rw, not `:ro` — WAL needs the `-shm` sidecar even to read; `-readonly` is what protects a live DB.
 
 ## Frontend
-- Vite + React + TS + Tailwind. `npm run build` empties `backend/web/dist` and overwrites the tracked
-  placeholder `index.html`. Never commit built assets — only that placeholder is tracked; restore it
+- Vite + React + TS + Tailwind. `npm run build` writes into `backend/web/dist` WITHOUT emptying it
+  (`emptyOutDir: false`, ship's canon) and overwrites the tracked placeholder `index.html`; `make fe-build`
+  empties it first. Never commit built assets — only that placeholder is tracked; restore it
   (`git checkout -- backend/web/dist/index.html`) after a local build.
 
 ## Extension (`extension/`)
