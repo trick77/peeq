@@ -21,7 +21,7 @@ function frames(...f: string[]) {
   return f.map((x) => x + "\n\n");
 }
 
-async function collect(chunks: string[]): Promise<AnswerEvent[]> {
+async function collect(): Promise<AnswerEvent[]> {
   const got: AnswerEvent[] = [];
   await streamAnswer("q", (e) => got.push(e));
   return got;
@@ -39,7 +39,7 @@ describe("streamAnswer", () => {
         ),
       ),
     );
-    const got = await collect([]);
+    const got = await collect();
     expect(got.map((e) => e.type)).toEqual([
       "sources",
       "token",
@@ -61,7 +61,7 @@ describe("streamAnswer", () => {
         ),
       ),
     );
-    const got = await collect([]);
+    const got = await collect();
     expect(got.map((e) => e.type)).toEqual(["progress", "done"]);
     expect(got[0]).toMatchObject({
       type: "progress",
@@ -78,7 +78,7 @@ describe("streamAnswer", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       makeStreamResponse(frames(`event: progress\ndata: {}`)),
     );
-    const got = await collect([]);
+    const got = await collect();
     expect(got[0]).toMatchObject({
       type: "progress",
       topic: "",
@@ -92,7 +92,7 @@ describe("streamAnswer", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       makeStreamResponse(frames(`event: token\ndata: {"text":"  spaced  "}`)),
     );
-    const got = await collect([]);
+    const got = await collect();
     expect(got[0]).toMatchObject({ type: "token", text: "  spaced  " });
   });
 
@@ -106,7 +106,7 @@ describe("streamAnswer", () => {
         ),
       ),
     );
-    const got = await collect([]);
+    const got = await collect();
     expect(got.map((e) => e.type)).toEqual(["sources", "error", "done"]);
     expect(got[1]).toMatchObject({ message: "answer unavailable" });
   });
@@ -120,7 +120,7 @@ describe("streamAnswer", () => {
         ),
       ),
     );
-    const got = await collect([]);
+    const got = await collect();
     expect(got.map((e) => e.type)).toEqual(["done"]);
   });
 
@@ -128,7 +128,7 @@ describe("streamAnswer", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       makeStreamResponse(frames(`event: sources\ndata: {}`)),
     );
-    const got = await collect([]);
+    const got = await collect();
     expect(got[0]).toMatchObject({ type: "sources", sources: [] });
   });
 
@@ -139,7 +139,7 @@ describe("streamAnswer", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       makeStreamResponse(frames(`event: sources\ndata: {}`)),
     );
-    const got = await collect([]);
+    const got = await collect();
     expect(got[0]).toMatchObject({ type: "sources", coverage: [] });
   });
 
@@ -152,7 +152,7 @@ describe("streamAnswer", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       makeStreamResponse(frames(`event: sources\ndata: ${body}`)),
     );
-    const got = await collect([]);
+    const got = await collect();
     expect(got[0]).toMatchObject({
       type: "sources",
       coverage: [{ id: "v9", title: "Uncited" }],

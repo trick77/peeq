@@ -25,6 +25,7 @@ export function DownloadStatusBanner({
   // status moves on — the reason changes, or the pause clears and later
   // re-trips — the message goes with it.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a reset keyed on the pause
     setFailed(false);
   }, [status.youtube_paused, status.youtube_pause_reason]);
   if (status.youtube_paused) {

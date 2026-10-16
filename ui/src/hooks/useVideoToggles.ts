@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { setFavorite, setWatched } from "../api";
 import type { LibraryVideo } from "../api/types";
@@ -26,9 +26,11 @@ export function useVideoToggles(
   toggleWatched: (id: string) => void;
 } {
   const videosRef = useRef(videos);
-  videosRef.current = videos;
   const handlersRef = useRef(handlers);
-  handlersRef.current = handlers;
+  useLayoutEffect(() => {
+    videosRef.current = videos;
+    handlersRef.current = handlers;
+  });
 
   const toggle = useCallback(
     async (

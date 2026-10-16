@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useDismiss, useFocusChecked } from "../hooks/usePopover";
 import { Icon } from "../icons";
 import { CATEGORIES, CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";

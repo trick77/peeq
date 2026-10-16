@@ -130,7 +130,7 @@ jobs:
           python-version: "3.12"
       - run: pip install diff-cover==10.3.0
       - run: npm ci
-      - run: npm run format:check
+      - run: npm run lint
       - run: npm run build
       - run: npm test -- --run --coverage
       - run: ./scripts/coverage-gate.sh ui

@@ -1,4 +1,10 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 import { Button } from "../ui";
 
 // ConfirmDialog — a modal confirmation, the loom ModalShell/DeleteArtifactModal
@@ -33,7 +39,9 @@ export function ConfirmDialog({
   // per open, not on every parent re-render (callers pass a fresh inline arrow
   // each time — a new identity that would otherwise re-run this effect).
   const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
+  useLayoutEffect(() => {
+    onCancelRef.current = onCancel;
+  });
 
   useEffect(() => {
     if (!open) return;

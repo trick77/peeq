@@ -1,5 +1,4 @@
-/// <reference types="vitest/config" />
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -7,7 +6,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
     outDir: "../backend/web/dist",
-    emptyOutDir: true,
+    // ship empties the dir but for its .gitkeep before the build; vite's own
+    // emptying would take the .gitkeep with it.
+    emptyOutDir: false,
     rollupOptions: {
       output: {
         // React and the icon set go in a chunk of their own. Assets are served
@@ -15,7 +16,9 @@ export default defineConfig({
         // every release while these change a few times a year: kept together,
         // each deploy made every browser download React again.
         manualChunks(id: string) {
-          if (/node_modules\/(react|react-dom|scheduler|lucide-react)\//.test(id))
+          if (
+            /node_modules\/(react|react-dom|scheduler|lucide-react)\//.test(id)
+          )
             return "vendor";
         },
       },
@@ -29,7 +32,8 @@ export default defineConfig({
   // runs fine under jsdom.
   test: {
     environment: "jsdom",
-    setupFiles: ["./src/test-setup.ts"],
+    globals: true,
+    setupFiles: ["./src/test/setup.ts"],
     coverage: {
       provider: "v8",
       // json-summary is what scripts/coverage-gate.sh reads (the project floor);
@@ -47,7 +51,7 @@ export default defineConfig({
       // here is behaviour a test could meaningfully assert.
       exclude: [
         "src/main.tsx",
-        "src/test-setup.ts",
+        "src/test/**",
         "src/api/types.ts",
         "**/*.test.{ts,tsx}",
       ],

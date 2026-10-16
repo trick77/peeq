@@ -483,6 +483,7 @@ export function Inbox({
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the mount fetch
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -591,6 +592,7 @@ export function Inbox({
   // grid with a filter still applied.
   useEffect(() => {
     if (channel !== "all" && !items.some((i) => i.channel_id === channel)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- falls back once the channel's last item is gone
       setChannel("all");
     }
   }, [items, channel]);

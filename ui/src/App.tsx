@@ -6,7 +6,6 @@ import { useLiveQueue } from "./shell/useLiveQueue";
 import { DownloadStatusBanner } from "./shell/DownloadStatusBanner";
 import { takeAuthFailed } from "./authError";
 import { getPlaybackState, resumeYoutube } from "./api";
-import type { DownloadsStatus } from "./api/downloads";
 import type { SummaryStatus } from "./api/enums";
 import type { ActivityEvent, Job, SummaryJob } from "./api/types";
 import { Library } from "./views/Library";
@@ -160,6 +159,7 @@ export function App() {
   // still naming the old video, which is no longer anywhere.
   useEffect(() => {
     if (playerPageVideoId && playerPageVideoId !== playbackVideoId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- a reset keyed on the opened page
       setPlaybackVideoId(null);
     }
     // playbackVideoId is read, not tracked: reacting to it would undo the
@@ -182,6 +182,7 @@ export function App() {
     setNowPlaying(p);
   }, []);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a reset keyed on the playing id
     if (!playingId) setNowPlaying(null);
   }, [playingId]);
   // The origin is recorded before anyone knows whether the video has a file.

@@ -201,6 +201,7 @@ export function Channels({
   useEffect(() => {
     // Drop any "Scan now" notice: it reports on one row the user clicked, and
     // that row may not even be in the list the new chip is about to show.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a reset keyed on the filter
     setNotice(null);
     // A chip click is not a request — except after a failed load, where it is
     // the one retry a user can reach without leaving the page.
@@ -224,7 +225,6 @@ export function Channels({
       seenScan.current = newestScan;
       loadAll();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newestScan]);
 
   // The auto-unsubscribed list does not depend on the filter chips (it is
@@ -265,7 +265,6 @@ export function Channels({
 
   useEffect(() => {
     loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Patches the one list every surface reads, so the row, the chip counts and

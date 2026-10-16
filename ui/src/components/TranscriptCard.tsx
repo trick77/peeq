@@ -92,6 +92,7 @@ function TranscriptCardImpl({
   useEffect(() => {
     if (!open || loaded === vttUrl) return;
     let active = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- back to loading before the fetch
     setLoading(true);
     setError(null);
     fetch(vttUrl)

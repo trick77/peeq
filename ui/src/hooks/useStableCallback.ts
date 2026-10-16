@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 
 // useStableCallback returns a function whose identity never changes and which
 // always calls the latest fn. For handing a callback to a memoised child when
@@ -8,6 +8,8 @@ export function useStableCallback<A extends unknown[], R>(
   fn: (...args: A) => R,
 ): (...args: A) => R {
   const ref = useRef(fn);
-  ref.current = fn;
+  useLayoutEffect(() => {
+    ref.current = fn;
+  });
   return useCallback((...args: A) => ref.current(...args), []);
 }

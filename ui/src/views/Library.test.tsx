@@ -1,12 +1,6 @@
 import { resetSettingsStoreForTests } from "../settingsStore";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-  act,
-} from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { VideoCard } from "../components/VideoCard";
 import type { Video, VideoCounts, VideoFilter } from "../api/types";
@@ -507,13 +501,7 @@ vi.mock("../api", () => ({
 }));
 
 import { Library } from "./Library";
-import {
-  listVideos,
-  getVideoCounts,
-  listDownloads,
-  setFavorite,
-  setWatched,
-} from "../api";
+import { listVideos, getVideoCounts, setFavorite, setWatched } from "../api";
 
 // countsOf is what the server would answer for this library: the chip row
 // computed from a list of rows with videos.Store.List's filter semantics. The
