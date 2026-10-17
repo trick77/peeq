@@ -259,8 +259,10 @@ func (s *server) externalBase(r *http.Request) string {
 }
 
 // serveShell writes the SPA shell with the meta block injected right after
-// </title> (present in both the tracked dist placeholder and a real Vite build);
-// failing that, before </head>. An empty block serves the shell untouched.
+// </title> (ui/index.html carries one, so every Vite build does: web's
+// TestShellSourceCarriesTheInjectionAnchor); failing that, before </head>. An
+// empty block serves the shell untouched. An unbuilt binary has no shell at
+// all: handleShareShell hands /s/ to the SPA, which answers its placeholder.
 func serveShell(w http.ResponseWriter, shell []byte, tags string) {
 	out := string(shell)
 	if tags != "" {

@@ -91,6 +91,9 @@ func TestFaviconICOIsNotTheSPAShell(t *testing.T) {
 	if rec.Code != 404 {
 		t.Fatalf("expected 404, got %d with body %q", rec.Code, rec.Body.String())
 	}
+	if strings.Contains(rec.Body.String(), `<div id="root">`) {
+		t.Fatalf("favicon.ico served the SPA shell:\n%s", rec.Body.String())
+	}
 }
 
 // Only the client router's paths get the shell: an unknown one, and anything

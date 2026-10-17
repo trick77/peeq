@@ -8,7 +8,7 @@ steps:
   # writes; a serializer change must come with the regenerated fixture.
   - name: cookie fixture
     dir: extension
-    run: node testdata/generate_fixture.js > ../backend/internal/cookie/testdata/extension_output.txt && git diff --exit-code -- ../backend/internal/cookie/testdata/extension_output.txt
+    run: f=$(mktemp "${TMPDIR:-/tmp}/fixture.XXXXXX") && node testdata/generate_fixture.js > "$f"; diff -u ../backend/internal/cookie/testdata/extension_output.txt "$f"; rc=$?; rm -f "$f"; exit $rc
   - name: extension e2e
     dir: extension/e2e
     run: npm ci && npx playwright install chromium --with-deps && npm test
