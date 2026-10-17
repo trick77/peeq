@@ -53,7 +53,19 @@ func (s *server) handleChannelStorage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	st, err := s.videos.ChannelStorage(r.Context(), c.ID, c.Name)
+	// The header's name resolution (handleChannelDetail): a channel row
+	// without a name falls back to the one on its videos, so legacy rows
+	// count here exactly when they count there.
+	name := c.Name
+	if name == "" {
+		videoName, _, err := s.channels.NameFromVideos(c.ID)
+		if err != nil {
+			serverError(w, r, err, "load channel failed")
+			return
+		}
+		name = videoName
+	}
+	st, err := s.videos.ChannelStorage(r.Context(), c.ID, name)
 	if err != nil {
 		serverError(w, r, err, "measure channel storage failed")
 		return

@@ -2,6 +2,7 @@ package videos
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/trick77/peeq/internal/rag"
@@ -142,5 +143,43 @@ func TestChannelStorage_edges(t *testing.T) {
 	}
 	if _, err := s.ChannelStorage(ctx, "UC1", ""); err == nil {
 		t.Fatal("want an error from a broken query")
+	}
+}
+
+// Kept in the storage split is exactly what a switch-off purges: the same
+// videos the confirm dialog counts as deleted and ignored.
+func TestChannelStorage_keptMatchesThePurge(t *testing.T) {
+	s, _ := keptFixture(t)
+	if _, err := s.db.Exec(`INSERT INTO videos (id, url, channel_id, channel_name, status) VALUES ('legacytomb', 'u', '', 'c', 'tombstoned')`); err != nil {
+		t.Fatal(err)
+	}
+	impact, err := s.KeptImpact("UC1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.ChannelStorage(context.Background(), "UC1", "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Kept.Videos != impact.Deleted+impact.Ignored {
+		t.Fatalf("storage kept = %d, purge takes %d deleted + %d ignored", st.Kept.Videos, impact.Deleted, impact.Ignored)
+	}
+}
+
+// The storage query never scans the videos table: the channel's rows come
+// from an index, whichever where shape the caller passes.
+func TestChannelStorage_staysOnAnIndex(t *testing.T) {
+	db := openTestDB(t)
+	for name, tc := range map[string]struct {
+		where string
+		args  []any
+	}{
+		"channel id":         {"v.channel_id = ?", []any{"UCa", "UCa", "UCa"}},
+		"legacy name branch": {"(v.channel_id = ? OR (v.channel_id = '' AND v.channel_name = ?))", []any{"UCa", "UCa", "UCa", "A"}},
+	} {
+		plan := queryPlan(t, db, channelStorageQuery(tc.where), tc.args...)
+		if strings.Contains(plan, "SCAN v ") || strings.HasSuffix(plan, "SCAN v") {
+			t.Errorf("%s: scans the videos table; plan = %s", name, plan)
+		}
 	}
 }

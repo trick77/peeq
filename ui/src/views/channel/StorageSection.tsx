@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getChannelStorage,
   type ChannelStorage,
@@ -32,9 +32,11 @@ function parts(g: StorageGroup): string {
   ].join(" · ");
 }
 
-// AFTER_PURGE_MS is when a switch-off measures again: long enough for the
-// background purge of a typical channel to have finished.
+// After a switch-off the purge runs in the background, so the section measures
+// again every AFTER_PURGE_MS while the kept count is still falling, at most
+// MAX_PURGE_POLLS times: it stops once kept reaches 0 or stops moving.
 const AFTER_PURGE_MS = 3000;
+const MAX_PURGE_POLLS = 20;
 
 function videos(n: number): string {
   return `${n} ${n === 1 ? "video" : "videos"}`;
@@ -46,11 +48,12 @@ function videos(n: number): string {
 // its own request when the Settings tab opens — it visits every video of the
 // channel, too much for the header's load.
 //
-// It measures again whenever the switch flips, and once more a few seconds
-// after it goes off: the purge that follows runs in the background, so the
-// first answer can still show what is about to go. Each answer is keyed to
-// the channel and switch state it was measured for, so a stale one — another
-// channel's, or from before the flip — is never shown.
+// It measures again when the switch flips. Only an observed on → off flip
+// follows the purge (see AFTER_PURGE_MS); opening Settings on a channel that
+// is already off measures once. Each answer is keyed to the channel and switch
+// state it was measured for, and only the latest request may answer, so a
+// stale one — another channel's, from before the flip, or a slow earlier
+// measure — is never shown.
 export function StorageSection({
   channelId,
   keepReads,
@@ -64,24 +67,52 @@ export function StorageSection({
     storage?: ChannelStorage;
     error?: string;
   } | null>(null);
+  const seen = useRef<{ channelId: string; keepReads: boolean } | null>(null);
+  const latest = useRef(0);
 
   useEffect(() => {
+    const at = `${channelId}:${keepReads}`;
+    const prev = seen.current;
+    const turnedOff =
+      prev !== null &&
+      prev.channelId === channelId &&
+      prev.keepReads &&
+      !keepReads;
+    seen.current = { channelId, keepReads };
+
     let active = true;
-    const measure = () =>
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let polls = 0;
+    let lastKept = Infinity;
+    const measure = () => {
+      const n = ++latest.current;
       getChannelStorage(channelId)
         .then((storage) => {
-          if (active) setResult({ key, storage });
+          if (!active || n !== latest.current) return;
+          setResult({ key: at, storage });
+          const kept = storage.kept.videos;
+          if (
+            turnedOff &&
+            kept > 0 &&
+            kept < lastKept &&
+            polls < MAX_PURGE_POLLS
+          ) {
+            lastKept = kept;
+            polls++;
+            timer = setTimeout(measure, AFTER_PURGE_MS);
+          }
         })
         .catch((e: Error) => {
-          if (active) setResult({ key, error: e.message });
+          if (active && n === latest.current)
+            setResult({ key: at, error: e.message });
         });
+    };
     measure();
-    const again = keepReads ? undefined : setTimeout(measure, AFTER_PURGE_MS);
     return () => {
       active = false;
-      clearTimeout(again);
+      clearTimeout(timer);
     };
-  }, [channelId, keepReads, key]);
+  }, [channelId, keepReads]);
 
   const current = result?.key === key ? result : null;
   const storage = current?.storage;

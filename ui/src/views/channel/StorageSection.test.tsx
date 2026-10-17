@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { StorageSection } from "./StorageSection";
-import type { StorageGroup } from "../../api/channels";
+import type { ChannelStorage, StorageGroup } from "../../api/channels";
 
 vi.mock("../../api/channels", () => ({ getChannelStorage: vi.fn() }));
 
@@ -76,33 +76,74 @@ describe("StorageSection", () => {
     ).toBeInTheDocument();
   });
 
-  it("measures again after a switch-off, once the purge had time", async () => {
+  it("follows a switch-off purge until kept stops falling", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const keptOf = (n: number) => ({
+        on_disk: group(),
+        kept: group({ videos: n }),
+        other: group(),
+      });
+      vi.mocked(getChannelStorage).mockResolvedValueOnce(keptOf(8));
+      const { rerender } = render(<StorageSection channelId="UCa" keepReads />);
+      await screen.findByText(/8 videos without a file/);
+
+      // Off: measured at once (purge barely started), then again while the
+      // count falls, and no more once it reaches 0.
+      vi.mocked(getChannelStorage)
+        .mockResolvedValueOnce(keptOf(8))
+        .mockResolvedValueOnce(keptOf(3))
+        .mockResolvedValueOnce(keptOf(0));
+      rerender(<StorageSection channelId="UCa" keepReads={false} />);
+      await screen.findByText(/8 videos without a file/);
+      await vi.advanceTimersByTimeAsync(3000);
+      await screen.findByText(/3 videos without a file/);
+      await vi.advanceTimersByTimeAsync(3000);
+      await screen.findByText(/0 videos without a file/);
+      await vi.advanceTimersByTimeAsync(9000);
+      expect(getChannelStorage).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("measures once on a channel that is already off", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       vi.mocked(getChannelStorage).mockResolvedValue({
         on_disk: group(),
-        kept: group({ videos: 8 }),
+        kept: group({ videos: 2 }),
         other: group(),
       });
-      const { rerender } = render(<StorageSection channelId="UCa" keepReads />);
-      await screen.findByText(/8 videos without a file/);
+      render(<StorageSection channelId="UCa" keepReads={false} />);
+      await screen.findByText(/2 videos without a file/);
+      await vi.advanceTimersByTimeAsync(9000);
       expect(getChannelStorage).toHaveBeenCalledTimes(1);
-
-      vi.mocked(getChannelStorage).mockResolvedValue({
-        on_disk: group(),
-        kept: group(),
-        other: group(),
-      });
-      rerender(<StorageSection channelId="UCa" keepReads={false} />);
-      expect(getChannelStorage).toHaveBeenCalledTimes(2);
-      await vi.advanceTimersByTimeAsync(3000);
-      expect(getChannelStorage).toHaveBeenCalledTimes(3);
-      expect(
-        await screen.findByText(/0 videos without a file/),
-      ).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("drops a slow earlier answer that arrives after a newer one", async () => {
+    let slow: (v: ChannelStorage) => void = () => {};
+    vi.mocked(getChannelStorage).mockReturnValueOnce(
+      new Promise<ChannelStorage>((r) => {
+        slow = r;
+      }),
+    );
+    const { rerender } = render(<StorageSection channelId="UCa" keepReads />);
+    vi.mocked(getChannelStorage).mockResolvedValueOnce({
+      on_disk: group(),
+      kept: group({ videos: 1 }),
+      other: group(),
+    });
+    rerender(<StorageSection channelId="UCa" keepReads={false} />);
+    await screen.findByText(/1 video without a file/);
+    slow({ on_disk: group(), kept: group({ videos: 9 }), other: group() });
+    await Promise.resolve();
+    expect(
+      screen.queryByText(/9 videos without a file/),
+    ).not.toBeInTheDocument();
   });
 
   it("never shows another channel's numbers while measuring", async () => {

@@ -47,18 +47,24 @@ type ChannelStorage struct {
 // The where clause is channels.Stats' own, legacy name fallback included, so
 // the files here add up to the header's figure. Reading status and file size
 // from the row costs what that header already pays on every channel load.
+//
+// Kept is the switch-off purge's set and nothing else, so it equals what the
+// confirm dialog names: keptVideos' rule (a once-downloaded ignore is not a
+// kept read), and only rows carrying the channel's id — a legacy row matched
+// by name is never purged, so it counts under Other. store_storage_test ties
+// the two together.
 func channelStorageQuery(where string) string {
 	return `
 SELECT CASE
          WHEN v.status = 'downloaded' THEN 'on_disk'
-         WHEN v.status = 'tombstoned' THEN 'kept'
-         WHEN v.status = 'new' AND cv.state = 'ignored'
-              AND COALESCE((SELECT t.source FROM video_transcripts t WHERE t.video_id = v.id), '') != 'download' THEN 'kept'
+         WHEN v.channel_id = ? AND v.status = 'tombstoned' THEN 'kept'
+         WHEN v.channel_id = ? AND v.status = 'new' AND cv.state = 'ignored'
+              AND COALESCE(t.source, '') != 'download' THEN 'kept'
          ELSE 'other'
        END AS grp,
        COUNT(*),
        SUM(CASE WHEN v.status = 'downloaded' THEN COALESCE(v.filesize_bytes, 0) ELSE 0 END),
-       SUM(COALESCE((SELECT octet_length(t.vtt) FROM video_transcripts t WHERE t.video_id = v.id), 0)),
+       SUM(COALESCE(octet_length(t.vtt), 0)),
        SUM(COALESCE(octet_length(v.summary), 0) + COALESCE(octet_length(v.chapters), 0)
            + COALESCE(octet_length(v.key_points), 0)
            + COALESCE((SELECT octet_length(d.body) FROM video_in_depth d WHERE d.video_id = v.id), 0)),
@@ -67,6 +73,7 @@ SELECT CASE
        SUM(COALESCE((SELECT octet_length(th.bytes) FROM video_thumbnails th WHERE th.video_id = v.id), 0))
 FROM videos v
 LEFT JOIN channel_videos cv ON cv.video_id = v.id
+LEFT JOIN video_transcripts t ON t.video_id = v.id
 WHERE ` + where + `
 GROUP BY grp`
 }
@@ -76,7 +83,8 @@ GROUP BY grp`
 // recorded, as for channels.Store.Stats; "" matches on channel_id alone.
 func (s *Store) ChannelStorage(ctx context.Context, channelID, channelName string) (ChannelStorage, error) {
 	where := "v.channel_id = ?"
-	args := []any{channelID}
+	// The two CASE binds first, then the where clause's.
+	args := []any{channelID, channelID, channelID}
 	if channelName != "" {
 		where = "(v.channel_id = ? OR (v.channel_id = '' AND v.channel_name = ?))"
 		args = append(args, channelName)
