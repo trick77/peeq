@@ -28,6 +28,32 @@ func newTestStore(t *testing.T) *Store {
 	return New(db)
 }
 
+func TestList_reportsKeepReads(t *testing.T) {
+	s := newTestStore(t)
+	for _, id := range []string{"UCkeep", "UCplain"} {
+		if err := s.Upsert(Channel{ID: id, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.MarkAdded(id, "2026-07-20 10:00:00"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := s.SetKeepReads("UCkeep", true); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.List("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, it := range items {
+		got[it.ID] = it.KeepReads
+	}
+	if !got["UCkeep"] || got["UCplain"] {
+		t.Fatalf("keep_reads = %v", got)
+	}
+}
+
 // TestList_excludesCacheOnlyRows asserts a channel row that exists only as a
 // metadata cache entry (never added by the user) is invisible to every
 // ?filter= value the channels list supports. If this regresses, the user's
