@@ -128,8 +128,9 @@ func TestRequireAuthLogsSessionLookupFailure(t *testing.T) {
 	if !strings.Contains(out, "request failed") || !strings.Contains(out, "err=\"session boom\"") {
 		t.Fatalf("log should carry the cause, got: %s", out)
 	}
-	if !strings.Contains(out, "path=/api/me") || strings.Contains(out, "secret-query") {
-		t.Fatalf("log should carry the path and never the query string, got: %s", out)
+	// The path is the access line's (httpx.ServerError joins it by request id).
+	if strings.Contains(out, "secret-query") {
+		t.Fatalf("log must never carry the query string, got: %s", out)
 	}
 	if strings.Contains(out, "sess-secret-token") {
 		t.Fatalf("log must never carry the session token, got: %s", out)

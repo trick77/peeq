@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/store"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // handleVideoSubtitles serves the video's WebVTT captions from the row that
@@ -28,16 +29,16 @@ func (s *server) handleVideoSubtitles(w http.ResponseWriter, r *http.Request) {
 // share-page endpoints so the two cannot drift.
 func serveTranscript(w http.ResponseWriter, r *http.Request, s *server, videoID string) {
 	if s.videos == nil {
-		writeJSONError(w, http.StatusNotFound, "subtitles not available")
+		httpx.WriteError(w, http.StatusNotFound, "subtitles not available")
 		return
 	}
 	t, err := s.videos.GetTranscript(videoID)
 	if err != nil {
-		serverError(w, r, err, "subtitles not available")
+		httpx.ServerError(w, r, err, "subtitles not available")
 		return
 	}
 	if t == nil {
-		writeJSONError(w, http.StatusNotFound, "no subtitles for this video")
+		httpx.WriteError(w, http.StatusNotFound, "no subtitles for this video")
 		return
 	}
 	modTime, terr := store.ParseTime(t.UpdatedAt)

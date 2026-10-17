@@ -7,36 +7,8 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/logx"
+	"github.com/trick77/ship/kit/httpx"
 )
-
-// serverError logs the underlying cause of a 5xx with request context and
-// returns a generic JSON error to the client, so internal details never leak
-// to the browser. Every 500 path should go through here so failures are never
-// silent. Only r.URL.Path is logged — never the query string, which on the
-// OIDC callback carries a live auth code.
-func serverError(w http.ResponseWriter, r *http.Request, err error, clientMessage string) {
-	// A request whose client went away fails on whatever it was waiting on,
-	// and that error hides the cancel: sqlite-vec reports an interrupt as "SQL
-	// logic error: chunks iter error", which reads as a corrupt database. The
-	// cause says what happened; context.Canceled is the connection closing.
-	if ctx := r.Context(); ctx.Err() != nil {
-		slog.Warn("request cancelled",
-			"method", r.Method,
-			"path", r.URL.Path,
-			"cause", context.Cause(ctx).Error(),
-			"err", logx.RedactErr(err),
-		)
-		writeJSONError(w, http.StatusInternalServerError, clientMessage)
-		return
-	}
-	slog.Error("request failed",
-		"method", r.Method,
-		"path", r.URL.Path,
-		"client_message", clientMessage,
-		"err", logx.RedactErr(err),
-	)
-	writeJSONError(w, http.StatusInternalServerError, clientMessage)
-}
 
 // logAnswerFailed reports an Ask answer stream that ended in an error, and
 // separates the one whose reader went away from the one that failed: the
@@ -77,5 +49,5 @@ func upstreamError(w http.ResponseWriter, r *http.Request, err error, clientPref
 		"client_message", clientPrefix,
 		"err", redacted,
 	)
-	writeJSONError(w, http.StatusBadGateway, clientPrefix+": "+redacted.Error())
+	httpx.WriteError(w, http.StatusBadGateway, clientPrefix+": "+redacted.Error())
 }

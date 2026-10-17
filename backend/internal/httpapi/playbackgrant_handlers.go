@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/playbackgrant"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // PlaybackGrantStore is the slice of playbackgrant.Store the grant endpoints
@@ -39,11 +40,11 @@ type playbackGrantResponse struct {
 // exist" (404) — a distinction only the owner is ever shown.
 func (s *server) handleCreatePlaybackGrant(w http.ResponseWriter, r *http.Request) {
 	if s.playbackGrants == nil || s.settings == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "direct playback is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "direct playback is not configured")
 		return
 	}
 	if !s.settings.DirectStreamEnabled(r.Context()) {
-		writeJSONError(w, http.StatusConflict, "direct playback links are turned off")
+		httpx.WriteError(w, http.StatusConflict, "direct playback links are turned off")
 		return
 	}
 	v, ok := s.lookupVideo(w, r)
@@ -51,19 +52,19 @@ func (s *server) handleCreatePlaybackGrant(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if v.MediaPath == "" {
-		writeJSONError(w, http.StatusNotFound, "no media for this video")
+		httpx.WriteError(w, http.StatusNotFound, "no media for this video")
 		return
 	}
 	token, expiresAt, err := s.playbackGrants.Mint(r.Context(), v.ID, playbackgrant.DefaultTTL)
 	if err != nil {
-		serverError(w, r, err, "failed to create playback link")
+		httpx.ServerError(w, r, err, "failed to create playback link")
 		return
 	}
 	// Deliberately relative, unlike shareURL: a grant is consumed by the page
 	// that asked for it, and Safari hands the receiver the URL already resolved
 	// against the origin the browser is on. Building it against publicURL would
 	// only risk pointing the <video> at a different host than the session.
-	writeJSON(w, playbackGrantResponse{
+	httpx.WriteJSON(w, http.StatusOK, playbackGrantResponse{
 		URL:       "/api/p/" + token + "/stream",
 		ExpiresAt: expiresAt,
 	})

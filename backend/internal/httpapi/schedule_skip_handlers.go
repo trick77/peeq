@@ -8,6 +8,7 @@ import (
 	"github.com/trick77/peeq/internal/channelmeta"
 	"github.com/trick77/peeq/internal/scan"
 	"github.com/trick77/peeq/internal/store"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // The Up next page lists peeq's own timed housekeeping — the channel scans and
@@ -88,7 +89,7 @@ type skipResponse struct {
 // request, and the channel it applies to.
 func (s *server) skipTarget(w http.ResponseWriter, r *http.Request) (id string, at string, ok bool) {
 	if s.channels == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return "", "", false
 	}
 	var req skipRequest
@@ -103,7 +104,7 @@ func (s *server) skipTarget(w http.ResponseWriter, r *http.Request) (id string, 
 		// is not in that form would not sort or compare — it would quietly
 		// remove the channel from its own rotation.
 		if _, err := store.ParseTime(req.At); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "at must be a UTC timestamp of the form "+store.TimeLayout)
+			httpx.WriteError(w, http.StatusBadRequest, "at must be a UTC timestamp of the form "+store.TimeLayout)
 			return "", "", false
 		}
 	}
@@ -119,11 +120,11 @@ func (s *server) handleChannelSkipScan(w http.ResponseWriter, r *http.Request) {
 	}
 	sub, err := s.channels.GetSubscription(id)
 	if err != nil {
-		serverError(w, r, err, "skip scan failed")
+		httpx.ServerError(w, r, err, "skip scan failed")
 		return
 	}
 	if sub == nil {
-		writeJSONError(w, http.StatusBadRequest, "channel is not subscribed")
+		httpx.WriteError(w, http.StatusBadRequest, "channel is not subscribed")
 		return
 	}
 
@@ -131,13 +132,13 @@ func (s *server) handleChannelSkipScan(w http.ResponseWriter, r *http.Request) {
 	if next == "" {
 		rank, count, err := s.channels.SubscriptionRank(id)
 		if err != nil {
-			serverError(w, r, err, "skip scan failed")
+			httpx.ServerError(w, r, err, "skip scan failed")
 			return
 		}
 		next = scan.NextScanAt(skipAnchor(time.Now(), sub.NextScanAt), rank, count)
 	}
 	if err := s.channels.Backoff(id, next); err != nil {
-		serverError(w, r, err, "skip scan failed")
+		httpx.ServerError(w, r, err, "skip scan failed")
 		return
 	}
 	// Clear any outstanding "Scan now" marker. A user who asked for a scan and
@@ -155,7 +156,7 @@ func (s *server) handleChannelSkipScan(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("skip scan: clear scan request failed", "channel_id", id, "err", err)
 		}
 	}
-	writeJSON(w, skipResponse{Status: "skipped", At: next, PreviousAt: sub.NextScanAt})
+	httpx.WriteJSON(w, http.StatusOK, skipResponse{Status: "skipped", At: next, PreviousAt: sub.NextScanAt})
 }
 
 // handleChannelSkipMeta is handleChannelSkipScan for the weekly metadata
@@ -167,11 +168,11 @@ func (s *server) handleChannelSkipMeta(w http.ResponseWriter, r *http.Request) {
 	}
 	sub, err := s.channels.GetSubscription(id)
 	if err != nil {
-		serverError(w, r, err, "skip metadata refresh failed")
+		httpx.ServerError(w, r, err, "skip metadata refresh failed")
 		return
 	}
 	if sub == nil {
-		writeJSONError(w, http.StatusBadRequest, "channel is not subscribed")
+		httpx.WriteError(w, http.StatusBadRequest, "channel is not subscribed")
 		return
 	}
 	// A channel with no rotation slot has nothing to skip. Every row the
@@ -179,7 +180,7 @@ func (s *server) handleChannelSkipMeta(w http.ResponseWriter, r *http.Request) {
 	// reachable directly — and writing a slot here would schedule a refresh
 	// rather than skip one, which is the opposite of what was asked.
 	if sub.NextMetaRefreshAt == "" {
-		writeJSONError(w, http.StatusBadRequest, "channel has no scheduled metadata refresh")
+		httpx.WriteError(w, http.StatusBadRequest, "channel has no scheduled metadata refresh")
 		return
 	}
 
@@ -187,14 +188,14 @@ func (s *server) handleChannelSkipMeta(w http.ResponseWriter, r *http.Request) {
 	if next == "" {
 		rank, count, err := s.channels.SubscriptionRank(id)
 		if err != nil {
-			serverError(w, r, err, "skip metadata refresh failed")
+			httpx.ServerError(w, r, err, "skip metadata refresh failed")
 			return
 		}
 		next = channelmeta.NextRefreshAt(skipAnchor(time.Now(), sub.NextMetaRefreshAt), rank, count)
 	}
 	if err := s.channels.MarkMetaRefreshed(id, next); err != nil {
-		serverError(w, r, err, "skip metadata refresh failed")
+		httpx.ServerError(w, r, err, "skip metadata refresh failed")
 		return
 	}
-	writeJSON(w, skipResponse{Status: "skipped", At: next, PreviousAt: sub.NextMetaRefreshAt})
+	httpx.WriteJSON(w, http.StatusOK, skipResponse{Status: "skipped", At: next, PreviousAt: sub.NextMetaRefreshAt})
 }

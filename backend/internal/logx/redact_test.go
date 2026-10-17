@@ -131,3 +131,32 @@ func TestRedactAttr_scrubsErrAttrsOnTheHandler(t *testing.T) {
 		t.Fatalf("a non-err attr was altered: %s", out)
 	}
 }
+
+// TestRedactAttr_scrubsStringErrAttrs: kit logs an error as a string under
+// "err" (logging.Err, httpx.ServerError), so the string form is redacted too.
+func TestRedactAttr_scrubsStringErrAttrs(t *testing.T) {
+	got := RedactAttr(nil, slog.String("err", `Get "https://h/cb?code=SECRET": refused`))
+	if strings.Contains(got.Value.String(), "SECRET") || !strings.Contains(got.Value.String(), "https://h/cb") {
+		t.Fatalf("string err attr = %q", got.Value.String())
+	}
+}
+
+// TestHandler_redactsEveryErrAttr: kit's logging.Setup takes no ReplaceAttr,
+// so Handler wraps the handler it builds; record attrs and WithAttrs both
+// pass through RedactAttr.
+func TestHandler_redactsEveryErrAttr(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(Handler(slog.NewTextHandler(&buf, nil)))
+	logger.With("err", errors.New("Get https://h/a?token=ONE")).Info("bound")
+	logger.Info("record", "err", "Get https://h/b?token=TWO")
+	logger.WithGroup("g").Info("grouped", "err", "Get https://h/c?token=THREE")
+	out := buf.String()
+	for _, secret := range []string{"ONE", "TWO", "THREE"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("%s reached the log: %s", secret, out)
+		}
+	}
+	if !strings.Contains(out, "https://h/a") || !strings.Contains(out, "g.err=") {
+		t.Errorf("path or group lost: %s", out)
+	}
+}

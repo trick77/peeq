@@ -86,7 +86,7 @@ func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 		s.writeEnqueueError(w, r, ee)
 		return
 	}
-	writeJSONStatus(w, http.StatusCreated, item)
+	httpx.WriteJSON(w, http.StatusCreated, item)
 }
 
 // enqueueError carries a failed enqueue's HTTP status and client-facing
@@ -103,10 +103,10 @@ type enqueueError struct {
 // client-safe writeJSONError.
 func (s *server) writeEnqueueError(w http.ResponseWriter, r *http.Request, ee *enqueueError) {
 	if ee.cause != nil {
-		serverError(w, r, ee.cause, ee.message)
+		httpx.ServerError(w, r, ee.cause, ee.message)
 		return
 	}
-	writeJSONError(w, ee.status, ee.message)
+	httpx.WriteError(w, ee.status, ee.message)
 }
 
 // alreadyInQueue reports whether a video's status means it is already in peeq's
@@ -211,18 +211,18 @@ const finishedJobsWindow = 20
 // job's video title/channel for display.
 func (s *server) handleDownloadsList(w http.ResponseWriter, r *http.Request) {
 	if s.jobs == nil {
-		writeJSON(w, []downloadItem{})
+		httpx.WriteJSON(w, http.StatusOK, []downloadItem{})
 		return
 	}
 	all, err := s.jobs.ListQueue(finishedJobsWindow)
 	if err != nil {
-		serverError(w, r, err, "list downloads failed")
+		httpx.ServerError(w, r, err, "list downloads failed")
 		return
 	}
 
 	index, err := s.videoIndex(idsOf(all, func(j jobs.Job) string { return j.VideoID }))
 	if err != nil {
-		serverError(w, r, err, "list downloads failed")
+		httpx.ServerError(w, r, err, "list downloads failed")
 		return
 	}
 	items := make([]downloadItem, 0, len(all))
@@ -245,7 +245,7 @@ func (s *server) handleDownloadsList(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, item)
 	}
-	writeJSON(w, items)
+	httpx.WriteJSON(w, http.StatusOK, items)
 }
 
 // downloadsStatusResponse reports why the download queue may be stalled, so
@@ -271,22 +271,22 @@ func (s *server) handleDownloadsStatus(w http.ResponseWriter, r *http.Request) {
 	if s.settings != nil {
 		paused, reason, err := s.settings.YoutubePaused(r.Context())
 		if err != nil {
-			serverError(w, r, err, "read youtube pause state failed")
+			httpx.ServerError(w, r, err, "read youtube pause state failed")
 			return
 		}
 		resp.YoutubePaused, resp.YoutubePauseReason = paused, reason
 	}
-	writeJSON(w, resp)
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // handlePauseYoutube engages the kill-switch manually (reason ”).
 func (s *server) handlePauseYoutube(w http.ResponseWriter, r *http.Request) {
 	if s.settings == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "settings not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "settings not configured")
 		return
 	}
 	if err := s.settings.SetYoutubePaused(r.Context(), true, ""); err != nil {
-		serverError(w, r, err, "pause failed")
+		httpx.ServerError(w, r, err, "pause failed")
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -296,11 +296,11 @@ func (s *server) handlePauseYoutube(w http.ResponseWriter, r *http.Request) {
 // so the user gets a fresh auto-pause window.
 func (s *server) handleResumeYoutube(w http.ResponseWriter, r *http.Request) {
 	if s.settings == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "settings not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "settings not configured")
 		return
 	}
 	if err := s.settings.SetYoutubePaused(r.Context(), false, ""); err != nil {
-		serverError(w, r, err, "resume failed")
+		httpx.ServerError(w, r, err, "resume failed")
 		return
 	}
 	if s.onResumeYoutube != nil {
@@ -318,7 +318,7 @@ func (s *server) handleResumeYoutube(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleDownloadsCancel(w http.ResponseWriter, r *http.Request) {
 	jobID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid job id")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid job id")
 		return
 	}
 
@@ -329,18 +329,18 @@ func (s *server) handleDownloadsCancel(w http.ResponseWriter, r *http.Request) {
 	case s.jobs != nil:
 		canceled, err = s.jobs.Cancel(jobID)
 		if err != nil {
-			serverError(w, r, err, "cancel failed")
+			httpx.ServerError(w, r, err, "cancel failed")
 			return
 		}
 	default:
-		writeJSONError(w, http.StatusServiceUnavailable, "downloads are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "downloads are not configured")
 		return
 	}
 	if !canceled {
-		writeJSONError(w, http.StatusNotFound, "job not found or not cancelable")
+		httpx.WriteError(w, http.StatusNotFound, "job not found or not cancelable")
 		return
 	}
-	writeJSON(w, map[string]string{"status": "canceled"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "canceled"})
 }
 
 // sseHeartbeatInterval keeps the stream alive through idle reverse proxies.
@@ -356,7 +356,7 @@ const sseRetryAfter = 5 * time.Second
 // only events published after it connects.
 func (s *server) handleDownloadsStream(w http.ResponseWriter, r *http.Request) {
 	if s.sseHub == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "downloads stream is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "downloads stream is not configured")
 		return
 	}
 	// Subscribed before Open: a refusal (the hub closed for shutdown) can
@@ -365,7 +365,7 @@ func (s *server) handleDownloadsStream(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 	if !ok {
 		httpx.SetRetryAfter(w, sseRetryAfter)
-		writeJSONError(w, http.StatusServiceUnavailable, "downloads stream is unavailable")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "downloads stream is unavailable")
 		return
 	}
 	writer, err := sse.Open(w)
@@ -373,7 +373,7 @@ func (s *server) handleDownloadsStream(w http.ResponseWriter, r *http.Request) {
 		// Only ErrNoFlush comes before the 200; a failed first flush means
 		// the client is gone and there is nobody to answer.
 		if errors.Is(err, sse.ErrNoFlush) {
-			serverError(w, r, err, "streaming not supported")
+			httpx.ServerError(w, r, err, "streaming not supported")
 		}
 		return
 	}

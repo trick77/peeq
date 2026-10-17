@@ -38,5 +38,5 @@ func (m *StaticTokenMiddleware) RequireToken(next http.Handler) http.Handler {
 
 func unauthorizedBearer(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", "Bearer")
-	writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+	httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 }

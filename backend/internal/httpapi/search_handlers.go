@@ -13,6 +13,7 @@ import (
 
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // RagStore is the slice of rag.Store the handlers use — declared here at the
@@ -206,13 +207,13 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		mode = searchModeAsk
 	}
 	if q == "" {
-		writeJSON(w, map[string]any{"results": []any{}, "mode": mode})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"results": []any{}, "mode": mode})
 		return
 	}
 	// FTS lives in the rag store and needs no external service; it is the
 	// floor. The embedder (semantic) is optional and best-effort.
 	if s.rag == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "search is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "search is not configured")
 		return
 	}
 
@@ -237,11 +238,11 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// GetMany drops the duplicates.
 	videosByID, err := s.videos.GetMany(idsOf(hits, func(h rag.Hit) string { return h.VideoID }))
 	if err != nil {
-		serverError(w, r, err, "search failed")
+		httpx.ServerError(w, r, err, "search failed")
 		return
 	}
 
-	writeJSON(w, map[string]any{"results": groupHits(hits, videosByID, 0, k), "mode": mode})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"results": groupHits(hits, videosByID, 0, k), "mode": mode})
 }
 
 // groupHits groups ranked hits per video, in the order each video's best hit
@@ -908,17 +909,17 @@ func snippet(s string) string {
 // step went wrong (e.g. a summarize that failed).
 func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 	if s.videos == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "videos are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "videos are not configured")
 		return
 	}
 	id := r.PathValue("id")
 	v, err := s.videos.Get(id)
 	if err != nil {
-		serverError(w, r, err, "get video failed")
+		httpx.ServerError(w, r, err, "get video failed")
 		return
 	}
 	if v == nil {
-		writeJSONError(w, http.StatusNotFound, "video not found")
+		httpx.WriteError(w, http.StatusNotFound, "video not found")
 		return
 	}
 	// The pipeline reads the .vtt and nothing else, so the transcript is the only
@@ -934,7 +935,7 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 	// than whether a path column happens to be set — a pointer standing in for
 	// the thing itself is exactly what used to make this gate lie.
 	if !v.HasTranscript {
-		writeJSONError(w, http.StatusConflict, "no transcript present; re-download to restore before reprocessing")
+		httpx.WriteError(w, http.StatusConflict, "no transcript present; re-download to restore before reprocessing")
 		return
 	}
 	// An in-flight download is the one status that does disqualify: the .vtt
@@ -945,11 +946,11 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 	// transcript, which the second job then skips over because summary <> ''.
 	// Wait for the file to land; the download re-runs the pipeline anyway.
 	if v.Status == videos.StatusQueued || v.Status == videos.StatusDownloading {
-		writeJSONError(w, http.StatusConflict, "download in progress; the transcript is being replaced")
+		httpx.WriteError(w, http.StatusConflict, "download in progress; the transcript is being replaced")
 		return
 	}
 	if s.summaryJobs == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "summaries are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "summaries are not configured")
 		return
 	}
 	// The reset and the job are one transaction (videos.Store.ResetAndEnqueueSummary
@@ -958,10 +959,10 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.videos.ResetAndEnqueueSummary(id); err != nil {
 		if errors.Is(err, videos.ErrNotFound) {
 			// Swept or deleted between the lookup above and the write.
-			writeJSONError(w, http.StatusNotFound, "video not found")
+			httpx.WriteError(w, http.StatusNotFound, "video not found")
 			return
 		}
-		serverError(w, r, err, "reprocess failed")
+		httpx.ServerError(w, r, err, "reprocess failed")
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)

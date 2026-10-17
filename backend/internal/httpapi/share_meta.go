@@ -15,6 +15,7 @@ import (
 
 	"github.com/trick77/peeq/internal/sharecard"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/httpx"
 	_ "golang.org/x/image/webp" // yt-dlp thumbnails are frequently .webp (decode-only)
 )
 
@@ -184,7 +185,7 @@ func (s *server) handleShareCard(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Del("Cache-Control")
 		w.Header().Del("ETag")
-		serverError(w, r, err, "render share card failed")
+		httpx.ServerError(w, r, err, "render share card failed")
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/activity"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // ytdlpVersionResponse is the response shape for the version check: what is
@@ -50,7 +51,7 @@ type ytdlpUpdateResponse struct {
 // upstream half, which costs a network call, is served from the cache.
 func (s *server) handleYTDLPVersion(w http.ResponseWriter, r *http.Request) {
 	if s.ytdlp == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "yt-dlp version check not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "yt-dlp version check not configured")
 		return
 	}
 	// An unreadable binary is reported as an empty version, not as a 500. A
@@ -81,14 +82,14 @@ func (s *server) handleYTDLPVersion(w http.ResponseWriter, r *http.Request) {
 	if !checkedAt.IsZero() {
 		resp.CheckedAt = checkedAt.UTC().Format(time.RFC3339)
 	}
-	writeJSON(w, resp)
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // handleYTDLPUpdate runs yt-dlp's self-update and reports the resulting
 // version, for the Settings page's Update button.
 func (s *server) handleYTDLPUpdate(w http.ResponseWriter, r *http.Request) {
 	if s.ytdlp == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "yt-dlp update not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "yt-dlp update not configured")
 		return
 	}
 	// Read the installed version BEFORE replacing it — it is the only way to
@@ -107,7 +108,7 @@ func (s *server) handleYTDLPUpdate(w http.ResponseWriter, r *http.Request) {
 
 	v, err := s.ytdlp.UpdateLatest(r.Context())
 	if err != nil {
-		serverError(w, r, err, "failed to update yt-dlp")
+		httpx.ServerError(w, r, err, "failed to update yt-dlp")
 		return
 	}
 	updated := previous == "" || previous != v
@@ -132,7 +133,7 @@ func (s *server) handleYTDLPUpdate(w http.ResponseWriter, r *http.Request) {
 			Summary: summary,
 		})
 	}
-	writeJSON(w, ytdlpUpdateResponse{
+	httpx.WriteJSON(w, http.StatusOK, ytdlpUpdateResponse{
 		Version:         v,
 		PreviousVersion: previous,
 		Updated:         updated,

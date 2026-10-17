@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/trick77/peeq/internal/channelvideos"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // handlePendingRetryCaptions answers POST /api/pending/{id}/retry-captions: it
@@ -20,28 +21,28 @@ import (
 // retry (see channelvideos.Store.RetryCaptions for the conditions).
 func (s *server) handlePendingRetryCaptions(w http.ResponseWriter, r *http.Request) {
 	if s.ledger == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "pending is not configured")
 		return
 	}
 	id := r.PathValue("id")
 	e, err := s.ledger.Get(id)
 	if err != nil {
-		serverError(w, r, err, "load pending failed")
+		httpx.ServerError(w, r, err, "load pending failed")
 		return
 	}
 	if e == nil || e.State != channelvideos.StatePending {
-		writeJSONError(w, http.StatusNotFound, "pending item not found")
+		httpx.WriteError(w, http.StatusNotFound, "pending item not found")
 		return
 	}
 	ok, err := s.ledger.RetryCaptions(id)
 	if err != nil {
-		serverError(w, r, err, "retry captions failed")
+		httpx.ServerError(w, r, err, "retry captions failed")
 		return
 	}
 	if !ok {
-		writeJSONError(w, http.StatusConflict, "captions cannot be retried for this video")
+		httpx.WriteError(w, http.StatusConflict, "captions cannot be retried for this video")
 		return
 	}
 	s.publishInboxChanged(id)
-	writeJSON(w, map[string]string{"status": "retrying"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "retrying"})
 }

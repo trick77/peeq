@@ -17,6 +17,7 @@ import (
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // videoDTO is the JSON shape returned by the videos API. It mirrors
@@ -209,7 +210,7 @@ func toVideoDTO(v *videos.Video) videoDTO {
 // fetched the file, with never-downloaded videos last.
 func (s *server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 	if s.videos == nil {
-		writeJSON(w, []videoDTO{})
+		httpx.WriteJSON(w, http.StatusOK, []videoDTO{})
 		return
 	}
 	channelID := r.URL.Query().Get("channel")
@@ -230,14 +231,14 @@ func (s *server) handleListVideos(w http.ResponseWriter, r *http.Request) {
 		ChannelName: channelName,
 	})
 	if err != nil {
-		serverError(w, r, err, "list videos failed")
+		httpx.ServerError(w, r, err, "list videos failed")
 		return
 	}
 	out := make([]videoCardDTO, 0, len(all))
 	for i := range all {
 		out = append(out, toVideoCardDTO(&all[i]))
 	}
-	writeJSON(w, out)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // videoCardDTO is one row of the video list: what a grid card draws, and no
@@ -290,17 +291,17 @@ func toVideoCardDTO(v *videos.Video) videoCardDTO {
 // fetching every row of the library.
 func (s *server) handleVideoCounts(w http.ResponseWriter, r *http.Request) {
 	if s.videos == nil {
-		writeJSON(w, emptyCounts())
+		httpx.WriteJSON(w, http.StatusOK, emptyCounts())
 		return
 	}
 	counts, err := s.videos.Counts(videos.CountOptions{
 		Query: r.URL.Query().Get("q"),
 	})
 	if err != nil {
-		serverError(w, r, err, "count videos failed")
+		httpx.ServerError(w, r, err, "count videos failed")
 		return
 	}
-	writeJSON(w, counts)
+	httpx.WriteJSON(w, http.StatusOK, counts)
 }
 
 // emptyCounts is the zero chip row: every filter present at 0 with no
@@ -340,12 +341,12 @@ func (s *server) handleGetVideo(w http.ResponseWriter, r *http.Request) {
 	if s.ledger != nil && v.SummaryStatus == videos.SummaryNoTranscript && !v.HasTranscript {
 		msg, err := s.ledger.CaptionLastError(v.ID)
 		if err != nil {
-			serverError(w, r, err, "get video failed")
+			httpx.ServerError(w, r, err, "get video failed")
 			return
 		}
 		dto.CaptionError = msg
 	}
-	writeJSON(w, dto)
+	httpx.WriteJSON(w, http.StatusOK, dto)
 }
 
 // embeddingsDTO is what the player's Search index card reads: what the vector
@@ -389,12 +390,12 @@ func (s *server) handleVideoEmbeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.rag == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "search is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "search is not configured")
 		return
 	}
 	kinds, err := s.rag.ChunkStats(r.Context(), v.ID)
 	if err != nil {
-		serverError(w, r, err, "video embeddings failed")
+		httpx.ServerError(w, r, err, "video embeddings failed")
 		return
 	}
 	out := embeddingsDTO{
@@ -415,7 +416,7 @@ func (s *server) handleVideoEmbeddings(w http.ResponseWriter, r *http.Request) {
 		}
 		return out.Kinds[i].Kind < out.Kinds[j].Kind
 	})
-	writeJSON(w, out)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // handleDeleteVideo is the manual DELETE endpoint. It always removes the media
@@ -439,7 +440,7 @@ func (s *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request) {
 	// goes through the same call.
 	purged, err := s.videos.Remove(*v)
 	if err != nil {
-		serverError(w, r, err, "delete video failed")
+		httpx.ServerError(w, r, err, "delete video failed")
 		return
 	}
 	if err := media.RemoveTombstonedVideoFiles(s.mediaDir, v.MediaPath); err != nil {
@@ -454,7 +455,7 @@ func (s *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request) {
 	if purged {
 		status = "purged"
 	}
-	writeJSON(w, map[string]string{"status": status})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": status})
 }
 
 // favoriteRequest is the optional body of POST .../favorite. When absent or
@@ -480,10 +481,10 @@ func (s *server) handleFavoriteVideo(w http.ResponseWriter, r *http.Request) {
 		newVal = *req.Favorite
 	}
 	if err := s.videos.SetFavorite(v.ID, newVal); err != nil {
-		serverError(w, r, err, "set favorite failed")
+		httpx.ServerError(w, r, err, "set favorite failed")
 		return
 	}
-	writeJSON(w, map[string]bool{"favorite": newVal})
+	httpx.WriteJSON(w, http.StatusOK, map[string]bool{"favorite": newVal})
 }
 
 // categoryRequest is the required body of POST .../category.
@@ -510,18 +511,18 @@ func (s *server) handleCategoryVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Category == nil {
-		writeJSONError(w, http.StatusBadRequest, "category (string) is required")
+		httpx.WriteError(w, http.StatusBadRequest, "category (string) is required")
 		return
 	}
 	if !videos.ValidCategory(*req.Category) {
-		writeJSONError(w, http.StatusBadRequest, "unknown category")
+		httpx.WriteError(w, http.StatusBadRequest, "unknown category")
 		return
 	}
 	if err := s.videos.SetCategory(v.ID, *req.Category); err != nil {
-		serverError(w, r, err, "set category failed")
+		httpx.ServerError(w, r, err, "set category failed")
 		return
 	}
-	writeJSON(w, map[string]string{"category": *req.Category})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"category": *req.Category})
 }
 
 // watchedRequest is the required body of POST .../watched.
@@ -559,12 +560,12 @@ func (s *server) handleWatchedVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Watched == nil {
-		writeJSONError(w, http.StatusBadRequest, "watched (bool) is required")
+		httpx.WriteError(w, http.StatusBadRequest, "watched (bool) is required")
 		return
 	}
 	version, err := s.videos.SetWatched(v.ID, *req.Watched)
 	if err != nil {
-		serverError(w, r, err, "set watched failed")
+		httpx.ServerError(w, r, err, "set watched failed")
 		return
 	}
 	if *req.Watched {
@@ -573,7 +574,7 @@ func (s *server) handleWatchedVideo(w http.ResponseWriter, r *http.Request) {
 		// at 0:00. Un-watching means "I want this back", so it keeps the pointer.
 		s.clearPlaybackIfPointing(r, v.ID)
 	}
-	writeJSON(w, watchedResponse{Watched: *req.Watched, StateVersion: version})
+	httpx.WriteJSON(w, http.StatusOK, watchedResponse{Watched: *req.Watched, StateVersion: version})
 }
 
 // resumeRequest is the required body of POST .../resume.
@@ -612,23 +613,23 @@ func (s *server) handleResumeVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Position == nil {
-		writeJSONError(w, http.StatusBadRequest, "position (number) is required")
+		httpx.WriteError(w, http.StatusBadRequest, "position (number) is required")
 		return
 	}
 	if *req.Position < 0 {
-		writeJSONError(w, http.StatusBadRequest, "position must not be negative")
+		httpx.WriteError(w, http.StatusBadRequest, "position must not be negative")
 		return
 	}
 	version, watched, err := s.videos.SetResume(v.ID, *req.Position, req.StateVersion)
 	if errors.Is(err, videos.ErrStaleVersion) {
-		writeJSONError(w, http.StatusConflict, "video state changed on another device")
+		httpx.WriteError(w, http.StatusConflict, "video state changed on another device")
 		return
 	}
 	if err != nil {
-		serverError(w, r, err, "set resume failed")
+		httpx.ServerError(w, r, err, "set resume failed")
 		return
 	}
-	writeJSON(w, resumeResponse{Position: *req.Position, StateVersion: version, Watched: watched})
+	httpx.WriteJSON(w, http.StatusOK, resumeResponse{Position: *req.Position, StateVersion: version, Watched: watched})
 }
 
 // handleStreamVideo serves the video's media file via http.ServeContent,
@@ -638,20 +639,20 @@ func (s *server) handleStreamVideo(w http.ResponseWriter, r *http.Request) {
 	// A player re-issues range requests throughout playback, so this reads
 	// the three columns it needs rather than the whole row.
 	if s.videos == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "videos are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "videos are not configured")
 		return
 	}
 	v, err := s.videos.MediaRef(r.PathValue("id"))
 	if err != nil {
-		serverError(w, r, err, "load video failed")
+		httpx.ServerError(w, r, err, "load video failed")
 		return
 	}
 	if v == nil {
-		writeJSONError(w, http.StatusNotFound, "video not found")
+		httpx.WriteError(w, http.StatusNotFound, "video not found")
 		return
 	}
 	if v.MediaPath == "" {
-		writeJSONError(w, http.StatusNotFound, "no media for this video")
+		httpx.WriteError(w, http.StatusNotFound, "no media for this video")
 		return
 	}
 	// Record this access before serving so the retention sweeper's
@@ -664,19 +665,19 @@ func (s *server) handleStreamVideo(w http.ResponseWriter, r *http.Request) {
 	}
 	safe, err := media.SafeMediaPath(s.mediaDir, v.MediaPath)
 	if err != nil {
-		writeJSONError(w, http.StatusNotFound, "media not available")
+		httpx.WriteError(w, http.StatusNotFound, "media not available")
 		return
 	}
 	f, err := os.Open(safe) //nolint:gosec // path comes from media.SafeMediaPath, which rejects traversal and symlink escape and returns the resolved path (see safepath_test.go)
 	if err != nil {
-		writeJSONError(w, http.StatusNotFound, "media not available")
+		httpx.WriteError(w, http.StatusNotFound, "media not available")
 		return
 	}
 	defer func() { _ = f.Close() }()
 
 	stat, err := f.Stat()
 	if err != nil {
-		serverError(w, r, err, "media not available")
+		httpx.ServerError(w, r, err, "media not available")
 		return
 	}
 	// ?download=1 turns the same stream into a save-to-disk. It has to be the
@@ -738,7 +739,7 @@ func (s *server) handleVideoThumbnail(w http.ResponseWriter, r *http.Request) {
 	// "no thumbnail" alike with a 404, and this route is hit once per card
 	// in the grid.
 	if s.videos == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "videos are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "videos are not configured")
 		return
 	}
 	serveThumbnail(w, r, s.videos, r.PathValue("id"), imageOwnedHour)
@@ -775,16 +776,16 @@ func serveStoredImage(w http.ResponseWriter, r *http.Request, mime string, data 
 // route is behind a session and the share route is behind a link.
 func serveThumbnail(w http.ResponseWriter, r *http.Request, vs *videos.Store, videoID string, policy imagePolicy) {
 	if vs == nil {
-		writeJSONError(w, http.StatusNotFound, "thumbnail not available")
+		httpx.WriteError(w, http.StatusNotFound, "thumbnail not available")
 		return
 	}
 	t, err := vs.GetThumbnail(videoID)
 	if err != nil {
-		serverError(w, r, err, "thumbnail not available")
+		httpx.ServerError(w, r, err, "thumbnail not available")
 		return
 	}
 	if t == nil {
-		writeJSONError(w, http.StatusNotFound, "no thumbnail for this video")
+		httpx.WriteError(w, http.StatusNotFound, "no thumbnail for this video")
 		return
 	}
 	policy.apply(w, r)
@@ -803,11 +804,11 @@ func (s *server) handleRedownloadVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if v.Status != videos.StatusError && v.Status != videos.StatusTombstoned {
-		writeJSONError(w, http.StatusConflict, "only failed or removed videos can be re-downloaded")
+		httpx.WriteError(w, http.StatusConflict, "only failed or removed videos can be re-downloaded")
 		return
 	}
 	if s.jobs == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "downloads are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "downloads are not configured")
 		return
 	}
 	// A video swept for age is watched with an aged watched_at, so simply
@@ -821,14 +822,14 @@ func (s *server) handleRedownloadVideo(w http.ResponseWriter, r *http.Request) {
 	// watched stayed watched in the only sense that matters — you watched it. The
 	// lifecycle state and the watch state move independently.
 	if err := s.videos.RestartRetentionClock(v.ID); err != nil {
-		serverError(w, r, err, "restart retention clock failed")
+		httpx.ServerError(w, r, err, "restart retention clock failed")
 		return
 	}
 	// Status flip and job row in one transaction (videos.Store.EnqueueDownload).
 	// The clock restart above stays outside it: it is idempotent and harmless
 	// on its own if the enqueue then fails.
 	if _, err := s.videos.EnqueueDownload(v.ID, downloadPriority); err != nil {
-		serverError(w, r, err, "enqueue failed")
+		httpx.ServerError(w, r, err, "enqueue failed")
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -839,17 +840,17 @@ func (s *server) handleRedownloadVideo(w http.ResponseWriter, r *http.Request) {
 // id is unknown) and returning ok=false if the caller should stop.
 func (s *server) lookupVideo(w http.ResponseWriter, r *http.Request) (*videos.Video, bool) {
 	if s.videos == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "videos are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "videos are not configured")
 		return nil, false
 	}
 	id := r.PathValue("id")
 	v, err := s.videos.Get(id)
 	if err != nil {
-		serverError(w, r, err, "get video failed")
+		httpx.ServerError(w, r, err, "get video failed")
 		return nil, false
 	}
 	if v == nil {
-		writeJSONError(w, http.StatusNotFound, "video not found")
+		httpx.WriteError(w, http.StatusNotFound, "video not found")
 		return nil, false
 	}
 	return v, true

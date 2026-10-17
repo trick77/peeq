@@ -3,6 +3,7 @@
 package logx
 
 import (
+	"context"
 	"log/slog"
 	"regexp"
 )
@@ -85,5 +86,38 @@ func RedactAttr(_ []string, a slog.Attr) slog.Attr {
 	if err, ok := a.Value.Any().(error); ok {
 		return slog.Any(a.Key, RedactErr(err))
 	}
+	// kit logs an error as its text (logging.Err): httpx.ServerError's line.
+	if a.Value.Kind() == slog.KindString {
+		return slog.String(a.Key, RedactText(a.Value.String()))
+	}
 	return a
+}
+
+// Handler runs RedactAttr on every attr inner gets, for a handler built
+// without ReplaceAttr (kit's logging.Setup).
+func Handler(inner slog.Handler) slog.Handler { return redactHandler{inner} }
+
+type redactHandler struct{ inner slog.Handler }
+
+func (h redactHandler) Enabled(ctx context.Context, l slog.Level) bool { return h.inner.Enabled(ctx, l) }
+
+func (h redactHandler) Handle(ctx context.Context, r slog.Record) error {
+	out := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
+	r.Attrs(func(a slog.Attr) bool {
+		out.AddAttrs(RedactAttr(nil, a))
+		return true
+	})
+	return h.inner.Handle(ctx, out)
+}
+
+func (h redactHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	red := make([]slog.Attr, len(attrs))
+	for i, a := range attrs {
+		red[i] = RedactAttr(nil, a)
+	}
+	return redactHandler{h.inner.WithAttrs(red)}
+}
+
+func (h redactHandler) WithGroup(name string) slog.Handler {
+	return redactHandler{h.inner.WithGroup(name)}
 }

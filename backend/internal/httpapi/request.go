@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // Body limits. Every JSON body peeq accepts is small — a URL, a flag, a
@@ -43,7 +45,7 @@ func readJSON(w http.ResponseWriter, r *http.Request, dst any, limit int64) (too
 	err = json.NewDecoder(r.Body).Decode(dst)
 	var mbe *http.MaxBytesError
 	if errors.As(err, &mbe) {
-		writeJSONError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		httpx.WriteError(w, http.StatusRequestEntityTooLarge, "request body too large")
 		return true, err
 	}
 	return false, err
@@ -60,7 +62,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any, limit int64, ba
 		return false
 	}
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, badRequest)
+		httpx.WriteError(w, http.StatusBadRequest, badRequest)
 		return false
 	}
 	return true
@@ -84,7 +86,7 @@ func decodeJSONOptional(w http.ResponseWriter, r *http.Request, dst any, limit i
 		return false
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
-		writeJSONError(w, http.StatusBadRequest, badRequest)
+		httpx.WriteError(w, http.StatusBadRequest, badRequest)
 		return false
 	}
 	return true

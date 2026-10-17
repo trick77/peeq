@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/trick77/peeq/internal/channels"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // handleChannelAvatar and handleChannelBanner serve a channel's stored
@@ -20,12 +21,12 @@ func (s *server) handleChannelBanner(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) serveChannelImage(w http.ResponseWriter, r *http.Request, kind string) {
 	if s.channels == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	img, err := s.channels.GetImage(r.PathValue("id"), kind)
 	if err != nil {
-		serverError(w, r, err, "load channel image failed")
+		httpx.ServerError(w, r, err, "load channel image failed")
 		return
 	}
 	if img == nil {

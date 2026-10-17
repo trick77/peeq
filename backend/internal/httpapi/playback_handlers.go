@@ -6,6 +6,7 @@ import (
 
 	"github.com/trick77/peeq/internal/playback"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // PlaybackStore is the slice of playback.Store these handlers use — declared
@@ -43,15 +44,15 @@ type playbackPutRequest struct {
 // falling back silently.
 func (s *server) handleGetPlaybackState(w http.ResponseWriter, r *http.Request) {
 	if s.playback == nil {
-		writeJSON(w, playback.State{})
+		httpx.WriteJSON(w, http.StatusOK, playback.State{})
 		return
 	}
 	got, err := s.playback.Get(r.Context())
 	if err != nil {
-		serverError(w, r, err, "failed to load playback state")
+		httpx.ServerError(w, r, err, "failed to load playback state")
 		return
 	}
-	writeJSON(w, got)
+	httpx.WriteJSON(w, http.StatusOK, got)
 }
 
 // handlePutPlaybackState points "now playing" at a video, or clears it.
@@ -68,43 +69,43 @@ func (s *server) handlePutPlaybackState(w http.ResponseWriter, r *http.Request) 
 	if s.playback == nil {
 		// Same reasoning as the GET: a missing store makes the pointer a no-op,
 		// not an error the Player has to handle mid-playback.
-		writeJSON(w, playback.State{})
+		httpx.WriteJSON(w, http.StatusOK, playback.State{})
 		return
 	}
 	if req.VideoID == "" {
 		if err := s.playback.Clear(r.Context()); err != nil {
-			serverError(w, r, err, "failed to clear playback state")
+			httpx.ServerError(w, r, err, "failed to clear playback state")
 			return
 		}
-		writeJSON(w, playback.State{})
+		httpx.WriteJSON(w, http.StatusOK, playback.State{})
 		return
 	}
 	// Validated by hand rather than through lookupVideo: the id arrives in the
 	// body, not the path. Refusing an unplayable target here keeps a dead
 	// pointer out of the table in the first place, on top of Get's own filter.
 	if s.videos == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "videos are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "videos are not configured")
 		return
 	}
 	v, err := s.videos.Get(req.VideoID)
 	if err != nil {
-		serverError(w, r, err, "failed to look up video")
+		httpx.ServerError(w, r, err, "failed to look up video")
 		return
 	}
 	if v == nil || v.Status != videos.StatusDownloaded {
-		writeJSONError(w, http.StatusNotFound, "video not found")
+		httpx.WriteError(w, http.StatusNotFound, "video not found")
 		return
 	}
 	if err := s.playback.Set(r.Context(), v.ID); err != nil {
-		serverError(w, r, err, "failed to set playback state")
+		httpx.ServerError(w, r, err, "failed to set playback state")
 		return
 	}
 	got, err := s.playback.Get(r.Context())
 	if err != nil {
-		serverError(w, r, err, "failed to load playback state")
+		httpx.ServerError(w, r, err, "failed to load playback state")
 		return
 	}
-	writeJSON(w, got)
+	httpx.WriteJSON(w, http.StatusOK, got)
 }
 
 // clearPlaybackIfPointing drops the now-playing pointer when it is aimed at

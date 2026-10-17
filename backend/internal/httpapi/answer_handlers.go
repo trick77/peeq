@@ -12,6 +12,7 @@ import (
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/sse"
 )
 
@@ -156,7 +157,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// legitimate 200 whose content says so, and is answered through the stream
 	// so the browser has a single code path.
 	if s.rag == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "search is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "search is not configured")
 		return
 	}
 
@@ -165,7 +166,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		// Only ErrNoFlush comes before the 200; after a failed first flush
 		// the client is gone.
 		if errors.Is(err, sse.ErrNoFlush) {
-			serverError(w, r, err, "streaming unsupported")
+			httpx.ServerError(w, r, err, "streaming unsupported")
 		}
 		return
 	}

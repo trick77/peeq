@@ -20,6 +20,7 @@ import (
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/sse"
 )
 
@@ -541,7 +542,7 @@ func New(d Deps) http.Handler {
 func (s *server) requireAuth(next http.Handler) http.Handler {
 	if s.authMW == nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		})
 	}
 	return s.authMW.RequireAuth(next)
@@ -552,7 +553,7 @@ func (s *server) requireAuth(next http.Handler) http.Handler {
 func (s *server) requireToken(next http.Handler) http.Handler {
 	if s.tokenMW == nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		})
 	}
 	return s.tokenMW.RequireToken(next)
