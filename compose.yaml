@@ -44,7 +44,8 @@ services:
       # only a loopback caller with no forwarding header (kit's httpx.Health).
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
       interval: 60s
-      timeout: 5s
+      # Above kit's 5s CheckTimeout, so a slow check answers its 503 first.
+      timeout: 8s
       start_period: 30s
       start_interval: 5s
       retries: 3

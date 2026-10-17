@@ -150,8 +150,9 @@ func TestHandler_redactsEveryErrAttr(t *testing.T) {
 	logger.With("err", errors.New("Get https://h/a?token=ONE")).Info("bound")
 	logger.Info("record", "err", "Get https://h/b?token=TWO")
 	logger.WithGroup("g").Info("grouped", "err", "Get https://h/c?token=THREE")
+	logger.Info("nested", slog.Group("fetch", "err", errors.New("Get https://h/d?token=FOUR")))
 	out := buf.String()
-	for _, secret := range []string{"ONE", "TWO", "THREE"} {
+	for _, secret := range []string{"ONE", "TWO", "THREE", "FOUR"} {
 		if strings.Contains(out, secret) {
 			t.Errorf("%s reached the log: %s", secret, out)
 		}

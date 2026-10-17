@@ -56,7 +56,7 @@ func TestFaviconICOIsNotTheSPAShell(t *testing.T) {
 // under /api, is a real 404.
 func TestHandlerServesTheShellOnClientRoutesOnly(t *testing.T) {
 	for path, want := range map[string]int{
-		"/channel/UCx": 200, "/s/tok": 200, "/up-next": 200, "/video": 200,
+		"/channel/UCx": 200, "/s/tok": 200, "/up-next": 200, "/video": 200, "/index.html": 200,
 		"/nonsense": 404, "/api/nope": 404, "/assets/gone.js": 404,
 	} {
 		rec := httptest.NewRecorder()

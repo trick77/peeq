@@ -413,7 +413,7 @@ func New(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	httpx.Health(mux, nil, d.Ready...)
 	mux.HandleFunc("GET /api/auth/login", s.handleAuthLogin)
-	tokenRoutes := limiter(tokenRouteLimit)
+	tokenRoutes, streamRoutes := limiter(tokenRouteLimit), limiter(streamRouteLimit)
 	mux.Handle("GET /api/auth/callback", limiter(callbackLimit)(http.HandlerFunc(s.handleAuthCallback)))
 	mux.Handle("GET /api/auth/logout", s.requireAuth(http.HandlerFunc(s.handleAuthLogout)))
 	mux.Handle("GET /api/auth/me", s.requireAuth(http.HandlerFunc(s.handleAuthMe)))
@@ -439,7 +439,7 @@ func New(d Deps) http.Handler {
 	// expired, or revoked token is an indistinguishable 404. Stream is
 	// watch-only — no ?download.
 	mux.Handle("GET /api/s/{token}", tokenRoutes(http.HandlerFunc(s.handleShareVideo)))
-	mux.Handle("GET /api/s/{token}/stream", tokenRoutes(http.HandlerFunc(s.handleShareStream)))
+	mux.Handle("GET /api/s/{token}/stream", streamRoutes(http.HandlerFunc(s.handleShareStream)))
 	mux.Handle("GET /api/s/{token}/thumbnail", tokenRoutes(http.HandlerFunc(s.handleShareThumbnail)))
 	mux.Handle("GET /api/s/{token}/subtitles", tokenRoutes(http.HandlerFunc(s.handleShareSubtitles)))
 	// The og:image behind a shared link's unfurl — same token gate, no video id.
@@ -451,7 +451,7 @@ func New(d Deps) http.Handler {
 	// token must never reveal the other. Additionally gated on the
 	// direct_stream_enabled setting, re-read per request so switching it off
 	// kills every outstanding grant immediately.
-	mux.Handle("GET /api/p/{token}/stream", tokenRoutes(http.HandlerFunc(s.handleGrantStream)))
+	mux.Handle("GET /api/p/{token}/stream", streamRoutes(http.HandlerFunc(s.handleGrantStream)))
 	// The "now playing" pointer: which video the rail reopens when the URL
 	// carries no id. Session-gated like everything else the SPA reads.
 	mux.Handle("GET /api/playback", s.requireAuth(http.HandlerFunc(s.handleGetPlaybackState)))

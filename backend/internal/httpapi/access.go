@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"net"
 	"net/http"
 	"strings"
 
@@ -9,18 +8,12 @@ import (
 	"github.com/trick77/ship/kit/ratelimit"
 )
 
-// clientIP is the caller's address for the access line and the rate limits.
-// peeq runs behind one Traefik on a private network: the X-Forwarded-For hop
-// it appends is trusted only when the TCP peer is that private or loopback
-// proxy. A peer on a public address talks to peeq directly, and whatever it
-// put in the header is its own claim.
-func clientIP(r *http.Request) string {
-	peer := httpx.ClientIP(r, 0)
-	if ip := net.ParseIP(peer); ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
-		return httpx.ClientIP(r, 1)
-	}
-	return peer
-}
+// clientIP is the caller's address for the access line and the rate limits:
+// the X-Forwarded-For entry the one Traefik in front of peeq appended (compose
+// publishes no port, so nothing else reaches it), the TCP peer when there is
+// no header (make dev). A caller can prepend to the header but never replace
+// the hop Traefik adds.
+func clientIP(r *http.Request) string { return httpx.ClientIP(r, 1) }
 
 // tokenPrefixes are the routes whose next path segment is a bearer secret: a
 // share link, its API, and a playback grant. Holding the path is holding the
@@ -46,11 +39,15 @@ func maskPath(r *http.Request) string {
 
 // Rate limits on the routes a caller reaches without a session. A share or
 // grant token is 128 random bits, so the limit is no defence against guessing
-// it; it bounds what one caller can make peeq do (a share stream is a disk
-// read, a card a JPEG encode). Sized for a player seeking a video, which sends
-// a burst of range requests: 300 a minute, 100 at once.
+// it; it bounds what one caller can make peeq do (a card is a JPEG encode, a
+// page a DB read): 300 a minute, 100 at once.
 var (
 	tokenRouteLimit = ratelimit.Options{Rate: 5, Burst: 100}
+	// The two media streams get a bucket of their own: a player seeking, or an
+	// Apple TV on a grant, sends a range request per seek, and a 429 there is
+	// fatal to the player. Shared with the page, a household behind one IP
+	// could stop its own playback by opening the share page twice.
+	streamRouteLimit = ratelimit.Options{Rate: 20, Burst: 300}
 	// The OIDC callback is one request per login.
 	callbackLimit = ratelimit.Options{Rate: 10.0 / 60, Burst: 10}
 )

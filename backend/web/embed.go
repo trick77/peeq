@@ -23,8 +23,13 @@ var routes = map[string]bool{
 	"activity": true, "settings": true,
 }
 
-// IsRoute reports whether path is one of the SPA's client routes.
+// IsRoute reports whether path is one of the SPA's client routes. The shell's
+// own name is one too: a bookmark or an installed app may point at it, and kit
+// leaves it to the route check.
 func IsRoute(path string) bool {
+	if path == "/index.html" {
+		return true
+	}
 	first, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
 	return routes[first]
 }

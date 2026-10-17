@@ -106,7 +106,7 @@ func (h redactHandler) Enabled(ctx context.Context, l slog.Level) bool {
 func (h redactHandler) Handle(ctx context.Context, r slog.Record) error {
 	out := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
 	r.Attrs(func(a slog.Attr) bool {
-		out.AddAttrs(RedactAttr(nil, a))
+		out.AddAttrs(redactDeep(a))
 		return true
 	})
 	return h.inner.Handle(ctx, out)
@@ -115,9 +115,24 @@ func (h redactHandler) Handle(ctx context.Context, r slog.Record) error {
 func (h redactHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	red := make([]slog.Attr, len(attrs))
 	for i, a := range attrs {
-		red[i] = RedactAttr(nil, a)
+		red[i] = redactDeep(a)
 	}
 	return redactHandler{h.inner.WithAttrs(red)}
+}
+
+// redactDeep is RedactAttr into groups too, as ReplaceAttr is called for a
+// group's members. Attrs bound to a context (kit's logging.With) are added
+// inside kit's handler, past this one: bind ids there, never an error.
+func redactDeep(a slog.Attr) slog.Attr {
+	if a.Value.Kind() != slog.KindGroup {
+		return RedactAttr(nil, a)
+	}
+	members := a.Value.Group()
+	red := make([]slog.Attr, len(members))
+	for i, m := range members {
+		red[i] = redactDeep(m)
+	}
+	return slog.Attr{Key: a.Key, Value: slog.GroupValue(red...)}
 }
 
 func (h redactHandler) WithGroup(name string) slog.Handler {

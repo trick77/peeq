@@ -185,12 +185,9 @@ func load(lookup func(string) string) (Config, error) {
 		ChatCallTimeout:       nonNegative(r, "BACKEND_CHAT_CALL_TIMEOUT", 15*time.Minute),
 	}
 	// 0 is the summarizer's default, so only an unset variable may yield it.
-	if strings.TrimSpace(lookup("BACKEND_SUMMARIZE_SUMMARY_TOKENS")) != "" {
-		if n := r.Int("BACKEND_SUMMARIZE_SUMMARY_TOKENS", 1); n <= 0 {
-			r.Fail("BACKEND_SUMMARIZE_SUMMARY_TOKENS must be a positive integer")
-		} else {
-			cfg.SummaryChunkTokens = n
-		}
+	cfg.SummaryChunkTokens = r.Int("BACKEND_SUMMARIZE_SUMMARY_TOKENS", 0)
+	if cfg.SummaryChunkTokens < 0 || (cfg.SummaryChunkTokens == 0 && strings.TrimSpace(lookup("BACKEND_SUMMARIZE_SUMMARY_TOKENS")) != "") {
+		r.Fail("BACKEND_SUMMARIZE_SUMMARY_TOKENS must be a positive integer")
 	}
 
 	if strings.IndexFunc(cfg.MCPToken, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {

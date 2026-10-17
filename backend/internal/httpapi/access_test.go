@@ -31,11 +31,9 @@ func TestClientIP(t *testing.T) {
 	for _, tc := range []struct {
 		name, peer, xff, want string
 	}{
-		{"behind the private proxy: the hop it appended", "172.18.0.2:5000", "198.51.100.7", "198.51.100.7"},
-		{"behind the proxy, spoofed entry ignored", "172.18.0.2:5000", "6.6.6.6, 198.51.100.7", "198.51.100.7"},
-		{"loopback proxy (make dev)", "127.0.0.1:5000", "198.51.100.7", "198.51.100.7"},
-		{"public peer: its header is its own claim", "203.0.113.9:5000", "6.6.6.6", "203.0.113.9"},
-		{"private peer, no header", "172.18.0.2:5000", "", "172.18.0.2"},
+		{"behind Traefik: the hop it appended", "172.18.0.2:5000", "198.51.100.7", "198.51.100.7"},
+		{"a caller's prepended entry is ignored", "172.18.0.2:5000", "6.6.6.6, 198.51.100.7", "198.51.100.7"},
+		{"no proxy, no header (make dev)", "127.0.0.1:5000", "", "127.0.0.1"},
 	} {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		r.RemoteAddr = tc.peer
@@ -76,5 +74,9 @@ func TestAccessLine_masksTheTokenAndLimitsTheCaller(t *testing.T) {
 	}
 	if !limited {
 		t.Fatal("a share route was never rate limited")
+	}
+	// The page's bucket is spent; the stream's is its own, so playback goes on.
+	if rec := getPublic(t, h, "/api/s/sekrit-token/stream"); rec.Code == http.StatusTooManyRequests {
+		t.Fatal("a spent page bucket limited the stream")
 	}
 }
