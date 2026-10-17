@@ -69,7 +69,7 @@ func toMCPCounts(cs []videos.CategoryCount) []mcpserver.CategoryCount {
 	return out
 }
 
-// ResolveChannel resolves against what list_channels shows (subscribed and
+// ResolveChannel resolves against what list_youtube_channels shows (subscribed and
 // keep_reads channels, videos or not) plus every channel that has videos
 // here. A channel id is taken as is; anything else runs the Ask resolver's
 // name/handle/typo ladder.
@@ -119,7 +119,7 @@ func (l mcpLibrary) ResolveChannel(ctx context.Context, name string) (mcpserver.
 		res = resolveChannelsIn(dir, []string{want})
 	}
 	scope := mcpserver.ChannelScope{IDs: res.IDs, Names: res.Names}
-	// Shown under the name list_channels uses, once per channel, however
+	// Shown under the name list_youtube_channels uses, once per channel, however
 	// many of its names matched.
 	shown := map[string]bool{}
 	for _, id := range res.IDs {

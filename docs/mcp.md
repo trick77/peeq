@@ -80,19 +80,23 @@ peeq still enforces the token.
 
 ## Tools
 
-- `search` — `query` (required), `channel` (name, @handle or id; case-insensitive,
-  typo-tolerant, resolved against the channels list_channels shows plus any with videos; an unknown one is an error listing the closest names, a listed one with no videos yet says so), `category`
+Each tool carries a display title, sent both as `title` and `annotations.title`
+(quoted below), for clients to show instead of the name. All are
+`readOnlyHint: true`, `openWorldHint: false`.
+
+- `search` ("Search your video library") — `query` (required), `channel` (name, @handle or id; case-insensitive,
+  typo-tolerant, resolved against the channels list_youtube_channels shows plus any with videos; an unknown one is an error listing the closest names, a listed one with no videos yet says so), `category`
   (peeq's fixed category enum), `youtube_category` (YouTube's own label, e.g.
   "Science & Technology", "Education"; exact, case-insensitive), `after`/`before`
   (`YYYY-MM-DD`, inclusive), `mode` (`hybrid` default: keyword + semantic fused like
   the Search page, no query-understanding model call; `keyword`: literal full-text
   match), `k` (videos, default 6, max 10). If the query cannot be embedded, hybrid
   falls back to keyword-only and says so.
-- `get_video` — `id`: metadata (peeq and YouTube categories, tags), short summary,
+- `get_video` ("Get a video's details and summaries") — `id`: metadata (peeq and YouTube categories, tags), short summary,
   key points, chapters, in-depth summary, links.
-- `get_transcript` — `id`, optional `start_seconds`, `end_seconds` (exclusive):
+- `get_transcript` ("Read a video's transcript") — `id`, optional `start_seconds`, `end_seconds` (exclusive):
   `[mm:ss] text` lines. A cut transcript ends with the `start_seconds` to request next.
-- `list_channels` — subscribed channels plus channels whose caption-only reads are
+- `list_youtube_channels` ("List YouTube channels in your library") — subscribed channels plus channels whose caption-only reads are
   kept: id, handle, description, video count, top peeq and YouTube categories.
 
 ### Auto-search hint

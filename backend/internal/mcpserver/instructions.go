@@ -29,7 +29,7 @@ const instructionsIntro = "peeq is the user's own YouTube library: transcripts, 
 
 const (
 	autoSearchHeader = "Search peeq automatically (without being asked) when the user's question touches these channels' topics:"
-	explicitLine     = "The user can also ask explicitly (\"search peeq for …\", \"in channel X …\"); list_channels shows every channel."
+	explicitLine     = "The user can also ask explicitly (\"search peeq for …\", \"in channel X …\"); list_youtube_channels shows every channel."
 )
 
 // instructions is the server's usage hint, built per request so a newly
