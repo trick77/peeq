@@ -123,14 +123,14 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) toolResult {
 		return toolResult{Text: b.String(), Sources: sources}
 	}
 	// Items are added whole while they fit, so the size cap never cuts one in
-	// half and sources[i] always belongs to a complete item i+1. Every field
+	// half and sources[i] always belongs to the complete i-th item. Every field
 	// of an item is trimmed, so the first one always fits.
 	limit := maxToolTextBytes - omittedNoteRoom
 	for i, vh := range res.Videos {
 		v := vh.Video
 		best := bestMoment(vh.Matches)
 		var item strings.Builder
-		fmt.Fprintf(&item, "%d. %s\n", i+1, resultHeader(v))
+		fmt.Fprintf(&item, "- %s\n", resultHeader(v))
 		if s := trimRunes(v.Summary, summaryRunes); s != "" {
 			item.WriteString("   summary: " + s + "\n")
 		}

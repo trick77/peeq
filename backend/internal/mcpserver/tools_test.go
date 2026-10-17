@@ -65,13 +65,13 @@ func TestSearch_textAndSourcesFollowTheContract(t *testing.T) {
 	text := toolText(t, r)
 
 	for _, want := range []string{
-		"1. Why bikes stay upright — Veritasium, 2026-05-02, category science · youtube: Science & Technology, Education\n",
+		"- Why bikes stay upright — Veritasium, 2026-05-02, category science · youtube: Science & Technology, Education\n",
 		"   summary: Gyroscopes are not the reason.",
 		"   [12:34] transcript: the **trail** steers it\n",
 		"   [03:10] chapter: Self-stability\n",
 		"   summary match: A bike steers into its fall.\n",
 		"   peeq: https://peeq.example.com/video/abc123?t=754  youtube: https://youtu.be/abc123?t=754\n",
-		"2. Summary only — Vsauce, category education\n",
+		"- Summary only — Vsauce, category education\n",
 		"   peeq: https://peeq.example.com/video/def456  youtube: https://youtu.be/def456",
 	} {
 		if !strings.Contains(text, want) {
@@ -260,13 +260,14 @@ func TestSearch_overflowDropsWholeItemsAndTheirSources(t *testing.T) {
 	if !strings.Contains(text, fmt.Sprintf("(%d more results omitted; narrow the query)", 10-len(src))) {
 		t.Errorf("no omitted note for %d dropped results:\n%s", 10-len(src), text[len(text)-200:])
 	}
-	for i, s := range src {
-		if !strings.Contains(text, fmt.Sprintf("%d. %s", i+1, s.Title)) || !strings.Contains(text, "peeq: "+s.URL+" ") {
-			t.Errorf("source %d does not match a complete item %d", i, i+1)
-		}
+	headers := itemHeaders(text)
+	if len(headers) != len(src) {
+		t.Fatalf("%d items in the text, %d sources", len(headers), len(src))
 	}
-	if strings.Contains(text, fmt.Sprintf("\n%d. ", len(src)+1)) {
-		t.Errorf("item %d is in the text without a source", len(src)+1)
+	for i, s := range src {
+		if !strings.HasPrefix(headers[i], "- "+s.Title) || !strings.Contains(text, "peeq: "+s.URL+" ") {
+			t.Errorf("source %d does not match complete item %d", i, i)
+		}
 	}
 }
 
@@ -504,6 +505,36 @@ func TestSources_carryTheYouTubeThumbnail(t *testing.T) {
 	vsrc := sourcesOf(t, callTool(t, vlib, "get_video", map[string]any{"id": "dQw4w9WgXcQ"}))
 	if len(vsrc) != 1 || vsrc[0].Image != "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg" {
 		t.Errorf("get_video sources = %+v", vsrc)
+	}
+}
+
+// itemHeaders returns the search text's result headers, in order. Items are
+// not numbered: the citing client numbers them, by sources order.
+func itemHeaders(text string) []string {
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "- ") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func TestSearch_itemsAreUnnumberedAndInSourcesOrder(t *testing.T) {
+	r := callTool(t, searchFixture(), "search", map[string]any{"query": "x"})
+	text := toolText(t, r)
+	headers := itemHeaders(text)
+	src := sourcesOf(t, r)
+	if len(headers) != 2 || len(src) != 2 {
+		t.Fatalf("headers %v sources %d", headers, len(src))
+	}
+	for i := range src {
+		if !strings.HasPrefix(headers[i], "- "+src[i].Title+" — ") {
+			t.Errorf("item %d %q vs source %q", i, headers[i], src[i].Title)
+		}
+	}
+	if strings.Contains(text, "1. ") || strings.Contains(text, "2. ") {
+		t.Errorf("text still numbers items:\n%s", text)
 	}
 }
 

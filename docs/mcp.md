@@ -113,14 +113,15 @@ The user can always ask explicitly ("search peeq for …", "in channel X …").
 
 ```json
 {"resultType": "complete",
- "content": [{"type": "text", "text": "1. <title> — <channel>, 2026-05-02, category science · youtube: Science & Technology\n   summary: …\n   [12:34] transcript: …the **matched** words…\n   [03:10] chapter: …\n   summary match: …\n   peeq: https://peeq…/video/ID?t=754  youtube: https://youtu.be/ID?t=754\n2. …"}],
+ "content": [{"type": "text", "text": "- <title> — <channel>, 2026-05-02, category science · youtube: Science & Technology\n   summary: …\n   [12:34] transcript: …the **matched** words…\n   [03:10] chapter: …\n   summary match: …\n   peeq: https://peeq…/video/ID?t=754  youtube: https://youtu.be/ID?t=754\n- …"}],
  "structuredContent": {"sources": [{"url": "https://peeq…/video/ID?t=754", "title": "<title>",
    "label": "peeq · <channel>", "snippet": "<best match, ≤240 chars>",
    "image": "https://i.ytimg.com/vi/ID/mqdefault.jpg"}]},
  "_meta": {"io.modelcontextprotocol/serverInfo": {"name": "peeq", "version": "…"}}}
 ```
 
-- `sources[i]` ↔ text item `i+1`; one source per video, linking the best match's
+- Items are unnumbered (`- <title> — …`) and in `sources` order: `sources[i]` ↔ the
+  i-th item. The citing client numbers them (loom prints its own `Source [n]` list). One source per video, linking the best match's
   timestamp (no `?t=` when only the summary matched). Other moments are in the text.
 - `image` is YouTube's public thumbnail (peeq's own thumbnail route needs a session),
   present only when the id has YouTube's 11-character shape.

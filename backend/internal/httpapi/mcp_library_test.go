@@ -256,7 +256,16 @@ func TestMCP_endToEnd(t *testing.T) {
 	if len(sources) < 2 {
 		t.Fatalf("sources = %v", sc)
 	}
-	// sources[i] is text item i+1: same video, same link.
+	// sources[i] is the i-th (unnumbered) text item: same video, same link.
+	var headers []string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "- ") {
+			headers = append(headers, line)
+		}
+	}
+	if len(headers) != len(sources) {
+		t.Fatalf("%d items, %d sources", len(headers), len(sources))
+	}
 	for i, s := range sources {
 		src, _ := s.(map[string]any)
 		url, _ := src["url"].(string)
@@ -264,8 +273,8 @@ func TestMCP_endToEnd(t *testing.T) {
 		if src["label"] != "peeq · Bike Physics" || src["image"] != "https://i.ytimg.com/vi/"+id+"/mqdefault.jpg" {
 			t.Errorf("source[%d] = %v", i, src)
 		}
-		if !strings.Contains(text, fmt.Sprintf("%d. %s —", i+1, src["title"])) || !strings.Contains(text, "peeq: "+url+" ") {
-			t.Errorf("source[%d] %v does not match text item %d", i, src, i+1)
+		if !strings.HasPrefix(headers[i], fmt.Sprintf("- %s —", src["title"])) || !strings.Contains(text, "peeq: "+url+" ") {
+			t.Errorf("source[%d] %v does not match text item %d", i, src, i)
 		}
 	}
 	if meta, _ := r.Result["_meta"].(map[string]any); meta == nil {
