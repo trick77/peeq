@@ -1,9 +1,7 @@
 name: Cleanup images
 
+# By hand only (Actions minutes): keep the 10 newest tagged versions of each image, delete the rest.
 on:
-  schedule:
-    # Weekly, Sundays at 04:00 UTC
-    - cron: "0 4 * * 0"
   workflow_dispatch:
     inputs:
       dry-run:
@@ -11,47 +9,17 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: read
-  packages: write
-
+# Two runs must not delete the same versions at once: the second waits.
 concurrency:
   group: cleanup-images
   cancel-in-progress: false
 
 jobs:
   cleanup:
-    runs-on: ubuntu-latest
-    steps:
-      # container-retention-policy panics rather than no-op'ing when the package
-      # does not exist, so check first. peeq has published images for a while and
-      # this is currently always true — it is here so this workflow stays
-      # copy-pasteable to a repo that has not cut its first release yet.
-      - id: package-check
-        name: Check whether the peeq package exists
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if gh api "users/${{ github.repository_owner }}/packages/container/peeq" --silent 2>/dev/null; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "No peeq container package yet — nothing to clean." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      # Keeps the 10 most recent tagged versions per image and removes the rest,
-      # including orphaned untagged versions. v3.1.0+ automatically protects
-      # multi-arch / attestation child manifests of the kept images, so the
-      # provenance manifests produced by the release build are never broken.
-      - if: steps.package-check.outputs.exists == 'true'
-        uses: snok/container-retention-policy@v3.1.0
-        with:
-          account: user
-          token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: "peeq"
-          tag-selection: both
-          keep-n-most-recent: 10
-          # Protect anything pushed in the last hour so a fresh release is never
-          # caught by a concurrently scheduled cleanup.
-          cut-off: 1h
-          dry-run: ${{ github.event.inputs.dry-run || 'false' }}
+    uses: trick77/ship/.github/workflows/cleanup-images.yaml@master
+    with:
+      packages: '["peeq"]'
+      dry-run: ${{ inputs.dry-run }}
+    permissions:
+      contents: read
+      packages: write

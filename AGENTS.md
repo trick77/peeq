@@ -5,7 +5,10 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 
 ## Working conventions
 - Docs, specs, and code comments are **English only**.
-- One feature branch per phase (`feat/phase-N-...`). Conventional commits.
+- Commit subjects + PR titles: Go style `area: what` (`ytdlp: …`, `httpapi: …`, `llm: …`, `summarize: …`, `ui: …`, `extension: …`), gated by ship; release notes list them by area.
+- Gate: `ship check` (`make check`): conform, lint, tests, coverage floors 75 (Go, UI) and patch 75, the `ship.yaml` steps. `ship hooks` once per clone runs it on every push. Raise tests, never a floor.
+- Release by hand only, on GitHub (images are built and signed there): `gh workflow run Release -f bump=auto`. auto = patch, or a commit's `Release: minor` + `Release-note: …` lines.
+- Stays in peeq, not kit: `store.Migrate` (column `version`, numeric prefixes repeat), the yt-dlp throttle and serial queue (one global gated gap, not a per-key throttle), the `sched` slot math, the yt-dlp selfupdate symlink swap.
 - TDD: failing test first, then the minimal implementation.
 - Keep files focused — one clear responsibility each.
 - Phase 3 needs chat + embeddings models (`BACKEND_*_MODEL` + `LLMWIRE_<PROVIDER>_API_KEY`); tests
@@ -22,6 +25,7 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - Level via `BACKEND_LOG_LEVEL` (debug/info/warn/error), read in `main()` before anything else.
 
 ## Commands
+- `make check` — the gate (`ship check`), what CI and the pre-push hook run
 - `make test` — backend Go tests (`go test ./...`)
 - `make fe-test` — frontend Vitest
 - `make fe-build` — build the SPA into `backend/web/dist` (embedded by Go)
@@ -31,7 +35,7 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - `docker compose up --build` — full stack (copy `.env.example` → `.env` and fill it first)
 
 ## Locked technical choices (do not change without explicit agreement)
-- Module path `github.com/trick77/peeq`. Go 1.27 (`go.mod` 1.27.2; Containerfile build stage `golang:1.27.2-alpine`).
+- Module path `github.com/trick77/peeq`. Go 1.27 (`go.mod` 1.27.2; Containerfile build stage `golang:1.27-alpine`, the floating patch).
 - **Pure-Go SQLite**: pin `ncruces/go-sqlite3` to `v0.23.3` (matches loom). `CGO_ENABLED=0` everywhere.
 - HTTP: stdlib `net/http` (Go 1.22+ method routing), no web framework.
 - Plumbing that kit (`github.com/trick77/ship/kit`) has comes from kit, never hand-rolled: `version`, `sqlitex.DSN`,
@@ -121,9 +125,8 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 
 ## Frontend
 - Vite + React + TS + Tailwind. `npm run build` writes into `backend/web/dist` WITHOUT emptying it
-  (`emptyOutDir: false`, ship's canon) and overwrites the tracked placeholder `index.html`; `make fe-build`
-  empties it first. Never commit built assets — only that placeholder is tracked; restore it
-  (`git checkout -- backend/web/dist/index.html`) after a local build.
+  (`emptyOutDir: false`, ship's canon); `make fe-build` and `ship check` empty it first. Only
+  `dist/.gitkeep` is tracked (gitignored otherwise). An unbuilt binary serves `web/placeholder.html` (503).
 
 ## Extension (`extension/`)
 - Plain MV3 ES modules. No bundler, no framework, no dependencies. Tests are `node --test`.

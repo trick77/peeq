@@ -1,166 +1,25 @@
 name: Release
 
+# By hand only (Actions minutes): gh workflow run Release -f bump=patch. auto: patch, or what the commits since the
+# last tag ask for (Release: minor|major). The only way to release: images are built and signed on GitHub-hosted
+# runners, never from a laptop.
 on:
-  push:
-    branches: [master]
-    # Only cut a release when something that ships actually changed. The image is
-    # built from ui/ and backend/ (see backend/Containerfile, whose build context
-    # .dockerignore shapes), and the release additionally carries the Companion
-    # extension zip built from extension/ — so those four paths, and nothing else,
-    # justify a new version.
-    #
-    # Without this, a licence file, a .gitignore line or a comment fix each cut a
-    # full version, image build, GHCR push, git tag and GitHub release. That was
-    # measured, not assumed: 11 releases landed in under three hours, of which
-    # roughly four changed the image.
-    #
-    # This is an ignore-list rather than an allow-list on purpose: a new top-level
-    # directory starts out releasing, which is the safe default. Forgetting to add
-    # a path here costs a redundant release; forgetting to remove one would
-    # silently skip a needed release.
-    #
-    # workflow_dispatch below is unfiltered, so a release can always be forced by
-    # hand — including after a change to this workflow, which .github/** ignores.
-    paths-ignore:
-      - "docs/**"
-      - "scripts/**"
-      - ".github/**"
-      - "**/*.md"
-      - "LICENSE"
-      - ".gitignore"
-      - ".env.example"
-      - "Makefile"
-      - "compose.yaml"
-      - "compose.dev.yaml"
   workflow_dispatch:
     inputs:
       bump:
         description: "Version bump"
         type: choice
-        options: [patch, minor, major]
+        options: [patch, minor, major, auto]
         default: patch
-
-permissions:
-  contents: write
-  packages: write
-
-concurrency:
-  group: release
-  cancel-in-progress: false
 
 jobs:
   release:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - id: ver
-        name: Compute next version
-        run: |
-          BUMP="${{ github.event.inputs.bump || 'patch' }}"
-          LATEST=$(git tag --list '[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
-          LATEST="${LATEST:-0.0.0}"
-          IFS=. read -r MA MI PA <<< "$LATEST"
-          case "$BUMP" in
-            major) MA=$((MA+1)); MI=0; PA=0 ;;
-            minor) MI=$((MI+1)); PA=0 ;;
-            patch) PA=$((PA+1)) ;;
-          esac
-          NEXT="$MA.$MI.$PA"
-          SHORT=$(git rev-parse --short HEAD)
-          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
-          echo "major=$MA"     >> "$GITHUB_OUTPUT"
-          echo "minor=$MI"     >> "$GITHUB_OUTPUT"
-          echo "short=$SHORT"  >> "$GITHUB_OUTPUT"
-          echo "Bumping $LATEST -> $NEXT ($BUMP) at $SHORT" >> "$GITHUB_STEP_SUMMARY"
-
-      # The cache key for the image's yt-dlp layer; see the Containerfile.
-      - id: week
-        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
-
-      - uses: docker/setup-buildx-action@v4
-
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./backend/Containerfile
-          push: true
-          platforms: linux/amd64
-          build-args: |
-            BACKEND_VERSION=${{ steps.ver.outputs.version }}
-            YTDLP_REFRESH=${{ steps.week.outputs.week }}
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.version }}
-            ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.major }}.${{ steps.ver.outputs.minor }}
-            ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.major }}
-            ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.short }}
-            ghcr.io/${{ github.repository }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # Tag only AFTER the image push succeeds, so a failed release never leaves
-      # an orphan git tag behind.
-      #
-      # Create the tag via the REST API rather than `git push`.
-      #
-      # An earlier version of this comment claimed a git-transport tag push is
-      # refused once the repo contains workflow files. That is not accurate: the
-      # `workflows`-scope refusal applies to pushes that change workflow file
-      # *content on a branch*, and a tag is only a pointer to a commit that
-      # already exists. Sibling repos have pushed hundreds of tags with plain
-      # `git push` and GITHUB_TOKEN without trouble.
-      #
-      # create-ref is still the right choice, for weaker but real reasons: it
-      # needs no git credentials in the checkout, and it is a single atomic call
-      # that fails with a clear HTTP error. Every repo in this family uses it so
-      # the release workflows stay directly comparable.
-      - name: Create tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api "repos/${{ github.repository }}/git/refs" \
-            -f ref="refs/tags/${{ steps.ver.outputs.version }}" \
-            -f sha="${{ github.sha }}"
-
-      # The browser extension is not distributed via the Chrome Web Store — it
-      # talks to one self-hosted server and needs no discovery or auto-update —
-      # so the release asset is how a user gets a loadable build. The release
-      # version is stamped into the manifest by package.sh, so a downloaded zip
-      # always reports the release it came from.
-      - name: Package extension
-        run: ./extension/package.sh "${{ steps.ver.outputs.version }}" "peeq-companion-${{ steps.ver.outputs.version }}.zip"
-
-      # Runs after the tag exists, so the release attaches to it rather than
-      # creating a second pointer at the same commit.
-      - name: Create release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ steps.ver.outputs.version }}"
-          cat > /tmp/release-notes.md <<NOTES
-          Container image: \`ghcr.io/${{ github.repository }}:$VERSION\`
-
-          **peeq Companion** browser extension — download \`peeq-companion-$VERSION.zip\`,
-          unzip it, then load the unzipped folder at \`chrome://extensions\` with Developer
-          mode enabled.
-
-          Install it in a dedicated Chrome profile signed into a dedicated YouTube account,
-          and never browse YouTube in that profile — YouTube rotates account cookies on open
-          YouTube tabs, which is what kills an exported cookie. See the README.
-          NOTES
-          # The heredoc is indented to stay inside this block scalar; strip that
-          # indentation back out before the notes are published.
-          sed -i 's/^          //' /tmp/release-notes.md
-          gh release create "$VERSION" \
-            "peeq-companion-$VERSION.zip" \
-            --title "$VERSION" \
-            --notes-file /tmp/release-notes.md
+    uses: trick77/ship/.github/workflows/release.yaml@master
+    with:
+      bump: ${{ inputs.bump }}
+      go-dir: backend
+    permissions:
+      contents: write
+      packages: write
+      # cosign keyless signing: the job's OIDC token is the signing identity.
+      id-token: write

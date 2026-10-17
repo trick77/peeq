@@ -146,5 +146,5 @@ if [[ "$fav_ground" != "1" ]]; then
 fi
 
 [[ "$fail" == 0 ]] || exit 1
-echo "gen-icons: wrote $(cd "$OUT" && ls icon-*.png apple-touch-icon.png | tr '\n' ' ')"
-echo "gen-icons: wrote $(cd "$EXT" && ls icon-*.png | sed 's|^|extension/icons/|' | tr '\n' ' ')"
+echo "gen-icons: wrote $(cd "$OUT" && printf '%s ' icon-*.png apple-touch-icon.png)"
+echo "gen-icons: wrote $(cd "$EXT" && printf 'extension/icons/%s ' icon-*.png)"
