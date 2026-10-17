@@ -241,25 +241,35 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order := make([]string, 0)
+	writeJSON(w, map[string]any{"results": groupHits(hits, videosByID, 0, k), "mode": mode})
+}
+
+// groupHits groups ranked hits per video, in the order each video's best hit
+// appears: at most maxMatchesPerVideo moments per video, one hit per moment
+// (searchResult.admits), hits whose video has no row dropped. maxVideos caps
+// the videos and maxMoments the moments overall; zero means no cap.
+//
+// maxMoments budgets the moments actually emitted, so a video that hits
+// maxMatchesPerVideo yields the rest of the budget to the videos below it
+// instead of swallowing it. The Search endpoint and the MCP search tool both
+// group through here.
+func groupHits(hits []rag.Hit, byID map[string]*videos.Video, maxVideos, maxMoments int) []*searchResult {
+	out := make([]*searchResult, 0)
 	byVideo := make(map[string]*searchResult)
-	// k budgets the moments actually emitted, so a video that hits
-	// maxMatchesPerVideo yields the rest of the budget to the videos below it
-	// instead of swallowing it.
 	emitted := 0
 	for _, h := range hits {
-		if emitted >= k {
+		if maxMoments > 0 && emitted >= maxMoments {
 			break
 		}
 		g, ok := byVideo[h.VideoID]
 		if !ok {
-			v := videosByID[h.VideoID]
-			if v == nil {
+			v := byID[h.VideoID]
+			if v == nil || (maxVideos > 0 && len(out) >= maxVideos) {
 				continue
 			}
 			g = &searchResult{Video: toVideoDTO(v)}
 			byVideo[h.VideoID] = g
-			order = append(order, h.VideoID)
+			out = append(out, g)
 		}
 		if len(g.Matches) >= maxMatchesPerVideo || !g.admits(h) {
 			continue
@@ -272,12 +282,7 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			Kind:         h.Kind,
 		})
 	}
-
-	out := make([]*searchResult, 0, len(order))
-	for _, id := range order {
-		out = append(out, byVideo[id])
-	}
-	writeJSON(w, map[string]any{"results": out, "mode": mode})
+	return out
 }
 
 // retrieveFind runs the keyword lane alone, honouring FTS5 operators. It makes
@@ -414,6 +419,7 @@ func (s *server) askLanes(ctx context.Context, q, topic string, filter rag.Filte
 			// this rung burned before failing, so leaving it out of the ladder
 			// prints a total the rungs cannot account for — a rung that errors
 			// after twenty seconds is the single most worth seeing.
+			diag.ftsFailed = true
 			diag.rungs = append(diag.rungs, fmt.Sprintf("w%.1f=err/%dms", tier.Weight, rungMs))
 			break
 		}
@@ -605,9 +611,13 @@ func (d semLaneDiag) String() string {
 const secondLadderMarker = "|rerun|"
 
 type askDiag struct {
-	rungs    []string
-	semRaw   semLaneDiag
-	semTopic semLaneDiag
+	rungs []string
+	// ftsFailed is a keyword rung erroring (the ladder stops there). Ask
+	// shrugs it off; the MCP search tool must not report "no results" when
+	// both lanes actually failed.
+	ftsFailed bool
+	semRaw    semLaneDiag
+	semTopic  semLaneDiag
 
 	// The query-understanding step, filled by the caller that ran it.
 	topic        string
