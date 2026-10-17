@@ -176,7 +176,7 @@ describe("Channel", () => {
     vi.mocked(getSettings).mockResolvedValue(settings());
   });
 
-  it("shows the channel name and its four stats", async () => {
+  it("shows the channel name and its header stats", async () => {
     const { container } = render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
     );
@@ -1448,12 +1448,14 @@ describe("Channel YouTube metadata", () => {
 
   it("shows how many of the channel's videos are searchable", async () => {
     vi.mocked(getChannel).mockResolvedValue(detail({ indexed_count: 311 }));
-    render(
+    const { container } = render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
     );
     await screen.findByText("Uncanny Expeditions");
-    expect(screen.getByText("311")).toBeInTheDocument();
-    expect(screen.getByText("searchable")).toBeInTheDocument();
+    const stat = within(
+      container.querySelector(".chan-stats") as HTMLElement,
+    ).getByText("searchable").parentElement as HTMLElement;
+    expect(within(stat).getByText("311")).toBeInTheDocument();
   });
 
   it("publishes the subscriber count, the verified mark and the refresh date", async () => {

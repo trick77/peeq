@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -18,7 +19,19 @@ func TestSPA_imagesAreSameOriginOnly(t *testing.T) {
 			t.Fatalf("%s: Content-Security-Policy = %q, want %q", path, got, imgSrcPolicy)
 		}
 	}
-	if imgSrcPolicy != "img-src 'self' data: blob:" {
-		t.Fatalf("imgSrcPolicy = %q", imgSrcPolicy)
+
+	// Only same-origin and inline sources: a host-source of any kind (an
+	// https://i.ytimg.com allowance, a scheme like https:, a wildcard) would
+	// reopen the hotlink this policy exists to stop.
+	fields := strings.Fields(imgSrcPolicy)
+	if len(fields) == 0 || fields[0] != "img-src" {
+		t.Fatalf("imgSrcPolicy = %q, want an img-src directive", imgSrcPolicy)
+	}
+	for _, src := range fields[1:] {
+		switch src {
+		case "'self'", "data:", "blob:":
+		default:
+			t.Fatalf("imgSrcPolicy allows %q; only 'self', data: and blob: are permitted", src)
+		}
 	}
 }

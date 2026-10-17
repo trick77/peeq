@@ -152,7 +152,7 @@ export function NewTab({
                 {/* Same poster source as the Inbox: peeq's cached copy, never
                     a YouTube URL in the browser. The backend falls back to the
                     hqdefault variant, and a true 404 degrades to the gradient. */}
-                <div className="chan-pthumb">
+                <div className="thumb chan-pthumb">
                   <ThumbFill
                     id={item.video_id}
                     hasThumbnail={true}

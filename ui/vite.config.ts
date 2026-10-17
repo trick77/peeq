@@ -24,7 +24,13 @@ export default defineConfig({
       },
     },
   },
-  server: { proxy: { "/api": "http://127.0.0.1:8080" } },
+  server: {
+    proxy: { "/api": "http://127.0.0.1:8080" },
+    // Same image policy the Go server sends (backend/internal/httpapi/csp.go),
+    // so a hotlinked YouTube image breaks under `make dev` too, not first in
+    // production. noyoutubehosts.test.ts keeps the two strings identical.
+    headers: { "Content-Security-Policy": "img-src 'self' data: blob:" },
+  },
   // Task 14: view tests (Library/Player/Settings) render components and
   // fire DOM events (timeupdate, form submits) via @testing-library/react,
   // which needs a real DOM — jsdom, wired here plus the jest-dom matchers

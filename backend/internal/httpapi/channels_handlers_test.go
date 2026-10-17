@@ -2070,7 +2070,7 @@ func TestPendingList_neverShipsTheRemoteThumbnail(t *testing.T) {
 
 	for _, path := range []string{"/api/pending", "/api/pending?channel=UCa"} {
 		body := getJSON(t, h, path)
-		if !strings.Contains(body, "va") {
+		if !strings.Contains(body, `"video_id":"va"`) {
 			t.Fatalf("%s: item missing: %s", path, body)
 		}
 		if strings.Contains(body, "thumbnail_url") || strings.Contains(body, "ytimg") {

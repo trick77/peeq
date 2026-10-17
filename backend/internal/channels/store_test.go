@@ -610,9 +610,6 @@ func TestGetSubscription_errorsOnClosedDB(t *testing.T) {
 	}
 }
 
-// TestStats_errorsOnClosedDB asserts a failed stats query is reported rather
-// than the channel page rendering zeroes as if the channel genuinely has no
-// downloads.
 // TestStats_indexedCountsEverySearchableVideo asserts IndexedCount is the
 // channel's footprint in the search index, whatever the status: a tombstoned
 // row and a kept inbox read are still searchable, a downloaded video not yet
@@ -641,6 +638,9 @@ func TestStats_indexedCountsEverySearchableVideo(t *testing.T) {
 	}
 }
 
+// TestStats_errorsOnClosedDB asserts a failed stats query is reported rather
+// than the channel page rendering zeroes as if the channel genuinely has no
+// downloads.
 func TestStats_errorsOnClosedDB(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.DB().Close(); err != nil {

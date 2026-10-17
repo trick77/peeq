@@ -815,20 +815,33 @@ func (s *Store) Stats(channelID, channelName string) (Stats, error) {
 		where = "(channel_id = ? OR (channel_id = '' AND channel_name = ?))"
 		args = []any{channelID, channelName}
 	}
-	row := s.db.QueryRowContext(context.Background(), `
+	ctx := context.Background()
+	row := s.db.QueryRowContext(ctx, `
 SELECT count(*),
        COALESCE(sum(duration_seconds), 0),
        COALESCE(sum(filesize_bytes), 0),
-       COALESCE(max(published_at), ''),
-       (SELECT count(*) FROM videos v WHERE `+where+`
-          AND EXISTS (SELECT 1 FROM transcript_chunks c WHERE c.video_id = v.id))
-FROM videos WHERE status = 'downloaded' AND `+where, append(append([]any{}, args...), args...)...)
+       COALESCE(max(published_at), '')
+FROM videos WHERE status = 'downloaded' AND `+where, args...)
 
 	var st Stats
-	if err := row.Scan(&st.ArchivedCount, &st.RuntimeSeconds, &st.DiskBytes, &st.NewestPublishedAt, &st.IndexedCount); err != nil {
+	if err := row.Scan(&st.ArchivedCount, &st.RuntimeSeconds, &st.DiskBytes, &st.NewestPublishedAt); err != nil {
 		return Stats{}, fmt.Errorf("channel stats %s: %w", channelID, err)
 	}
+	if err := s.db.QueryRowContext(ctx, indexedCountQuery(where), args...).Scan(&st.IndexedCount); err != nil {
+		return Stats{}, fmt.Errorf("channel stats %s: indexed: %w", channelID, err)
+	}
 	return st, nil
+}
+
+// indexedCountQuery counts the channel's videos that have a search index,
+// whatever their status. It visits every video the channel ever had,
+// tombstones included, and needs each one's id to probe transcript_chunks, so
+// it must stay on idx_videos_channel_search (0036): a video row keeps its id
+// behind description and analysis text, and reading it from the table walks
+// overflow pages per row. channels/queryplan_test.go pins both where shapes.
+func indexedCountQuery(where string) string {
+	return `SELECT count(*) FROM videos v WHERE ` + where + `
+  AND EXISTS (SELECT 1 FROM transcript_chunks c WHERE c.video_id = v.id)`
 }
 
 // NameFromVideos returns the channel name recorded on this channel's videos
