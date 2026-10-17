@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -229,6 +230,66 @@ func TestSearch_textIsCapped(t *testing.T) {
 	}
 }
 
+// When the results outgrow the cap, whole trailing items are dropped and
+// their sources with them, so sources[i] still matches item i+1.
+func TestSearch_overflowDropsWholeItemsAndTheirSources(t *testing.T) {
+	lib := &fakeLibrary{}
+	for i := 0; i < 10; i++ {
+		var ms []Match
+		for j := 0; j < 4; j++ {
+			ms = append(ms, Match{StartSeconds: 100*j + 1, Kind: rag.KindTranscript, Snippet: strings.Repeat("ü", 400)})
+		}
+		lib.result.Videos = append(lib.result.Videos, VideoHits{
+			Video:   Video{ID: fmt.Sprintf("vid%02d", i), Title: fmt.Sprintf("Video %d %s", i, strings.Repeat("é", 400)), Summary: strings.Repeat("ö", 400)},
+			Matches: ms,
+		})
+	}
+	r := callTool(t, lib, "search", map[string]any{"query": "x"})
+	text := toolText(t, r)
+	if len(text) > maxToolTextBytes {
+		t.Fatalf("text is %d bytes", len(text))
+	}
+	if strings.Contains(text, "[output truncated]") {
+		t.Error("the generic cap cut the text; items should have been dropped whole")
+	}
+	src := sourcesOf(t, r)
+	if len(src) == 0 || len(src) == 10 {
+		t.Fatalf("sources = %d, want some but not all", len(src))
+	}
+	if !strings.Contains(text, fmt.Sprintf("(%d more results omitted; narrow the query)", 10-len(src))) {
+		t.Errorf("no omitted note for %d dropped results:\n%s", 10-len(src), text[len(text)-200:])
+	}
+	for i, s := range src {
+		if !strings.Contains(text, fmt.Sprintf("%d. %s", i+1, s.Title)) || !strings.Contains(text, "peeq: "+s.URL+" ") {
+			t.Errorf("source %d does not match a complete item %d", i, i+1)
+		}
+	}
+	if strings.Contains(text, fmt.Sprintf("\n%d. ", len(src)+1)) {
+		t.Errorf("item %d is in the text without a source", len(src)+1)
+	}
+}
+
+func TestSearch_channelWithoutVideos(t *testing.T) {
+	lib := searchFixture()
+	lib.scopes["fresh channel"] = ChannelScope{IDs: []string{"UCF"}, Matched: []string{"Fresh Channel"}, NoVideos: true}
+	r := callTool(t, lib, "search", map[string]any{"query": "x", "channel": "fresh channel"})
+	if isError(r) || !strings.Contains(toolText(t, r), "No videos yet in Fresh Channel") {
+		t.Errorf("got %q", toolText(t, r))
+	}
+	if lib.lastQuery != nil {
+		t.Error("searched a channel known to hold no videos")
+	}
+}
+
+func TestSearch_timeoutIsSaid(t *testing.T) {
+	lib := searchFixture()
+	lib.searchErr = fmt.Errorf("lanes: %w", context.DeadlineExceeded)
+	r := callTool(t, lib, "search", map[string]any{"query": "x"})
+	if !isError(r) || !strings.Contains(toolText(t, r), "search failed (timed out)") {
+		t.Errorf("got %q", toolText(t, r))
+	}
+}
+
 func TestGetVideo(t *testing.T) {
 	lib := &fakeLibrary{videos: map[string]*Video{"abc123": {
 		ID: "abc123", Title: "Why bikes stay upright", Channel: "Veritasium", PublishedAt: "2026-05-02",
@@ -321,6 +382,49 @@ func TestGetTranscript_truncatesAndSaysWhereToContinue(t *testing.T) {
 	}
 	if strings.Contains(text, fmt.Sprintf("[%s]", clock(next))) {
 		t.Errorf("the continuation start was already shown")
+	}
+}
+
+// Several cues share each second. Paging through the transcript by the
+// advertised start_seconds must show every cue exactly once.
+func TestGetTranscript_pagingNeverRepeatsACue(t *testing.T) {
+	var cues []subtitles.Cue
+	for i := 0; i < 6000; i++ {
+		cues = append(cues, subtitles.Cue{StartSeconds: i / 3, Text: fmt.Sprintf("cue%05d %s", i, strings.Repeat("x", 40))})
+	}
+	lib := &fakeLibrary{transcripts: map[string]*Transcript{"v": {VideoID: "v", Cues: cues}}}
+	seen := map[string]int{}
+	start, pages := 0, 0
+	for {
+		pages++
+		if pages > 50 {
+			t.Fatal("paging does not terminate")
+		}
+		text := toolText(t, callTool(t, lib, "get_transcript", map[string]any{"id": "v", "start_seconds": start}))
+		for _, f := range strings.Fields(text) {
+			if strings.HasPrefix(f, "cue") {
+				seen[f]++
+			}
+		}
+		idx := strings.Index(text, "start_seconds=")
+		if idx < 0 {
+			break
+		}
+		var next int
+		fmt.Sscanf(text[idx+len("start_seconds="):], "%d", &next)
+		if next <= start {
+			t.Fatalf("next start %d does not advance past %d", next, start)
+		}
+		start = next
+	}
+	if pages < 2 {
+		t.Fatal("fixture too small to page")
+	}
+	for i := 0; i < len(cues); i++ {
+		key := fmt.Sprintf("cue%05d", i)
+		if seen[key] != 1 {
+			t.Fatalf("%s shown %d times over %d pages", key, seen[key], pages)
+		}
 	}
 }
 

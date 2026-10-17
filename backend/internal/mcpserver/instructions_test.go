@@ -65,6 +65,18 @@ func TestInstructions_stayUnderBudget(t *testing.T) {
 	}
 }
 
+// A burst of discovery and listing reads the channel list once per TTL.
+func TestChannelHintIsCached(t *testing.T) {
+	lib := &fakeLibrary{channels: []Channel{{ID: "UC2", Name: "Big", Subscribed: true, Videos: 9}}}
+	h := newTestHandler(lib)
+	modernCall(t, h, "server/discover", nil)
+	modernCall(t, h, "tools/list", nil)
+	legacyCall(t, h, "initialize", map[string]any{"protocolVersion": "2025-06-18"})
+	if lib.channelsN != 1 {
+		t.Errorf("Channels read %d times, want 1 within the TTL", lib.channelsN)
+	}
+}
+
 func TestInstructions_noChannels(t *testing.T) {
 	got := (&handler{lib: &fakeLibrary{}}).instructions(context.Background())
 	if !strings.Contains(got, "peeq") || strings.Contains(got, "automatically") {

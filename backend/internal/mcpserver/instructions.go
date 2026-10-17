@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 )
 
 const (
@@ -17,6 +18,9 @@ const (
 	hintMaxChannels = 40
 	// hintDescriptionRunes trims each channel description.
 	hintDescriptionRunes = 160
+	// hintTTL is how long a built hint is reused. Short against the 15 min
+	// client cache, so a subscription change shows within a minute of it.
+	hintTTL = time.Minute
 )
 
 const instructionsIntro = "peeq is the user's own YouTube library: transcripts, summaries, chapters, key points " +
@@ -43,11 +47,23 @@ func (h *handler) instructions(ctx context.Context) string {
 // the biggest), trimmed so the whole instructions text fits the budget.
 // Names and categories come first; descriptions only while room is left.
 func (h *handler) channelHint(ctx context.Context) string {
+	h.hintMu.Lock()
+	defer h.hintMu.Unlock()
+	if time.Now().Before(h.hintExpires) {
+		return h.hint
+	}
 	chans, err := h.lib.Channels(ctx)
 	if err != nil {
+		// Not cached: the next request tries again.
 		slog.Warn("mcp: channel list unavailable for the hint", "err", err)
 		return ""
 	}
+	h.hint, h.hintExpires = buildChannelHint(chans), time.Now().Add(hintTTL)
+	return h.hint
+}
+
+// buildChannelHint renders the hint from a channel list.
+func buildChannelHint(chans []Channel) string {
 	if len(chans) == 0 {
 		return ""
 	}

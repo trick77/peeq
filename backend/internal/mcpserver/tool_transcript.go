@@ -28,7 +28,9 @@ type transcriptArgs struct {
 
 type transcriptLine struct {
 	start int
-	text  string
+	// last is the second of the latest cue merged in.
+	last int
+	text string
 }
 
 func runGetTranscript(ctx context.Context, h *handler, raw json.RawMessage) toolResult {
@@ -96,14 +98,17 @@ func mergeCues(cues []subtitles.Cue, start, end int) []transcriptLine {
 		if text == "" {
 			continue
 		}
-		// A cue sharing the line's second always joins it: two lines on one
-		// second would make that second ambiguous to resume from.
-		if cur != nil && (c.StartSeconds == cur.start ||
+		// A cue on the same second as the line's latest one always joins it,
+		// whatever the size: a second split across two lines would make a
+		// resume from the second line's start repeat the first line's tail.
+		// So every line starts on a second no earlier line holds.
+		if cur != nil && (c.StartSeconds <= cur.last ||
 			len([]rune(cur.text)) < lineTargetRunes && c.StartSeconds-cur.start < lineMaxSpanSecond) {
 			cur.text += " " + text
+			cur.last = max(cur.last, c.StartSeconds)
 			continue
 		}
-		out = append(out, transcriptLine{start: c.StartSeconds, text: text})
+		out = append(out, transcriptLine{start: c.StartSeconds, last: c.StartSeconds, text: text})
 		cur = &out[len(out)-1]
 	}
 	return out

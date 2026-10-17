@@ -1,8 +1,10 @@
 package mcpserver
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -20,6 +22,10 @@ const (
 	summaryRunes = 300
 	// snippetRunes bounds a source's snippet in structuredContent.
 	snippetRunes = 240
+	// titleRunes trims a result title; omittedNoteRoom keeps space under the
+	// size cap for the "N more results omitted" line.
+	titleRunes      = 300
+	omittedNoteRoom = 100
 )
 
 type searchArgs struct {
@@ -82,13 +88,23 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) toolResult 
 			}
 			return errorResult(msg + " Call list_channels for every channel, or search without a channel.")
 		}
+		if scope.NoVideos {
+			return toolResult{
+				Text:    fmt.Sprintf("No videos yet in %s: peeq follows the channel but holds none of its videos so far.", strings.Join(scope.Matched, ", ")),
+				Sources: []Source{},
+			}
+		}
 		q.Channel = scope
 	}
 
 	res, err := h.lib.Search(ctx, q)
 	if err != nil {
 		slog.Warn("mcp: search failed", "err", err)
-		return errorResult("search failed; try again, or narrow the query")
+		reason := "the search index could not be read"
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			reason = "timed out"
+		}
+		return errorResult("search failed (" + reason + "), try again, or narrow the query")
 	}
 	return h.renderSearch(q, res)
 }
@@ -106,22 +122,32 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) toolResult {
 		}
 		return toolResult{Text: b.String(), Sources: sources}
 	}
+	// Items are added whole while they fit, so the size cap never cuts one in
+	// half and sources[i] always belongs to a complete item i+1. Every field
+	// of an item is trimmed, so the first one always fits.
+	limit := maxToolTextBytes - omittedNoteRoom
 	for i, vh := range res.Videos {
 		v := vh.Video
 		best := bestMoment(vh.Matches)
-		fmt.Fprintf(&b, "%d. %s\n", i+1, resultHeader(v))
+		var item strings.Builder
+		fmt.Fprintf(&item, "%d. %s\n", i+1, resultHeader(v))
 		if s := trimRunes(v.Summary, summaryRunes); s != "" {
-			b.WriteString("   summary: " + s + "\n")
+			item.WriteString("   summary: " + s + "\n")
 		}
 		for _, m := range vh.Matches {
 			snip := trimRunes(boldHighlights(m.Snippet), snippetRunes)
 			if m.Kind == rag.KindSummary {
-				b.WriteString("   summary match: " + snip + "\n")
+				item.WriteString("   summary match: " + snip + "\n")
 				continue
 			}
-			fmt.Fprintf(&b, "   [%s] %s: %s\n", clock(m.StartSeconds), kindLabel(m.Kind), snip)
+			fmt.Fprintf(&item, "   [%s] %s: %s\n", clock(m.StartSeconds), kindLabel(m.Kind), snip)
 		}
-		fmt.Fprintf(&b, "   peeq: %s  youtube: %s\n", h.videoURL(v.ID, best), youtubeURL(v.ID, best))
+		fmt.Fprintf(&item, "   peeq: %s  youtube: %s\n", h.videoURL(v.ID, best), youtubeURL(v.ID, best))
+		if i > 0 && b.Len()+item.Len() > limit {
+			fmt.Fprintf(&b, "(%d more results omitted; narrow the query)", len(res.Videos)-i)
+			break
+		}
+		b.WriteString(item.String())
 
 		snippet := ""
 		if len(vh.Matches) > 0 {
@@ -129,7 +155,7 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) toolResult {
 		}
 		sources = append(sources, Source{
 			URL:     h.videoURL(v.ID, best),
-			Title:   v.Title,
+			Title:   cmp.Or(trimRunes(v.Title, titleRunes), v.ID),
 			Label:   sourceLabel(v.Channel),
 			Snippet: snippet,
 			Image:   thumbnailURL(v.ID),
@@ -157,7 +183,7 @@ func resultHeader(v Video) string {
 	} else if len(v.YouTubeCategories) > 0 {
 		meta = append(meta, "youtube: "+strings.Join(v.YouTubeCategories, ", "))
 	}
-	title := v.Title
+	title := trimRunes(v.Title, titleRunes)
 	if title == "" {
 		title = v.ID
 	}

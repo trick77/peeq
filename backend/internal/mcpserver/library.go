@@ -60,6 +60,9 @@ type ChannelScope struct {
 	Matched []string
 	// Suggestions is filled on a miss: the closest channel names.
 	Suggestions []string
+	// NoVideos is set when everything that resolved is a channel peeq lists
+	// but holds no videos of yet (just subscribed, nothing scanned).
+	NoVideos bool
 }
 
 // Resolved reports whether the scope narrows anything.

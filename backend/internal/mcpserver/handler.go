@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/trick77/peeq/internal/auth"
 )
@@ -34,6 +36,13 @@ type handler struct {
 	origin    string
 	publicURL string
 	version   string
+
+	// hint caches channelHint for hintTTL: discovery, initialize and
+	// tools/list all want it, and a burst of them must not each re-read
+	// the channel list.
+	hintMu      sync.Mutex
+	hint        string
+	hintExpires time.Time
 }
 
 // New returns the /mcp handler: origin check, then bearer auth, then the
