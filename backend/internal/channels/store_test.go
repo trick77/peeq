@@ -61,12 +61,20 @@ func TestSearchable_isSubscribedOrKeepReads(t *testing.T) {
 		{ID: "UCkeep", Name: "Keep"},
 		{ID: "UCadded", Name: "Added only"},
 		{ID: "UCcache", Name: "Cache only"},
+		{ID: "UCgone", Name: "Removed but keep_reads"},
 	} {
 		if err := s.Upsert(c); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.MarkAdded("UCadded", "2026-07-20 10:00:00"); err != nil {
+	for _, id := range []string{"UCadded", "UCsub", "UCkeep"} {
+		if err := s.MarkAdded(id, "2026-07-20 10:00:00"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A cache-only row (never added, nothing downloaded) never shows, even
+	// with keep_reads left set on it.
+	if _, _, err := s.SetKeepReads("UCgone", true); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Subscribe("UCsub", "2099-01-01 00:00:00"); err != nil {
