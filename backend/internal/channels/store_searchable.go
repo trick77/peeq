@@ -25,7 +25,7 @@ func (s *Store) Searchable(ctx context.Context) ([]SearchableChannel, error) {
 SELECT c.id, c.handle, c.name, c.description, s.channel_id IS NOT NULL, c.keep_reads
 FROM channels c
 LEFT JOIN subscriptions s ON s.channel_id = c.id
-WHERE (c.added_at IS NOT NULL OR ` + hasDownloadsPredicate + `)
+WHERE (c.added_at IS NOT NULL OR `+hasDownloadsPredicate+`)
   AND (s.channel_id IS NOT NULL OR c.keep_reads = 1)
 ORDER BY COALESCE(NULLIF(c.name, ''), NULLIF(c.handle, ''), c.id) COLLATE NOCASE, c.id`)
 	if err != nil {
