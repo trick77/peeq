@@ -327,6 +327,15 @@ describe("App deep links", () => {
     expect(window.location.pathname).toBe("/video/v1");
   });
 
+  it("a cold /video/<id>?t=<s> deep link opens the Player at that moment", async () => {
+    window.history.replaceState(null, "", "/video/v1?t=754");
+    render(<App />);
+    await waitFor(() => expect(document.querySelector("video")).not.toBeNull());
+    const video = document.querySelector("video") as HTMLVideoElement;
+    fireEvent.loadedMetadata(video);
+    await waitFor(() => expect(video.currentTime).toBe(754));
+  });
+
   // The now-playing dock's whole lifecycle, at the level it actually lives at.
   // Each of these was a bug report: the dock followed you out of a page you
   // never played, and it followed you out of a video that had finished.

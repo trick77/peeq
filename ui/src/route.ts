@@ -164,6 +164,15 @@ export function toPath(state: RouteState): string {
   }
 }
 
+// seekFromSearch reads the `t` of a `/video/<id>?t=<seconds>` deep link — the
+// moment an MCP search result cites — as whole non-negative seconds. Anything
+// else is no seek at all, which Player treats differently from a seek to 0.
+export function seekFromSearch(search: string): number | undefined {
+  const raw = new URLSearchParams(search).get("t");
+  if (raw === null || !/^\d+$/.test(raw)) return undefined;
+  return Number(raw);
+}
+
 // useRoute owns the RouteState and keeps it in lockstep with the browser URL.
 // It seeds from the current pathname, re-derives on back/forward (popstate),
 // and exposes navigate() for in-app transitions.
