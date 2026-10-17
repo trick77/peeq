@@ -766,7 +766,10 @@ func serveStoredImage(w http.ResponseWriter, r *http.Request, mime string, data 
 		// a zero time makes ServeContent skip the Last-Modified header.
 		modTime = time.Time{}
 	}
-	w.Header().Set("ETag", etagFor(data))
+	// A hash of the bytes, not the row's updated_at: the inbox's lazy-fetch
+	// path builds its Thumbnail without a stamp, SQLite's datetime('now') has
+	// second resolution, and the bytes are already in memory here.
+	w.Header().Set("ETag", httpx.ETag(data))
 	http.ServeContent(w, r, "image"+media.ThumbnailExtForMime(mime), modTime, bytes.NewReader(data))
 }
 

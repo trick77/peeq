@@ -1,8 +1,6 @@
 package httpapi
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"time"
@@ -156,22 +154,4 @@ func notFoundCached(w http.ResponseWriter, r *http.Request) {
 func notFoundPending(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	http.NotFound(w, r)
-}
-
-// etagFor returns a strong, quoted ETag for a blob of bytes.
-//
-// The quotes are not cosmetic: http.ServeContent parses the header with
-// scanETag, which silently ignores an unquoted value — no 304, no error, just a
-// full body every time.
-//
-// It hashes the content rather than deriving a token from the row's updated_at,
-// for three reasons. The inbox's lazy-fetch path builds its Thumbnail value
-// without a stamp at all, which is precisely where a first-time client lands.
-// SQLite's datetime('now') has second resolution, so a replace inside the same
-// second would not move a timestamp. And the share card is rendered per request
-// and has no row of its own. The bytes are already in memory on every one of
-// these paths, so hashing them costs nothing a read did not already pay for.
-func etagFor(data []byte) string {
-	sum := sha256.Sum256(data)
-	return `"` + hex.EncodeToString(sum[:16]) + `"`
 }

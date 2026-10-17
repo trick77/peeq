@@ -174,11 +174,9 @@ func (s *server) handleShareCard(w http.ResponseWriter, r *http.Request) {
 	// encoded. Unfurlers refetch per recipient; rendering to learn that nothing
 	// changed was most of this route's cost.
 	subtitle := shareCardSubtitle(v)
-	etag := etagFor([]byte(shareCardVersion + "\x00" + v.ThumbnailVersion + "\x00" + v.Title + "\x00" + subtitle))
+	etag := httpx.ETag([]byte(shareCardVersion + "\x00" + v.ThumbnailVersion + "\x00" + v.Title + "\x00" + subtitle))
 	w.Header().Set("Cache-Control", s.shareImageCacheControl(r, v.ID))
-	w.Header().Set("ETag", etag)
-	if etagMatches(r.Header.Get("If-None-Match"), etag) {
-		w.WriteHeader(http.StatusNotModified)
+	if httpx.NotModified(w, r, etag) {
 		return
 	}
 	jpg, err := sharecard.Render(s.loadThumbnail(v.ID), v.Title, subtitle)
@@ -195,18 +193,6 @@ func (s *server) handleShareCard(w http.ResponseWriter, r *http.Request) {
 // shareCardVersion is part of the card's validator. Bump it when the layout
 // changes, or clients keep the old picture for an unchanged video.
 const shareCardVersion = "1"
-
-// etagMatches reports whether an If-None-Match header names etag (or is "*").
-// Weak comparison, as the header requires.
-func etagMatches(header, etag string) bool {
-	for candidate := range strings.SplitSeq(header, ",") {
-		candidate = strings.TrimPrefix(strings.TrimSpace(candidate), "W/")
-		if candidate == etag || candidate == "*" {
-			return true
-		}
-	}
-	return false
-}
 
 // loadThumbnail decodes a video's stored poster, or returns nil — missing,
 // unreadable and undecodable all mean "no image", and the card falls back to its
