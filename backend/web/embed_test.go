@@ -52,9 +52,24 @@ func TestFaviconICOIsNotTheSPAShell(t *testing.T) {
 	}
 }
 
+// Only the client router's paths get the shell: an unknown one, and anything
+// under /api, is a real 404.
+func TestHandlerServesTheShellOnClientRoutesOnly(t *testing.T) {
+	for path, want := range map[string]int{
+		"/channel/UCx": 200, "/s/tok": 200, "/up-next": 200, "/video": 200,
+		"/nonsense": 404, "/api/nope": 404, "/assets/gone.js": 404,
+	} {
+		rec := httptest.NewRecorder()
+		Handler().ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != want {
+			t.Errorf("%s: status %d, want %d", path, rec.Code, want)
+		}
+	}
+}
+
 // The web app manifest is served by http.FileServer, which asks the mime package
 // for a type and falls back to sniffing it as text/plain when there is no entry —
-// Go ships none for .webmanifest. This asserts the package's init registered one.
+// Go ships none for .webmanifest. kit's spa registers one in its init.
 //
 // Note what is NOT tested here: that ui/public's icons are actually served. The
 // backend CI job never runs the frontend build, so the embedded dist holds only
