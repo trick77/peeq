@@ -93,6 +93,13 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - All runtime config comes from `BACKEND_*` env vars — see `.env.example`.
 - Secrets via env only; never commit them.
 
+## MCP server (`/mcp`, `docs/mcp.md`)
+- OIDC bypasses: share/grant token routes, `/api/machine` (extension token, cookie write only)
+  and `/mcp` (`BACKEND_MCP_TOKEN`, read-only). Never let one token open the other's route.
+- Unset token → route unmounted. JSON only, stateless, dual-era (2026-07-28 + `initialize`).
+- Retrieval goes through `httpapi/mcp_library.go` over the Search lanes; never a second
+  search implementation. `sources[i]` ↔ text item `i+1` is a contract with loom.
+
 ## Database / migrations
 - New migration → new numbered file `backend/internal/store/migrations/NNNN_*.sql`. Runner applies pending
   ones in order, records them in `schema_migrations`.
