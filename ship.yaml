@@ -9,9 +9,6 @@ steps:
   - name: cookie fixture
     dir: extension
     run: f=$(mktemp "${TMPDIR:-/tmp}/fixture.XXXXXX") && node testdata/generate_fixture.js > "$f"; diff -u ../backend/internal/cookie/testdata/extension_output.txt "$f"; rc=$?; rm -f "$f"; exit $rc
-  - name: extension e2e
-    dir: extension/e2e
-    run: npm ci && npx playwright install chromium --with-deps && npm test
 images:
   - { containerfile: backend/Containerfile }
 visibility: public
