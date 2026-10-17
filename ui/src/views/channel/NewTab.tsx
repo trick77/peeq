@@ -40,6 +40,7 @@ export function NewTab({
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clears the error whenever the channel changes
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.id]);

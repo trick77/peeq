@@ -7,12 +7,13 @@
   // fail at runtime in the browser. Excluding tests here keeps that surface
   // out of application code.
   //
-  // `npm run build` runs this config first, so a Node-only API reaching a
+  // `npm run build` checks this project, so a Node-only API reaching a
   // component is a build failure, not a runtime surprise.
-  "extends": "./tsconfig.json",
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "types": ["vite/client"]
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test-setup.ts"]
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test"]
 }

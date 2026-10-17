@@ -4,11 +4,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.app.json && tsc -p tsconfig.json && vite build",
-    "build:bundle": "vite build",
-    "test": "vitest",
-    "format": "prettier --write 'src/**/*.{ts,tsx,css}'",
-    "format:check": "prettier --check 'src/**/*.{ts,tsx,css}'"
+    "build": "tsc -b && vite build",
+    "lint": "eslint . --max-warnings 0 && npm run format:check",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write 'src/**/*.{ts,tsx,css}' '*.ts'",
+    "format:check": "prettier --check 'src/**/*.{ts,tsx,css}' '*.ts'"
   },
   "dependencies": {
     "lucide-react": "^1.52.0",
@@ -16,6 +17,7 @@
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@tailwindcss/vite": "^4.3.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
@@ -25,10 +27,14 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "@vitest/coverage-v8": "^5.0.3",
+    "eslint": "10.12.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-react-hooks": "7.1.1",
     "jsdom": "^30.1.2",
-    "prettier": "^3.9.9",
+    "prettier": "3.9.10",
     "tailwindcss": "^4.3.0",
-    "typescript": "^7.0.2",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.2",
     "vite": "^8.3.3",
     "vitest": "^5.0.0"
   }

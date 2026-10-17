@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useInsertionEffect,
+  useRef,
+  useState,
+} from "react";
 import { VideoCard } from "../components/VideoCard";
 import { PillStrip } from "../components/PillStrip";
 import { SearchField } from "../components/SearchField";
@@ -254,6 +260,7 @@ export function Library({
   useEffect(() => {
     if (debouncedQuery !== "" || counts === null) return;
     if (category !== "all" && !counts.categories[filter]?.[category]) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- falls back once the counts show the category gone
       setCategory("all");
     }
   }, [filter, counts, debouncedQuery]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -275,7 +282,9 @@ export function Library({
   // Stable, like the toggles: VideoCard is memoised, and a handler made fresh
   // on every render would defeat that for every card in the grid.
   const onQueuedRef = useRef(onQueued);
-  onQueuedRef.current = onQueued;
+  useInsertionEffect(() => {
+    onQueuedRef.current = onQueued;
+  });
   const openVideo = useStableCallback(onOpenVideo);
   const openChannel = useStableCallback((id: string) => onOpenChannel?.(id));
   const handleRedownload = useCallback(async (id: string) => {

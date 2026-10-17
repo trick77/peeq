@@ -35,6 +35,7 @@ export function ArchiveTab({
 
   useEffect(() => {
     const seq = ++loadSeq.current;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clears the error whenever the query changes
     setError(null);
     listVideos({ channel: channelId, q: debouncedQuery, category, sort })
       .then((vs) => {

@@ -1,10 +1,6 @@
-// test-setup.ts — vitest setupFiles entry (see vite.config.ts `test.setupFiles`).
-// Wires jest-dom's extra matchers (toBeInTheDocument, etc.) into vitest's
-// `expect`, and cleans up the DOM between tests so components mounted by
-// one test don't leak into the next.
+// vitest setupFiles entry (vite.config.ts `test.setupFiles`): jest-dom's matchers on vitest's `expect`. Testing
+// Library's cleanup runs by itself between tests (test.globals).
 import "@testing-library/jest-dom/vitest";
-import { afterEach } from "vitest";
-import { cleanup } from "@testing-library/react";
 
 // jsdom ships no ResizeObserver, which PillStrip constructs on mount. A no-op
 // stub is enough: jsdom computes no layout, so the observer would never fire a
@@ -17,7 +13,3 @@ if (!("ResizeObserver" in globalThis)) {
     disconnect() {}
   };
 }
-
-afterEach(() => {
-  cleanup();
-});

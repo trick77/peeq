@@ -32,6 +32,7 @@ export function useMenuPlacement(
   // before jumping up.
   useLayoutEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- a reset keyed on the menu closing
       setPlace("down");
       return;
     }

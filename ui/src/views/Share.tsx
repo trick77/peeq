@@ -85,6 +85,7 @@ export function Share({ token }: { token: string | null }) {
 
   useEffect(() => {
     if (!token) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- no token is a dead link, no fetch to wait on
       setStatus("dead");
       return;
     }
@@ -281,6 +282,7 @@ export function Share({ token }: { token: string | null }) {
                   className="toc toc-grid"
                   style={tocGridStyle(chapters.length)}
                 >
+                  {/* eslint-disable-next-line react-hooks/refs -- seekOnClick wraps seek for the click, it does not call it */}
                   {chapters.map((c, i) => (
                     <button
                       key={i}
@@ -314,6 +316,7 @@ export function Share({ token }: { token: string | null }) {
               </div>
               <div className="tabbody">
                 <div className="hl">
+                  {/* eslint-disable-next-line react-hooks/refs -- seekOnClick wraps seek for the click, it does not call it */}
                   {highlights.map((k, i) => (
                     <button
                       key={i}

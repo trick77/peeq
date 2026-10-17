@@ -6,9 +6,7 @@ WORKDIR /app/ui
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci
 COPY ui/ ./
-# The bundle only. `npm run build` type-checks the app and its tests first, and
-# CI has already done both on the commit this image is built from.
-RUN npm run build:bundle
+RUN npm run build
 
 # --- Stage 2: build the Go API binary (pure-Go, no cgo) with the embedded SPA ---
 FROM golang:1.27-alpine AS build

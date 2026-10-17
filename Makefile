@@ -15,13 +15,15 @@ backend-coverage:
 	./scripts/coverage-gate.sh backend
 
 fe-test:
-	cd ui && npm run test -- --run
+	cd ui && npm run test
 
 fe-coverage:
-	cd ui && npm run test -- --run --coverage
+	cd ui && npm run test -- --coverage
 	./scripts/coverage-gate.sh ui
 
+# vite no longer empties its outDir (emptyOutDir: false): the old hashed bundles would be embedded too.
 fe-build:
+	find backend/web/dist -mindepth 1 ! -name index.html -exec rm -rf {} +
 	cd ui && npm ci && npm run build
 
 build: fe-build

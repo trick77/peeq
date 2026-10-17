@@ -1,0 +1,14 @@
+{
+  // Shared by tsconfig.app.json and tsconfig.test.json; they differ only in
+  // which files they see and which ambient types they get.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  }
+}

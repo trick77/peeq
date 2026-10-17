@@ -26,13 +26,14 @@ export function useStageToast(): {
   clear: () => void;
 } {
   const t = useTransient<StageToast>(STAGE_TOAST_MS);
+  const showT = t.show;
   const show = useCallback(
     (
       text: string,
       icon: IconName = "skipForward",
       tone: StageToast["tone"] = "info",
-    ) => t.show({ text, icon, tone }),
-    [t.show],
+    ) => showT({ text, icon, tone }),
+    [showT],
   );
   return { toast: t.value, show, clear: t.clear };
 }

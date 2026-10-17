@@ -108,6 +108,7 @@ export function ShareControl({
   // "Copied" on the button, for a couple of seconds.
   const copiedTick = useTransient<true>(2000);
   const copied = copiedTick.value === true;
+  const clearCopied = copiedTick.clear;
   const [armed, setArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLSpanElement | null>(null);
@@ -118,6 +119,7 @@ export function ShareControl({
   // after getShareStatus resolves), so a mount-only seed would leave the popover
   // showing "7 days" for a link that is actually, say, a 30-day one.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- re-seeded whenever the status arrives
     setTtl(bucketTtl(status));
   }, [status]);
 
@@ -156,11 +158,12 @@ export function ShareControl({
   // Reset the transient popover state each time it closes.
   useEffect(() => {
     if (!open) {
-      copiedTick.clear();
+      clearCopied();
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- a reset keyed on the popover closing
       setArmed(false);
       setError(null);
     }
-  }, [open]);
+  }, [open, clearCopied]);
 
   async function share(next: ShareTTL) {
     setBusy(true);

@@ -136,6 +136,7 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
     getYtdlpVersion()
       .then(setYtdlp)
       .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only; load is a fresh closure per render
   }, []);
 
   useEffect(() => {

@@ -415,16 +415,8 @@ export function UpNext({
     [upcoming, filter],
   );
 
-  // The two search predicates, named once and used by both the rows and the chip
-  // counts below. A count that searched different fields than the row it counts
-  // is the drift this guards against.
-  const jobMatches = (j: {
-    title?: string;
-    video_id?: string;
-    channel_name?: string;
-  }) => matches(q, j.title, j.video_id, j.channel_name);
-  const schedMatches = (i: UpcomingItem) => matches(q, i.subject, planOf(i));
-
+  // Ahead of the search predicates below: declared after them, the hooks lint
+  // reads q as mutated through their closures and flags this memo.
   const grouped = useMemo(() => {
     const by = new Map<string, UpcomingItem[]>();
     for (const item of scheduled) {
@@ -445,6 +437,16 @@ export function UpNext({
       items: by.get(b) as UpcomingItem[],
     }));
   }, [scheduled, now, q]);
+
+  // The two search predicates, named once and used by both the rows and the chip
+  // counts below. A count that searched different fields than the row it counts
+  // is the drift this guards against.
+  const jobMatches = (j: {
+    title?: string;
+    video_id?: string;
+    channel_name?: string;
+  }) => matches(q, j.title, j.video_id, j.channel_name);
+  const schedMatches = (i: UpcomingItem) => matches(q, i.subject, planOf(i));
 
   // The lanes, split by state rather than by kind, and narrowed by BOTH
   // controls: the kind chips decide which lanes are on the page at all, the

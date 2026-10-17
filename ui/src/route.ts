@@ -14,7 +14,13 @@
 // backend/web/embed.go), so this is a pure-frontend concern — a cold-loaded
 // deep link reaches the SPA, which then parses the path here.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useInsertionEffect,
+  useRef,
+  useState,
+} from "react";
 import type { ViewId } from "./shell/Rail";
 
 // RouteState is the parsed, in-memory form of the URL: which view is open,
@@ -188,7 +194,11 @@ export function useRoute(): {
     parsePath(window.location.pathname),
   );
   const routeRef = useRef(route);
-  routeRef.current = route;
+  // Before every layout effect of the commit: a child's layout effect that
+  // navigates writes routeRef after this sync, never before it.
+  useInsertionEffect(() => {
+    routeRef.current = route;
+  });
 
   useEffect(() => {
     function onPop() {

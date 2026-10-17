@@ -1,23 +1,14 @@
 {
-  // Root config: everything under src, including tests. Editors pick this up
-  // by default, so test files get full IntelliSense.
+  // Solution file: `tsc -b` (npm run build) type-checks every project below.
+  // Editors resolve each file to the project that includes it.
   //
-  // Node types are available here because src/enumsync.test.ts reads the Go
-  // category enum from disk to guard against Go<->TS enum drift.
-  //
-  // This config is NOT the production gate. tsconfig.app.json is — it drops
-  // the Node types so process/Buffer/require cannot type-check in browser
-  // code, where they would fail at runtime.
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "jsx": "react-jsx",
-    "strict": true,
-    "skipLibCheck": true,
-    "noEmit": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client", "node"]
-  },
-  "include": ["src"]
+  // tsconfig.app.json is the production gate (no Node types in browser code);
+  // tsconfig.test.json adds them for the tests; tsconfig.node.json is ship's,
+  // for vite.config.ts.
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.test.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
 }

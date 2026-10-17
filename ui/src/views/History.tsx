@@ -177,6 +177,7 @@ export function History({
   const answeredQuery = useRef(debouncedSearch);
   // now is captured once per render pass for the relative-time labels and the
   // day names; it does not tick, which is fine for a log.
+  // eslint-disable-next-line react-hooks/purity -- read per render on purpose, see above
   const now = Date.now();
 
   // The newest page, refetched whenever the search changes. On a CHANGED query
@@ -240,6 +241,7 @@ export function History({
   // active search so a fresh arrival can't slip past the box.
   useEffect(() => {
     if (live.length === 0) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- merges the live buffer into the paged rows
     setPast((prev) => {
       const seen = new Set(prev.map((e) => e.id));
       const fresh = live.filter(

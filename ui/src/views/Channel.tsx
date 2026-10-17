@@ -219,6 +219,7 @@ export function Channel({
 
   useEffect(() => {
     channelIdRef.current = channelId;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a reset keyed on the channel
     setDetail(null);
     setTab("archive");
     setDescOpen(false);
@@ -237,6 +238,7 @@ export function Channel({
   // leaves its "Queued" state without a reload. Declared after the reset above
   // so an open finds the page cleared before the fetch is fired.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clears the error before refetching the channel
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId, newestScan]);

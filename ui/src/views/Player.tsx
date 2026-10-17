@@ -27,7 +27,7 @@ import { ShareControl } from "../components/ShareControl";
 import type { Video, VideoEmbeddings } from "../api/types";
 import type { SummaryStatus } from "../api/enums";
 import { ApiError } from "../api/http";
-import { formatDuration, gradientClassFor } from "../format";
+import { gradientClassFor } from "../format";
 // Only the download filename helper is needed here now: parsing, finding and
 // copying all moved into components/TranscriptCard with the markup.
 import { transcriptFilenameBase } from "../vtt";
@@ -110,11 +110,6 @@ function writeDetailsOpen(open: boolean) {
     /* storage blocked — the panel still opens, it just forgets. */
   }
 }
-
-// fmt is the Task 17 alias for formatDuration used throughout the
-// intelligence panels below (chapters/highlights/transcript cues) — kept as
-// its own name to match the brief's `fmt(ts)` calls.
-const fmt = formatDuration;
 
 // Player — the "Now playing" view: an HTML5 <video> stage with a custom
 // scrubber (SponsorBlock overlay + auto-skip), resume tracking, the
@@ -290,6 +285,7 @@ function PlayerImpl({
   } | null>(null);
   useEffect(() => {
     if (!videoId || directStreamNow === null) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- pins the preference once per video
     setDirectStreamFor((prev) =>
       prev && prev.id === videoId ? prev : { id: videoId, on: directStreamNow },
     );
@@ -402,6 +398,7 @@ function PlayerImpl({
 
   useEffect(() => {
     resumeAppliedRef.current = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a reset keyed on the video
     setVideo(null);
     setError(null);
     clearToast();
@@ -436,7 +433,7 @@ function PlayerImpl({
     return () => {
       active = false;
     };
-  }, [videoId]);
+  }, [videoId, clearToast, stateVersionRef]);
 
   // Record this video as "now playing" server-side, so the rail opens it on
   // every device instead of only in the tab that started it. Its own effect
@@ -567,6 +564,7 @@ function PlayerImpl({
     // one request — it needs a transcript to have arrived under an open page.
     if (summaryEvent.status !== "done" && video?.has_subtitles !== false) {
       const status = summaryEvent.status;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- patches the page from an arrived event
       setVideo((prev) => (prev ? { ...prev, summary_status: status } : prev));
       return;
     }
@@ -584,6 +582,7 @@ function PlayerImpl({
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on event arrival; has_subtitles is read, not tracked
   }, [videoId, summaryEvent]);
 
   // Index stats for the Details panel's Search index group. Fetched with the
@@ -598,6 +597,7 @@ function PlayerImpl({
   // throughout — a failure leaves the group out rather than putting an error
   // in the card.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a reset keyed on the video and its index
     setIndexStats(null);
     if (!videoId || isPhone || !video?.indexed) return;
     let cancelled = false;
@@ -687,7 +687,6 @@ function PlayerImpl({
     // at that moment. Without it this effect would run early, find no track,
     // return unstamped — and never run again, so a "subtitles on by default"
     // preference would silently never apply.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video?.id, video?.has_subtitles, subtitlesDefault, subtitlesReadyFor]);
 
   if (!videoId) {
