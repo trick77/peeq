@@ -123,10 +123,12 @@ type Deps struct {
 	// OnKeptPurged fires when a keep_reads switch-off purge for a channel
 	// settles. Test-only, like OnChannelArt. nil in production.
 	OnKeptPurged func(channelID string)
-	// ResumeKeptPurges runs the switch-off purge again for every channel whose
-	// keep_reads is off, in the background, from New: it finishes a purge a
-	// shutdown cut short. main.go sets it; tests leave it off.
-	ResumeKeptPurges bool
+	// StartWorker, when set, is handed the long-running work New owns — the
+	// boot pass finishing any keep_reads switch-off purge a shutdown cut
+	// short — so the process starts it with its other workers and waits for
+	// it on shutdown. main.go passes its startWorker; nil (tests) starts
+	// nothing.
+	StartWorker func(name string, run func(context.Context))
 	// QueueThumbnail asks for an inbox poster to be fetched in the background
 	// (scan.Scheduler.QueueThumbnail) and reports whether it is on its way.
 	// Optional: when nil, a missing poster just stays the placeholder.
@@ -285,6 +287,8 @@ type server struct {
 	purgeInFlight map[string]bool
 	purgeRerun    map[string]bool
 	onKeptPurged  func(channelID string)
+	// onPurgePass fires at the start of every purge pass. Test-only.
+	onPurgePass func(channelID string)
 	// artMu guards artInFlight: channels whose art is being fetched, so a
 	// repeated Refresh does not queue the same two turns again.
 	artMu       sync.Mutex
@@ -398,8 +402,8 @@ func New(d Deps) http.Handler {
 		}
 	}
 
-	if d.ResumeKeptPurges && s.channels != nil && s.videos != nil {
-		go s.resumeKeptPurges()
+	if d.StartWorker != nil && s.channels != nil && s.videos != nil {
+		d.StartWorker("keep reads purge", s.resumeKeptPurges)
 	}
 
 	mux := http.NewServeMux()

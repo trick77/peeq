@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -101,8 +102,15 @@ func TestResumeKeptPurges_finishesAPurgeAtBoot(t *testing.T) {
 	seedOffChannelTomb(t, deps)
 	purged := make(chan string, 1)
 	deps.OnKeptPurged = func(id string) { purged <- id }
-	deps.ResumeKeptPurges = true
+	var started string
+	deps.StartWorker = func(name string, run func(context.Context)) {
+		started = name
+		go run(context.Background())
+	}
 	New(deps)
+	if started != "keep reads purge" {
+		t.Fatalf("worker started = %q, want keep reads purge", started)
+	}
 	select {
 	case id := <-purged:
 		if id != "UCk" {
@@ -121,11 +129,13 @@ func TestResumeKeptPurges_finishesAPurgeAtBoot(t *testing.T) {
 func TestClaimPurge_overlappingOffAsksForARerun(t *testing.T) {
 	deps := channelsTestDeps(t, &testResolver{})
 	seedOffChannelTomb(t, deps)
+	passes := 0
 	s := &server{
 		channels:      deps.Channels,
 		videos:        deps.Videos,
 		purgeInFlight: map[string]bool{},
 		purgeRerun:    map[string]bool{},
+		onPurgePass:   func(string) { passes++ },
 	}
 	if !s.claimPurge("UCk") {
 		t.Fatal("first claim refused")
@@ -137,6 +147,9 @@ func TestClaimPurge_overlappingOffAsksForARerun(t *testing.T) {
 		t.Fatal("overlapping off did not ask for a rerun")
 	}
 	s.runPurge("UCk")
+	if passes != 2 {
+		t.Fatalf("purge passes = %d, want 2 (the run plus the asked-for rerun)", passes)
+	}
 	if s.purgeInFlight["UCk"] || s.purgeRerun["UCk"] {
 		t.Fatalf("claim not released: inflight=%v rerun=%v", s.purgeInFlight["UCk"], s.purgeRerun["UCk"])
 	}

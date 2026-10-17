@@ -838,8 +838,8 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 		// Off takes away what the switch kept so far; the UI has confirmed it
 		// with the counts from /keep-reads/impact. Started on every off, not
 		// only on an on→off edge, so a purge that stopped early (a failed
-		// write) also finishes on the next one; the boot pass in main.go
-		// finishes one a shutdown cut short.
+		// write) also finishes on the next one; resumeKeptPurges, started
+		// as a worker at boot, finishes one a shutdown cut short.
 		if !keepReads {
 			s.purgeKeptAsync(id)
 		}

@@ -486,9 +486,8 @@ func run() error {
 		Images:          runner.FetchImage,
 		QueueThumbnail:  scheduler.QueueThumbnail,
 		Background:      ctx,
-		// Finishes any keep_reads switch-off purge a shutdown cut short.
-		ResumeKeptPurges: true,
-		Ledger:           ledgerStore,
+		StartWorker:     startWorker,
+		Ledger:          ledgerStore,
 
 		Rag:               ragStore,
 		Embedder:          embedClient,

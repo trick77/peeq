@@ -18,9 +18,11 @@ import (
 // What keeps the video gone is its channel_videos ledger row: a scan skips any
 // video the ledger knows, except one parked as 'unavailable', which it revives
 // when no downloaded videos row says otherwise — and after a purge there is no
-// row at all; a 'pending' one would sit in the New tab again. So the ledger
-// row is settled at 'queued' (approved, done with),
-// and written if the video never had one (added by URL or the extension),
+// row at all; a 'pending' one would sit in the New tab again. So such a ledger
+// row is settled at 'queued' (approved, done with). The terminal states —
+// 'seen', 'ignored', 'queued' — are left as they are: a scan never revisits
+// them, and 'ignored' records the user's own decision. A missing row is
+// written (the video was added by URL or the extension),
 // dated by when peeq first had the video rather than now: discovered_at feeds
 // the channel's latest-video date and the dormancy check, and a delete is not
 // a discovery. The

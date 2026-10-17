@@ -47,18 +47,18 @@ func (s *server) purgeKeptAsync(channelID string) {
 }
 
 // resumeKeptPurges runs a switch-off purge for every channel whose keep_reads
-// is off, one channel after another. Started from New when Deps asks for it
-// (main.go does): a purge runs in the background of the request that turned
-// the switch off, so a shutdown can cut it short, and this finishes it. On a
-// channel with nothing kept it is one query.
-func (s *server) resumeKeptPurges() {
+// is off, one channel after another. New hands it to Deps.StartWorker, so it
+// runs as a tracked worker: a purge runs in the background of the request that
+// turned the switch off, so a shutdown can cut it short, and this finishes it.
+// On a channel with nothing kept it is one query.
+func (s *server) resumeKeptPurges(ctx context.Context) {
 	ids, err := s.channels.KeepReadsOff()
 	if err != nil {
 		slog.Error("keep reads purge: list channels failed", "err", err)
 		return
 	}
 	for _, id := range ids {
-		if s.purgeBase().Err() != nil {
+		if ctx.Err() != nil || s.purgeBase().Err() != nil {
 			return
 		}
 		if s.claimPurge(id) {
@@ -90,9 +90,15 @@ func (s *server) runPurge(channelID string) {
 		if r := recover(); r != nil {
 			slog.Error("keep reads purge: recovered from panic", "channel_id", channelID, "panic", r)
 			s.purgeMu.Lock()
+			again := s.purgeRerun[channelID]
 			delete(s.purgeInFlight, channelID)
 			delete(s.purgeRerun, channelID)
 			s.purgeMu.Unlock()
+			// A switch-off that arrived during the failed pass still asked
+			// for one; honour it in a fresh goroutine rather than drop it.
+			if again {
+				s.purgeKeptAsync(channelID)
+			}
 		}
 		if s.onKeptPurged != nil {
 			s.onKeptPurged(channelID)
@@ -117,6 +123,9 @@ func (s *server) runPurge(channelID string) {
 // the switch reads on again, so turning it back on halfway keeps whatever was
 // not reached yet; a read that fails also stops it: when in doubt, keep.
 func (s *server) purgeOnce(channelID string) {
+	if s.onPurgePass != nil {
+		s.onPurgePass(channelID)
+	}
 	base := s.purgeBase()
 	stillOff := func() bool {
 		if base.Err() != nil {
