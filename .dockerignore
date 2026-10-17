@@ -1,44 +1,38 @@
-# The build context is the repo root (release.yaml passes `context: .`), and the
-# Containerfile does a wholesale `COPY ui/ ./` and `COPY backend/ ./`. Without
-# this file a local build copies the host's ui/node_modules — darwin-arm64 native
-# binaries — straight over the Alpine `npm ci` result from the line above it.
-#
-# Deliberately does NOT ignore backend/web/dist: the committed index.html stub
-# there is what lets `//go:embed all:dist` compile before the real Vite bundle is
-# copied in from the ui stage. Ignoring it breaks the Go build.
-
-.git
-.github
-.claude
-.superpowers
-.DS_Store
-
-node_modules
+# ship:begin (owned by ship init; repo-specific lines go below the end marker)
+# Allowlist: the images build from the dirs below only. A new root-level file stays out of the context without anyone
+# having to remember this list. BuildKit reads the -f Containerfile outside these rules.
+*
+!backend
+!ui
+# The host's node_modules (darwin native binaries) would land on top of the image's own install; the image builds
+# dist itself.
 ui/node_modules
+ui/dist
 ui/coverage
-extension/node_modules
-extension/e2e/node_modules
+# The host's UI build in the Go tree: the image builds dist in its own stage, a stale one must not come in with the
+# context.
+backend/web/dist
+# ship:end
 
-bin
-*.test
-*.db
-*.db-*
+# Under the allowlist above only backend/ and ui/ reach the context; these
+# keep what the host writes inside them out of it.
+**/node_modules
+**/.DS_Store
+**/bin
+**/*.test
+**/*.db
+**/*.db-*
+**/logs
+**/test-results
+**/playwright-report
 
-.env
-.env.*
-!.env.example
-/data
-logs
-
-# Playwright output from extension/e2e.
-test-results
-playwright-report
+**/.env
+**/.env.*
+!**/.env.example
 
 # Live session credentials — must never enter a build context, let alone a layer.
 # Mirrors the .gitignore rules; see the comments there for why these are broad.
-Cookies.binarycookies
-*.binarycookies
-*cookies*.txt
-*cookies*.json
-
-docs
+**/Cookies.binarycookies
+**/*.binarycookies
+**/*cookies*.txt
+**/*cookies*.json

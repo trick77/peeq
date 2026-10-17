@@ -37,7 +37,7 @@ node -e '
   const path = process.argv[1];
   const version = process.argv[2];
   if (!/^\d+\.\d+\.\d+$/.test(version)) {
-    console.error(`refusing to stamp a non-numeric version: ${version}`);
+    console.error("refusing to stamp a non-numeric version: " + version);
     process.exit(1);
   }
   const manifest = JSON.parse(fs.readFileSync(path, "utf8"));

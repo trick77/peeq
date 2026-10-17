@@ -1,0 +1,37 @@
+name: Extension e2e
+
+# The extension in a real Chromium (Playwright): the seam between manifest.json
+# and Chrome's permission model, which no unit test reaches. CI only, not a
+# ship.yaml step: npm ci plus a browser on every push is too slow for the
+# pre-push hook. The extension's unit tests and the cookie fixture stay in
+# ship check.
+on:
+  pull_request:
+    branches: [master]
+    paths: ["extension/**", ".github/workflows/extension-e2e.yaml", "ui/.nvmrc"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: extension/e2e
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ui/.nvmrc
+          cache: npm
+          cache-dependency-path: extension/e2e/package-lock.json
+      - run: npm ci
+      - run: npx playwright install chromium --with-deps
+      - run: npm test

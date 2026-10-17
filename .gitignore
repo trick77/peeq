@@ -1,11 +1,8 @@
 bin/
 node_modules
-coverage/
 # Finder metadata. macOS drops these into any directory it browses, so the
 # rule is bare (no leading slash) and matches at every depth.
 .DS_Store
-# tsc -b build-mode stamp file, written by the UI typecheck.
-ui/tsconfig.tsbuildinfo
 # Playwright run output from extension/e2e.
 test-results/
 playwright-report/
@@ -27,8 +24,6 @@ playwright-report/
 !.env.example
 /data/
 .superpowers/
-backend/web/dist/*
-!backend/web/dist/index.html
 
 # Browser cookie material — never commit. Cookies.binarycookies is Safari's
 # jar for EVERY site, not just YouTube; the .txt forms are Netscape exports
@@ -43,3 +38,13 @@ Cookies.binarycookies
 # Local Claude Code settings
 .claude/
 .agents/
+
+# ship:begin (owned by ship init; the repo's own lines go above the begin marker)
+# What the gate and the UI build write into the tree.
+coverage/ui/
+ui/node_modules/
+ui/*.tsbuildinfo
+# The UI build the Go binary embeds; .gitkeep stays tracked so go:embed's dir exists in a fresh clone.
+backend/web/dist/*
+!backend/web/dist/.gitkeep
+# ship:end

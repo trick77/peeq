@@ -1,0 +1,20 @@
+go:
+  dir: backend
+ui:
+  embed: backend/web/dist
+steps:
+  - { name: extension test, run: npm test, dir: extension }
+  # The Go cookie parser is tested against what the extension's serializer
+  # writes; a serializer change must come with the regenerated fixture.
+  - name: cookie fixture
+    dir: extension
+    run: f=$(mktemp "${TMPDIR:-/tmp}/fixture.XXXXXX") && node testdata/generate_fixture.js > "$f"; diff -u ../backend/internal/cookie/testdata/extension_output.txt "$f"; rc=$?; rm -f "$f"; exit $rc
+images:
+  - { containerfile: backend/Containerfile }
+visibility: public
+allow:
+  - { rule: distroless, why: "ffmpeg, yt-dlp and deno need glibc and a userland" }
+dependabot:
+  ignore:
+    - { ecosystem: gomod, dependency: github.com/ncruces/go-sqlite3, why: "pinned with sqlite-vec-go-bindings; the pair moves together by hand" }
+    - { ecosystem: gomod, dependency: github.com/asg017/sqlite-vec-go-bindings, why: "pinned with ncruces/go-sqlite3; the pair moves together by hand" }

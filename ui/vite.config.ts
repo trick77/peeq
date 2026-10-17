@@ -46,10 +46,9 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     coverage: {
       provider: "v8",
-      // json-summary is what scripts/coverage-gate.sh reads (the project floor);
-      // lcov is what diff-cover reads in scripts/patch-coverage.sh (patch
-      // coverage); text-summary is for humans reading the CI log.
-      reporter: ["text-summary", "json-summary", "lcov"],
+      // lcov is what ship check reads (the UI floor and the patch gate; its
+      // ui.test passes the reporters itself); text-summary is for humans.
+      reporter: ["text-summary", "lcov"],
       reportsDirectory: "../coverage/ui",
       // Without an explicit include, the v8 provider only instruments files that
       // some test actually imports. A source file nobody tests then contributes
