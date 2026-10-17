@@ -90,6 +90,11 @@ type SearchResult struct {
 	// SemanticDegraded is set when a hybrid search ran keyword-only because the
 	// query could not be embedded or the vector lane failed.
 	SemanticDegraded bool
+	// KeywordFailed is the keyword lane failing before it found anything, so
+	// the results are semantic matches only. KeywordPartial is a later
+	// keyword rung failing after earlier ones found matches.
+	KeywordFailed  bool
+	KeywordPartial bool
 }
 
 // VideoHits is one video and the moments in it that matched, best first.

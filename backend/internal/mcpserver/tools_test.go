@@ -210,6 +210,19 @@ func TestSearch_degradedIsSaid(t *testing.T) {
 	}
 }
 
+func TestSearch_keywordNotes(t *testing.T) {
+	lib := searchFixture()
+	lib.result.KeywordFailed = true
+	if text := toolText(t, callTool(t, lib, "search", map[string]any{"query": "x"})); !strings.Contains(text, "keyword search was unavailable; these are semantic matches only") {
+		t.Errorf("text = %q", text)
+	}
+	lib = searchFixture()
+	lib.result.KeywordPartial = true
+	if text := toolText(t, callTool(t, lib, "search", map[string]any{"query": "x"})); !strings.Contains(text, "part of the keyword search failed") {
+		t.Errorf("text = %q", text)
+	}
+}
+
 func TestSearch_failureIsAToolError(t *testing.T) {
 	lib := searchFixture()
 	lib.searchErr = fmt.Errorf("disk on fire")

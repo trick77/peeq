@@ -115,6 +115,12 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) toolResult {
 	if res.SemanticDegraded && !q.Keyword {
 		b.WriteString("Note: semantic search was unavailable, so these are keyword-only results.\n\n")
 	}
+	switch {
+	case res.KeywordFailed:
+		b.WriteString("Note: keyword search was unavailable; these are semantic matches only.\n\n")
+	case res.KeywordPartial:
+		b.WriteString("Note: part of the keyword search failed; some matches may be missing.\n\n")
+	}
 	if len(res.Videos) == 0 {
 		b.WriteString("No videos in peeq match this search.")
 		if len(q.Channel.Matched) > 0 || q.Category != "" || q.YouTubeCategory != "" || q.After != "" || q.Before != "" {
