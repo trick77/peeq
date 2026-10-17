@@ -43,6 +43,9 @@ type Filter struct {
 	// does it say about Y". Costs one more predicate now that the KNN can
 	// pre-filter at all.
 	VideoIDs []string
+	// YouTubeCategory scopes to videos whose yt_categories (YouTube's own
+	// labels, a JSON array) holds this entry, case-insensitively and exactly.
+	YouTubeCategory string
 }
 
 // Empty reports that this filter selects the whole library, so the caller can
@@ -52,7 +55,7 @@ func (f Filter) Empty() bool {
 	return len(f.ChannelIDs) == 0 && len(f.ChannelNames) == 0 &&
 		f.Watched == nil && f.Favorite == nil &&
 		f.Category == "" && f.After == "" && f.Before == "" &&
-		len(f.VideoIDs) == 0
+		len(f.VideoIDs) == 0 && f.YouTubeCategory == ""
 }
 
 // predicates builds the WHERE fragments against a `videos` row aliased as alias,
@@ -119,6 +122,15 @@ func (f Filter) predicates(alias string) ([]string, []any) {
 	if len(f.VideoIDs) > 0 {
 		conds = append(conds, col("id")+" IN ("+store.Placeholders(len(f.VideoIDs))+")")
 		args = append(args, toAny(f.VideoIDs)...)
+	}
+
+	if f.YouTubeCategory != "" {
+		// A row yt-dlp wrote malformed must not fail the whole search:
+		// json_each raises on invalid JSON, so it reads '[]' instead.
+		yt := col("yt_categories")
+		conds = append(conds, "EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid("+yt+") THEN "+yt+
+			" ELSE '[]' END) WHERE value = ? COLLATE NOCASE)")
+		args = append(args, f.YouTubeCategory)
 	}
 	return conds, args
 }

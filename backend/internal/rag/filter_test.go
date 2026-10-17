@@ -196,6 +196,42 @@ func TestSearchFTSFiltered(t *testing.T) {
 	}
 }
 
+// YouTubeCategory matches any entry of the yt_categories JSON array,
+// case-insensitively and exactly, in both lanes.
+func TestFilterYouTubeCategory(t *testing.T) {
+	db, s, q := filterFixture(t)
+	ctx := context.Background()
+	if _, err := db.Exec(`UPDATE videos SET yt_categories = '["Science & Technology","Education"]' WHERE id = 'b1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE videos SET yt_categories = '["Science & Technology Extra"]' WHERE id = 'a1'`); err != nil {
+		t.Fatal(err)
+	}
+	f := Filter{YouTubeCategory: "science & TECHNOLOGY"}
+
+	fts, err := s.SearchFTSFiltered(ctx, "ontology", 200, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fts) != 1 || fts[0].VideoID != "b1" {
+		t.Fatalf("FTS = %+v, want only b1 (exact entry match, not a substring)", fts)
+	}
+	vec, err := s.RetrieveWithinFiltered(ctx, q, 40, 0, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vec) != 1 || vec[0].VideoID != "b1" {
+		t.Fatalf("vector = %+v, want only b1 even though Alpha is nearer", vec)
+	}
+	// Malformed JSON in the column must not fail the search.
+	if _, err := db.Exec(`UPDATE videos SET yt_categories = 'not json' WHERE id = 'a2'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SearchFTSFiltered(ctx, "ontology", 200, f); err != nil {
+		t.Fatalf("a malformed yt_categories row broke the search: %v", err)
+	}
+}
+
 // Legacy rows carry an empty channel_id, so a by-name arm has to exist — but it
 // must never widen a by-id match into a by-name one on rows that DO have an id.
 func TestFilterChannelNameFallback(t *testing.T) {
@@ -247,6 +283,7 @@ func TestFilterEmpty(t *testing.T) {
 		"after":        {After: "2026-01-01"},
 		"before":       {Before: "2026-01-01"},
 		"video ids":    {VideoIDs: []string{"v1"}},
+		"yt category":  {YouTubeCategory: "Education"},
 	}
 	for name, f := range cases {
 		if f.Empty() {
