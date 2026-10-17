@@ -99,7 +99,9 @@ func Handler(inner slog.Handler) slog.Handler { return redactHandler{inner} }
 
 type redactHandler struct{ inner slog.Handler }
 
-func (h redactHandler) Enabled(ctx context.Context, l slog.Level) bool { return h.inner.Enabled(ctx, l) }
+func (h redactHandler) Enabled(ctx context.Context, l slog.Level) bool {
+	return h.inner.Enabled(ctx, l)
+}
 
 func (h redactHandler) Handle(ctx context.Context, r slog.Record) error {
 	out := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
