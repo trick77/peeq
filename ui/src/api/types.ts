@@ -416,8 +416,9 @@ export type AutoUnsubscribedChannel = {
 };
 
 // PendingItem mirrors httpapi.pendingItem — one channel_videos ledger entry
-// awaiting a keep/ignore decision. No local media yet, so only the remote
-// thumbnail_url is present (no thumbnail_path).
+// awaiting a keep/ignore decision. No local media yet: its poster comes from
+// pendingThumbnailUrl. The scan's remote thumbnail URL is deliberately never
+// sent — the browser must not load a YouTube host.
 export type PendingItem = {
   video_id: string;
   channel_id: string;
@@ -425,7 +426,6 @@ export type PendingItem = {
   title: string;
   duration_seconds: number;
   url: string;
-  thumbnail_url: string;
   // published_at is YYYY-MM-DD, absent when the scan never learned a date (an
   // older ledger row, healed on that channel's next scan). It is yt-dlp's
   // approximate tab date — a day coarser than the exact upload_date a
@@ -522,6 +522,11 @@ export type ChannelDetail = {
   added_at?: string;
 
   archived_count: number;
+  // indexed_count is how many of the channel's videos are in the search
+  // index, whatever their status: a tombstone takes only the media file, and a
+  // kept inbox read (keep_reads) was never downloaded, yet both stay
+  // searchable. The other counts here are downloaded-only.
+  indexed_count: number;
   runtime_seconds: number;
   disk_bytes: number;
   newest_published_at?: string;

@@ -13,7 +13,6 @@ function baseItem(overrides: Partial<PendingItem> = {}): PendingItem {
     title: "First pending video",
     duration_seconds: 125,
     url: "https://youtube.com/watch?v=v1",
-    thumbnail_url: "https://img.example/v1.jpg",
     published_at: "2026-07-20",
     discovered_at: "2026-07-21 09:00:00",
     summary_status: "done",
@@ -30,7 +29,6 @@ const itemB = baseItem({
   channel_id: "c2",
   channel_name: "Channel Two",
   title: "Second pending video",
-  thumbnail_url: "https://img.example/v2.jpg",
 });
 
 vi.mock("../api/pending", () => ({

@@ -444,6 +444,12 @@ export function Channel({
                 <div className="k">{detail.archived_count}</div>
                 <div className="l">archived</div>
               </div>
+              {/* Not downloaded-only like its neighbours: every video still in
+                  the search index, tombstoned and kept inbox reads included. */}
+              <div className="chan-stat">
+                <div className="k">{detail.indexed_count}</div>
+                <div className="l">searchable</div>
+              </div>
               <div className="chan-stat">
                 <div className="k">{formatRuntime(detail.runtime_seconds)}</div>
                 <div className="l">runtime</div>

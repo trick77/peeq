@@ -479,8 +479,8 @@ func New(d Deps) http.Handler {
 		// More specific than the SPA catch-all, so the share page (and only it)
 		// is served with link-preview meta injected; /s/ and /s/a/b still fall
 		// through to the SPA unchanged.
-		mux.HandleFunc("GET /s/{token}", s.handleShareShell)
-		mux.Handle("/", s.static)
+		mux.Handle("GET /s/{token}", withImagePolicy(http.HandlerFunc(s.handleShareShell)))
+		mux.Handle("/", withImagePolicy(s.static))
 	}
 
 	// recovery innermost so its 500 is written into the statusRecorder and the

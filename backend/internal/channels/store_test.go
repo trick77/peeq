@@ -613,6 +613,34 @@ func TestGetSubscription_errorsOnClosedDB(t *testing.T) {
 // TestStats_errorsOnClosedDB asserts a failed stats query is reported rather
 // than the channel page rendering zeroes as if the channel genuinely has no
 // downloads.
+// TestStats_indexedCountsEverySearchableVideo asserts IndexedCount is the
+// channel's footprint in the search index, whatever the status: a tombstoned
+// row and a kept inbox read are still searchable, a downloaded video not yet
+// embedded is not, and another channel's chunks do not leak in.
+func TestStats_indexedCountsEverySearchableVideo(t *testing.T) {
+	s := newTestStore(t)
+	db := s.DB()
+	mustExec(t, db, `INSERT INTO videos (id,url,channel_id,status) VALUES
+		('dl','u','UCa','downloaded'),
+		('tomb','u','UCa','tombstoned'),
+		('read','u','UCa','new'),
+		('bare','u','UCa','downloaded'),
+		('other','u','UCb','downloaded')`)
+	mustExec(t, db, `INSERT INTO transcript_chunks (video_id,ordinal,text) VALUES
+		('dl',0,'a'),('dl',1,'b'),('tomb',0,'c'),('read',0,'d'),('other',0,'e')`)
+
+	st, err := s.Stats("UCa", "")
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	if st.IndexedCount != 3 {
+		t.Fatalf("IndexedCount = %d, want 3 (dl, tomb, read)", st.IndexedCount)
+	}
+	if st.ArchivedCount != 2 {
+		t.Fatalf("ArchivedCount = %d, want 2", st.ArchivedCount)
+	}
+}
+
 func TestStats_errorsOnClosedDB(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.DB().Close(); err != nil {

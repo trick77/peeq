@@ -530,6 +530,28 @@ func TestChannelDetail_stats(t *testing.T) {
 	}
 }
 
+// TestChannelDetail_indexedCount asserts the header reports how many of the
+// channel's videos are searchable, tombstoned ones included — the media is
+// gone but the transcript and its index stay.
+func TestChannelDetail_indexedCount(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	h := New(deps)
+	seedVideoRowFull(t, deps, seedVideo{ID: "v1", ChannelID: "UCa", ChannelName: "A", Status: "downloaded"})
+	seedVideoRowFull(t, deps, seedVideo{ID: "v2", ChannelID: "UCa", ChannelName: "A", Status: "tombstoned"})
+	if _, err := deps.Channels.DB().Exec(
+		`INSERT INTO transcript_chunks (video_id, ordinal, text) VALUES ('v1',0,'a'),('v2',0,'b')`); err != nil {
+		t.Fatalf("seed chunks: %v", err)
+	}
+
+	body := getJSON(t, h, "/api/channels/UCa")
+	if !strings.Contains(body, `"indexed_count":2`) {
+		t.Fatalf("want indexed_count 2, got %s", body)
+	}
+	if !strings.Contains(body, `"archived_count":1`) {
+		t.Fatalf("want archived_count 1, got %s", body)
+	}
+}
+
 // TestChannelDetail_unknownChannel_404 asserts an id matching neither a
 // cached channel nor any video is a 404, not an empty page.
 func TestChannelDetail_unknownChannel_404(t *testing.T) {
@@ -2030,6 +2052,30 @@ func TestPendingList_channelParam_scopes(t *testing.T) {
 	body := getJSON(t, h, "/api/pending?channel=UCa")
 	if !strings.Contains(body, "va") || strings.Contains(body, "vb") {
 		t.Fatalf("pending scoping wrong: %s", body)
+	}
+}
+
+// TestPendingList_neverShipsTheRemoteThumbnail asserts the scan's YouTube
+// thumbnail URL stays server-side. The browser must never load a YouTube host;
+// the poster comes from /api/pending/{id}/thumbnail, and a URL the client never
+// receives is one no component can put in an <img>.
+func TestPendingList_neverShipsTheRemoteThumbnail(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	h := New(deps)
+	seedChannelAndPending(t, deps, "UCa", "va")
+	if _, err := deps.Channels.DB().Exec(
+		`UPDATE channel_videos SET thumbnail_url = 'https://i.ytimg.com/vi/va/hq720.jpg' WHERE video_id = 'va'`); err != nil {
+		t.Fatalf("seed thumbnail: %v", err)
+	}
+
+	for _, path := range []string{"/api/pending", "/api/pending?channel=UCa"} {
+		body := getJSON(t, h, path)
+		if !strings.Contains(body, "va") {
+			t.Fatalf("%s: item missing: %s", path, body)
+		}
+		if strings.Contains(body, "thumbnail_url") || strings.Contains(body, "ytimg") {
+			t.Fatalf("%s: remote thumbnail leaked to the client: %s", path, body)
+		}
 	}
 }
 
