@@ -6,6 +6,7 @@ package httpapi
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -20,13 +21,16 @@ import (
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/sse"
 )
 
 // Deps are the dependencies needed to build the server.
 type Deps struct {
-	// Version is the running build version, surfaced on /healthz.
+	// Version is the running build version, reported to MCP clients.
 	Version string
+	// Ready are /readyz's checks (httpx.Health); the database ping in main.
+	Ready []httpx.Check
 	// Static serves the embedded SPA; may be nil in tests.
 	Static http.Handler
 	// Shell is the SPA's index.html. /s/{token} is served from it with Open
@@ -407,9 +411,10 @@ func New(d Deps) http.Handler {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	httpx.Health(mux, nil, d.Ready...)
 	mux.HandleFunc("GET /api/auth/login", s.handleAuthLogin)
-	mux.HandleFunc("GET /api/auth/callback", s.handleAuthCallback)
+	tokenRoutes, streamRoutes := limiter(tokenRouteLimit), limiter(streamRouteLimit)
+	mux.Handle("GET /api/auth/callback", limiter(callbackLimit)(http.HandlerFunc(s.handleAuthCallback)))
 	mux.Handle("GET /api/auth/logout", s.requireAuth(http.HandlerFunc(s.handleAuthLogout)))
 	mux.Handle("GET /api/auth/me", s.requireAuth(http.HandlerFunc(s.handleAuthMe)))
 	mux.Handle("GET /api/videos", s.requireAuth(http.HandlerFunc(s.handleListVideos)))
@@ -433,12 +438,12 @@ func New(d Deps) http.Handler {
 	// Gated solely by the opaque token in the path (resolveShare); an unknown,
 	// expired, or revoked token is an indistinguishable 404. Stream is
 	// watch-only — no ?download.
-	mux.HandleFunc("GET /api/s/{token}", s.handleShareVideo)
-	mux.HandleFunc("GET /api/s/{token}/stream", s.handleShareStream)
-	mux.HandleFunc("GET /api/s/{token}/thumbnail", s.handleShareThumbnail)
-	mux.HandleFunc("GET /api/s/{token}/subtitles", s.handleShareSubtitles)
+	mux.Handle("GET /api/s/{token}", tokenRoutes(http.HandlerFunc(s.handleShareVideo)))
+	mux.Handle("GET /api/s/{token}/stream", streamRoutes(http.HandlerFunc(s.handleShareStream)))
+	mux.Handle("GET /api/s/{token}/thumbnail", tokenRoutes(http.HandlerFunc(s.handleShareThumbnail)))
+	mux.Handle("GET /api/s/{token}/subtitles", tokenRoutes(http.HandlerFunc(s.handleShareSubtitles)))
 	// The og:image behind a shared link's unfurl — same token gate, no video id.
-	mux.HandleFunc("GET /api/s/{token}/card.jpg", s.handleShareCard)
+	mux.Handle("GET /api/s/{token}/card.jpg", tokenRoutes(http.HandlerFunc(s.handleShareCard)))
 	// Direct playback: the owner mints a grant here (session-gated)...
 	mux.Handle("POST /api/videos/{id}/playback-grant", s.requireAuth(http.HandlerFunc(s.handleCreatePlaybackGrant)))
 	// ...and an AirPlay receiver, which sends no cookie, fetches the media here.
@@ -446,7 +451,7 @@ func New(d Deps) http.Handler {
 	// token must never reveal the other. Additionally gated on the
 	// direct_stream_enabled setting, re-read per request so switching it off
 	// kills every outstanding grant immediately.
-	mux.HandleFunc("GET /api/p/{token}/stream", s.handleGrantStream)
+	mux.Handle("GET /api/p/{token}/stream", streamRoutes(http.HandlerFunc(s.handleGrantStream)))
 	// The "now playing" pointer: which video the rail reopens when the URL
 	// carries no id. Session-gated like everything else the SPA reads.
 	mux.Handle("GET /api/playback", s.requireAuth(http.HandlerFunc(s.handleGetPlaybackState)))
@@ -523,15 +528,19 @@ func New(d Deps) http.Handler {
 		// More specific than the SPA catch-all, so the share page (and only it)
 		// is served with link-preview meta injected; /s/ and /s/a/b still fall
 		// through to the SPA unchanged.
-		mux.Handle("GET /s/{token}", http.HandlerFunc(s.handleShareShell))
+		mux.Handle("GET /s/{token}", tokenRoutes(http.HandlerFunc(s.handleShareShell)))
 		mux.Handle("/", s.static)
 	}
 
-	// recovery innermost so its 500 is written into the statusRecorder and the
-	// request still gets an access-log line; logging's own body cannot panic.
-	// The image policy goes on every response, not per HTML route: a page
-	// served by a handler added later is covered without remembering to wrap it.
-	return logging(recovery(withImagePolicy(mux)))
+	// Recover inside AccessLog, so a panic's 500 still gets an access line
+	// carrying the request id. The security headers go outside Recover: its
+	// 500 keeps what the outer middleware set.
+	return httpx.MaxBody(maxRequestBody)(httpx.Chain(mux,
+		httpx.AccessLog(nil, httpx.AccessLogOptions{ClientIP: clientIP, Path: maskPath, RoutineLevel: slog.LevelInfo}),
+		httpx.SecurityHeaders(csp),
+		httpx.RecoverWith(nil, httpx.RecoverOptions{Path: maskPath}),
+		httpx.CrossOrigin,
+	))
 }
 
 // requireAuth wraps next with session authentication. If no middleware is
@@ -541,7 +550,7 @@ func New(d Deps) http.Handler {
 func (s *server) requireAuth(next http.Handler) http.Handler {
 	if s.authMW == nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		})
 	}
 	return s.authMW.RequireAuth(next)
@@ -552,7 +561,7 @@ func (s *server) requireAuth(next http.Handler) http.Handler {
 func (s *server) requireToken(next http.Handler) http.Handler {
 	if s.tokenMW == nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		})
 	}
 	return s.tokenMW.RequireToken(next)

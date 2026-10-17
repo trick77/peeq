@@ -34,7 +34,7 @@ func (m *TokenMiddleware) RequireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		presented, ok := httpx.Bearer(r)
 		if !ok {
-			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		// A nil lookup or an empty stored hash both fail closed.
@@ -43,7 +43,7 @@ func (m *TokenMiddleware) RequireToken(next http.Handler) http.Handler {
 			stored = m.tokens.APITokenHash(r.Context())
 		}
 		if !apitoken.Verify(presented, stored) {
-			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		next.ServeHTTP(w, r)

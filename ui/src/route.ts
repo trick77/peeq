@@ -10,9 +10,10 @@
 // (library filters, in-transcript search text, the scrub position) stays in
 // its own component and is intentionally NOT reflected in the URL.
 //
-// The backend already serves index.html for any unknown path (see
-// backend/web/embed.go), so this is a pure-frontend concern — a cold-loaded
-// deep link reaches the SPA, which then parses the path here.
+// The backend serves index.html on these paths' first segments (the routes
+// allowlist in backend/web/embed.go, which must list every case below), so a
+// cold-loaded deep link reaches the SPA, which then parses the path here. Any
+// other path is a 404 there, so the default case only sees in-app navigation.
 
 import {
   useCallback,

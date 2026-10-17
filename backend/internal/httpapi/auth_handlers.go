@@ -1,12 +1,12 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
 	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/logx"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // handleAuthLogin starts a login. In dev mode (DevAuthClaims.Subject set) it
@@ -18,7 +18,7 @@ func (s *server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.authSvc.OIDCConfigured() {
-		writeJSONError(w, http.StatusServiceUnavailable, "oidc is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "oidc is not configured")
 		return
 	}
 	s.authSvc.StartLogin(w, r)
@@ -29,7 +29,7 @@ func (s *server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 // linger for their full ~10 minute lifetime.
 func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if !s.authSvc.OIDCConfigured() {
-		writeJSONError(w, http.StatusServiceUnavailable, "oidc is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "oidc is not configured")
 		return
 	}
 	claims, err := s.authSvc.HandleCallback(r)
@@ -51,12 +51,12 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 // session, sets the session cookie, and redirects to the app root.
 func (s *server) createSessionFromClaims(w http.ResponseWriter, r *http.Request, claims auth.Claims) {
 	if s.authSvc == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "auth is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "auth is not configured")
 		return
 	}
 	session, _, err := s.authSvc.CreateSessionFromClaims(r.Context(), claims)
 	if err != nil {
-		serverError(w, r, err, "session create failed")
+		httpx.ServerError(w, r, err, "session create failed")
 		return
 	}
 	http.SetCookie(w, s.authSvc.CookieFor(session.Token, session.ExpiresAt))
@@ -65,7 +65,7 @@ func (s *server) createSessionFromClaims(w http.ResponseWriter, r *http.Request,
 
 func (s *server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	if s.authSvc == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "auth is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "auth is not configured")
 		return
 	}
 	if cookie, err := r.Cookie(auth.SessionCookieName); err == nil {
@@ -76,30 +76,14 @@ func (s *server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.SetCookie(w, s.authSvc.ClearCookie())
-	writeJSON(w, map[string]string{"redirectUrl": "/"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"redirectUrl": "/"})
 }
 
 func (s *server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 	user, ok := auth.UserFromContext(r.Context())
 	if !ok {
-		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+		httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	writeJSON(w, user)
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	writeJSONStatus(w, http.StatusOK, v)
-}
-
-func writeJSONStatus(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeJSONError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+	httpx.WriteJSON(w, http.StatusOK, user)
 }

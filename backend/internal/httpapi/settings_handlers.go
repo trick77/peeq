@@ -8,6 +8,7 @@ import (
 	"github.com/trick77/peeq/internal/cookie"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/ytdlp"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // settingsPatchRequest is the request body for PUT /api/settings. It never
@@ -34,15 +35,15 @@ type cookiePutRequest struct {
 // here even by accident.
 func (s *server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	if s.settings == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "settings are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "settings are not configured")
 		return
 	}
 	got, err := s.settings.Get(r.Context())
 	if err != nil {
-		serverError(w, r, err, "failed to load settings")
+		httpx.ServerError(w, r, err, "failed to load settings")
 		return
 	}
-	writeJSON(w, got)
+	httpx.WriteJSON(w, http.StatusOK, got)
 }
 
 // handlePutSettings updates the non-secret settings fields (presets,
@@ -50,11 +51,11 @@ func (s *server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 // never accepted here.
 func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if s.settings == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "settings are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "settings are not configured")
 		return
 	}
 	var req settingsPatchRequest
-	if !decodeJSON(w, r, &req, maxJSONBody, "invalid request body") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxJSONBody, httpx.DecodeOptions{BadRequest: "invalid request body"}) {
 		return
 	}
 	// Reject negative numeric settings before they can be persisted: a
@@ -73,7 +74,7 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		{"min_video_duration_seconds", req.MinVideoDurationSeconds},
 	} {
 		if f.val != nil && *f.val < 0 {
-			writeJSONError(w, http.StatusBadRequest, f.name+" must not be negative")
+			httpx.WriteError(w, http.StatusBadRequest, f.name+" must not be negative")
 			return
 		}
 	}
@@ -86,7 +87,7 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	// straight back over what 0021_retire_apple_720p.sql just fixed. Refuse
 	// it at the door, the way PUT /api/channels/{id} refuses "custom".
 	if req.FormatPreset != nil && *req.FormatPreset != "custom" && !ytdlp.IsPreset(*req.FormatPreset) {
-		writeJSONError(w, http.StatusBadRequest,
+		httpx.WriteError(w, http.StatusBadRequest,
 			"unknown format_preset "+strconv.Quote(*req.FormatPreset))
 		return
 	}
@@ -104,15 +105,15 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		DirectStreamEnabled: req.DirectStreamEnabled,
 	}
 	if err := s.settings.Update(r.Context(), patch); err != nil {
-		serverError(w, r, err, "failed to update settings")
+		httpx.ServerError(w, r, err, "failed to update settings")
 		return
 	}
 	got, err := s.settings.Get(r.Context())
 	if err != nil {
-		serverError(w, r, err, "failed to load settings")
+		httpx.ServerError(w, r, err, "failed to load settings")
 		return
 	}
-	writeJSON(w, got)
+	httpx.WriteJSON(w, http.StatusOK, got)
 }
 
 // machineCookieAck is the machine route's deliberately minimal response. A
@@ -145,25 +146,25 @@ func (s *server) handleMachineCookie(w http.ResponseWriter, r *http.Request) {
 // deliberately narrow response over the full settings view.
 func (s *server) applyCookie(w http.ResponseWriter, r *http.Request, minimalAck bool) {
 	if s.settings == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "settings are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "settings are not configured")
 		return
 	}
 	var req cookiePutRequest
-	if !decodeJSON(w, r, &req, maxCookieBody, "invalid request body") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxCookieBody, httpx.DecodeOptions{BadRequest: "invalid request body"}) {
 		return
 	}
 	if req.Cookie == "" {
-		writeJSONError(w, http.StatusBadRequest, "cookie is required")
+		httpx.WriteError(w, http.StatusBadRequest, "cookie is required")
 		return
 	}
 	if err := s.settings.SetCookie(r.Context(), req.Cookie, settings.CookieValid); err != nil {
 		// Validate's errors already read "invalid cookie: …", so the 400 body is
 		// unchanged; anything else is the row failing to write, which is ours.
 		if errors.Is(err, cookie.ErrInvalid) {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		serverError(w, r, err, "store cookie failed")
+		httpx.ServerError(w, r, err, "store cookie failed")
 		return
 	}
 	// A valid cookie is now stored: un-wedge the download worker if it paused
@@ -174,15 +175,15 @@ func (s *server) applyCookie(w http.ResponseWriter, r *http.Request, minimalAck 
 		s.worker.Resume()
 	}
 	if minimalAck {
-		writeJSON(w, machineCookieAck{Status: "valid", Present: true})
+		httpx.WriteJSON(w, http.StatusOK, machineCookieAck{Status: "valid", Present: true})
 		return
 	}
 	got, err := s.settings.Get(r.Context())
 	if err != nil {
-		serverError(w, r, err, "failed to load settings")
+		httpx.ServerError(w, r, err, "failed to load settings")
 		return
 	}
-	writeJSON(w, got)
+	httpx.WriteJSON(w, http.StatusOK, got)
 }
 
 // cookieHealthResponse reports whether a usable cookie is stored, without
@@ -197,15 +198,15 @@ type cookieHealthResponse struct {
 // user to (re)paste one, without ever exposing the cookie body itself.
 func (s *server) handleCookieHealth(w http.ResponseWriter, r *http.Request) {
 	if s.settings == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "settings are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "settings are not configured")
 		return
 	}
 	got, err := s.settings.Get(r.Context())
 	if err != nil {
-		serverError(w, r, err, "failed to load settings")
+		httpx.ServerError(w, r, err, "failed to load settings")
 		return
 	}
-	writeJSON(w, cookieHealthResponse{
+	httpx.WriteJSON(w, http.StatusOK, cookieHealthResponse{
 		Status:    got.CookieStatus,
 		UpdatedAt: got.CookieUpdatedAt,
 		Present:   got.CookieStatus != settings.CookieAbsent,

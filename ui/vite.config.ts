@@ -26,9 +26,10 @@ export default defineConfig({
   },
   server: {
     proxy: { "/api": "http://127.0.0.1:8080" },
-    // Same image policy the Go server sends (backend/internal/httpapi/csp.go),
-    // so a hotlinked YouTube image breaks under `make dev` too, not first in
-    // production. noyoutubehosts.test.ts keeps these strings identical.
+    // Same img-src the Go server sends (backend/internal/httpapi/csp.go), so a
+    // hotlinked YouTube image breaks under `make dev` too, not first in
+    // production. noyoutubehosts.test.ts keeps the directive identical. Only
+    // img-src: Go's default-src 'self' would block Vite's inline HMR preamble.
     headers: { "Content-Security-Policy": "img-src 'self' data: blob:" },
   },
   preview: {

@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/trick77/peeq/internal/logx"
 )
 
 // oidcStateCookieName and oidcNonceCookieName mirror the unexported cookie
@@ -26,7 +28,8 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
 	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	// Wrapped like the process's logger (main): every err attr is redacted.
+	slog.SetDefault(slog.New(logx.Handler(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	return &buf
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/ytdlp"
 	"github.com/trick77/peeq/internal/ytgate"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // defaultResolveCap bounds a channel metadata resolve, measured from the
@@ -156,20 +157,20 @@ func channelHandleFromURL(rawURL string) string {
 // invalid cookie as 409) → upsert the channel row → optionally subscribe.
 func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil || s.channelResolver == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	var req channelsPostRequest
-	if !decodeJSON(w, r, &req, maxJSONBody, "url is required") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxJSONBody, httpx.DecodeOptions{BadRequest: "url is required"}) {
 		return
 	}
 	if strings.TrimSpace(req.URL) == "" {
-		writeJSONError(w, http.StatusBadRequest, "url is required")
+		httpx.WriteError(w, http.StatusBadRequest, "url is required")
 		return
 	}
 	channelURL, _, kind, err := ytdlp.Canonicalize(req.URL)
 	if err != nil || kind != "channel" {
-		writeJSONError(w, http.StatusBadRequest, "Paste a channel link (a /channel/, /@handle, /c/, or /user/ URL)")
+		httpx.WriteError(w, http.StatusBadRequest, "Paste a channel link (a /channel/, /@handle, /c/, or /user/ URL)")
 		return
 	}
 	// Interactive: someone pasted a url and is watching a spinner, so this call
@@ -179,7 +180,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	info, err := s.channelResolver.ResolveChannel(ytdlp.WithInteractive(r.Context()), channelURL)
 	if err != nil {
 		if errors.Is(err, ytdlp.ErrNoCookie) {
-			writeJSONError(w, http.StatusConflict, "cookie required")
+			httpx.WriteError(w, http.StatusConflict, "cookie required")
 			return
 		}
 		upstreamError(w, r, err, "resolve channel failed")
@@ -202,7 +203,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		Verified:    info.Verified,
 		ResolvedAt:  store.FormatTime(time.Now()),
 	}); err != nil {
-		serverError(w, r, err, "adding the channel failed")
+		httpx.ServerError(w, r, err, "adding the channel failed")
 		return
 	}
 	// Artwork lands in the row rather than the media tree (migration 0023), and
@@ -220,12 +221,12 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 
 	now := store.FormatTime(time.Now())
 	if err := s.channels.MarkAdded(ucid, now); err != nil {
-		serverError(w, r, err, "adding the channel failed")
+		httpx.ServerError(w, r, err, "adding the channel failed")
 		return
 	}
 	if req.Subscribe {
 		if err := s.channels.Subscribe(ucid, now); err != nil {
-			serverError(w, r, err, "subscribe failed")
+			httpx.ServerError(w, r, err, "subscribe failed")
 			return
 		}
 	}
@@ -237,10 +238,10 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 	// channel that is subscribed and will keep being scanned.
 	sub, err := s.channels.GetSubscription(ucid)
 	if err != nil {
-		serverError(w, r, err, "load subscription state failed")
+		httpx.ServerError(w, r, err, "load subscription state failed")
 		return
 	}
-	writeJSONStatus(w, http.StatusCreated, map[string]any{"id": ucid, "name": name, "subscribed": sub != nil})
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"id": ucid, "name": name, "subscribed": sub != nil})
 }
 
 // handleChannelsList returns the channels worth showing, optionally narrowed
@@ -249,7 +250,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 // for what each one means.
 func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	filter := r.URL.Query().Get("filter")
@@ -260,12 +261,12 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 	case "all", "subscribed", "notsubscribed", "downloaded", "autodownload":
 		// valid
 	default:
-		writeJSONError(w, http.StatusBadRequest, "invalid filter: "+filter)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid filter: "+filter)
 		return
 	}
 	items, err := s.channels.List(filter)
 	if err != nil {
-		serverError(w, r, err, "list channels failed")
+		httpx.ServerError(w, r, err, "list channels failed")
 		return
 	}
 	out := make([]channelItem, 0, len(items))
@@ -291,19 +292,19 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 			FirstSeenAt:     it.FirstSeenAt,
 		})
 	}
-	writeJSON(w, out)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // handleChannelsAutoUnsubscribedList returns every channel peeq has
 // auto-unsubscribed on its own, most recent first.
 func (s *server) handleChannelsAutoUnsubscribedList(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	items, err := s.channels.AutoUnsubscribedList()
 	if err != nil {
-		serverError(w, r, err, "list auto-unsubscribed failed")
+		httpx.ServerError(w, r, err, "list auto-unsubscribed failed")
 		return
 	}
 	out := make([]autoUnsubscribedItem, 0, len(items))
@@ -316,7 +317,7 @@ func (s *server) handleChannelsAutoUnsubscribedList(w http.ResponseWriter, r *ht
 			At:     it.At,
 		})
 	}
-	writeJSON(w, out)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // channelDetail is the JSON shape returned by GET /api/channels/{id}. It
@@ -383,14 +384,14 @@ type channelDetail struct {
 // that names nothing at all: neither a cached channels row nor any video.
 func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	id := r.PathValue("id")
 
 	c, err := s.channels.Get(id)
 	if err != nil {
-		serverError(w, r, err, "load channel failed")
+		httpx.ServerError(w, r, err, "load channel failed")
 		return
 	}
 
@@ -406,7 +407,7 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 		var videoName string
 		videoName, found, err = s.channels.NameFromVideos(id)
 		if err != nil {
-			serverError(w, r, err, "load channel failed")
+			httpx.ServerError(w, r, err, "load channel failed")
 			return
 		}
 		if name == "" {
@@ -415,11 +416,11 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	stats, err := s.channels.Stats(id, name)
 	if err != nil {
-		serverError(w, r, err, "load channel failed")
+		httpx.ServerError(w, r, err, "load channel failed")
 		return
 	}
 	if c == nil && !found {
-		writeJSONError(w, http.StatusNotFound, "channel not found")
+		httpx.WriteError(w, http.StatusNotFound, "channel not found")
 		return
 	}
 
@@ -455,7 +456,7 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 	// subscribed branches below would skip.
 	au, aerr := s.channels.AutoUnsubscribeFor(id)
 	if aerr != nil {
-		serverError(w, r, aerr, "load channel failed")
+		httpx.ServerError(w, r, aerr, "load channel failed")
 		return
 	}
 	out.Gone = au != nil && au.Reason == channels.ReasonDeleted
@@ -463,7 +464,7 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 	if out.Added {
 		sub, serr := s.channels.GetSubscription(id)
 		if serr != nil {
-			serverError(w, r, serr, "load subscription failed")
+			httpx.ServerError(w, r, serr, "load subscription failed")
 			return
 		}
 		if sub != nil {
@@ -476,7 +477,7 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 		if s.ledger != nil {
 			n, perr := s.ledger.CountPendingForChannel(id)
 			if perr != nil {
-				serverError(w, r, perr, "load pending failed")
+				httpx.ServerError(w, r, perr, "load pending failed")
 				return
 			}
 			out.PendingCount = n
@@ -484,7 +485,7 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.maybeResolveChannel(id, c)
-	writeJSON(w, out)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // maybeResolveChannel kicks off a one-shot background metadata fetch for a
@@ -586,13 +587,13 @@ func (s *server) maybeResolveChannel(channelID string, cached *channels.Channel)
 // more turns in the YouTube queue) and shows on the next page load.
 func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil || s.metadata == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	id := r.PathValue("id")
 	c, err := s.channels.Get(id)
 	if err != nil {
-		serverError(w, r, err, "load channel failed")
+		httpx.ServerError(w, r, err, "load channel failed")
 		return
 	}
 	// Same existence rule the detail endpoint applies, and for the same
@@ -604,11 +605,11 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	if c == nil {
 		_, found, nerr := s.channels.NameFromVideos(id)
 		if nerr != nil {
-			serverError(w, r, nerr, "load channel failed")
+			httpx.ServerError(w, r, nerr, "load channel failed")
 			return
 		}
 		if !found {
-			writeJSONError(w, http.StatusNotFound, "channel not found")
+			httpx.WriteError(w, http.StatusNotFound, "channel not found")
 			return
 		}
 	}
@@ -641,7 +642,7 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if errors.Is(err, ytdlp.ErrNoCookie) {
-			writeJSONError(w, http.StatusConflict, "cookie required")
+			httpx.WriteError(w, http.StatusConflict, "cookie required")
 			return
 		}
 		// A fired cap surfaces as a bare "context canceled", which tells the
@@ -649,7 +650,7 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 		// how a stall is told apart from an ordinary resolve failure.
 		if stalled {
 			slog.Warn("channel refresh stalled", "channel_id", id, "after", s.resolveCap)
-			writeJSONError(w, http.StatusGatewayTimeout,
+			httpx.WriteError(w, http.StatusGatewayTimeout,
 				"refresh timed out: YouTube did not answer in "+s.resolveCap.String())
 			return
 		}
@@ -658,7 +659,7 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	// No onChannelResolved here: this path is synchronous, so the response is
 	// the signal. The background art fetch started above fires OnChannelArt.
-	writeJSON(w, map[string]any{"status": "ok"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 // handleChannelsDismissDormant suppresses a channel's dormancy flag until it
@@ -669,21 +670,21 @@ func (s *server) handleChannelRefresh(w http.ResponseWriter, r *http.Request) {
 // place (Task 2 review finding).
 func (s *server) handleChannelsDismissDormant(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	id := r.PathValue("id")
 	now := store.FormatTime(time.Now())
 	ok, err := s.channels.DismissDormant(id, now)
 	if err != nil {
-		serverError(w, r, err, "dismiss dormant failed")
+		httpx.ServerError(w, r, err, "dismiss dormant failed")
 		return
 	}
 	if !ok {
-		writeJSONError(w, http.StatusNotFound, "channel not subscribed")
+		httpx.WriteError(w, http.StatusNotFound, "channel not subscribed")
 		return
 	}
-	writeJSON(w, map[string]string{"status": "dismissed"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "dismissed"})
 }
 
 // handleChannelsResubscribe restores a subscription peeq auto-unsubscribed:
@@ -710,13 +711,13 @@ func (s *server) handleChannelsDismissDormant(w http.ResponseWriter, r *http.Req
 // silencing of real future dormancy.
 func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	id := r.PathValue("id")
 	c, err := s.channels.Get(id)
 	if err != nil {
-		serverError(w, r, err, "get channel failed")
+		httpx.ServerError(w, r, err, "get channel failed")
 		return
 	}
 	// A row in channels no longer means the user added the channel — it may
@@ -724,16 +725,16 @@ func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Reques
 	// Resubscribing one would conjure a subscription for a channel the user
 	// never added, so added_at is what decides.
 	if c == nil || c.AddedAt == "" {
-		writeJSONError(w, http.StatusNotFound, "channel not added")
+		httpx.WriteError(w, http.StatusNotFound, "channel not added")
 		return
 	}
 	if err := s.channels.ClearAutoUnsubscribe(id); err != nil {
-		serverError(w, r, err, "clear auto-unsubscribe failed")
+		httpx.ServerError(w, r, err, "clear auto-unsubscribe failed")
 		return
 	}
 	now := store.FormatTime(time.Now())
 	if err := s.channels.Subscribe(id, now); err != nil {
-		serverError(w, r, err, "subscribe failed")
+		httpx.ServerError(w, r, err, "subscribe failed")
 		return
 	}
 	// Best-effort in the sense that a "not found" result is impossible here
@@ -741,10 +742,10 @@ func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Reques
 	// to surface: silently leaving a resubscribed channel dormant-flagged
 	// would defeat the whole point of this call.
 	if _, err := s.channels.DismissDormant(id, now); err != nil {
-		serverError(w, r, err, "dismiss dormant failed")
+		httpx.ServerError(w, r, err, "dismiss dormant failed")
 		return
 	}
-	writeJSON(w, map[string]string{"status": "subscribed"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "subscribed"})
 }
 
 // handleChannelsPut updates a subscribed channel's autodownload flag and/or
@@ -752,12 +753,12 @@ func (s *server) handleChannelsResubscribe(w http.ResponseWriter, r *http.Reques
 // merely-added channel yields a clean 400 rather than a silent no-op.
 func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	id := r.PathValue("id")
 	var req channelsPutRequest
-	if !decodeJSON(w, r, &req, maxJSONBody, "invalid request body") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxJSONBody, httpx.DecodeOptions{BadRequest: "invalid request body"}) {
 		return
 	}
 
@@ -769,7 +770,7 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 	// selector "custom". This route is reachable with an API token, so the read
 	// side declining it (ytdlp.IsPreset) does not keep it out of the column.
 	if req.FormatOverride != nil && *req.FormatOverride == "custom" {
-		writeJSONError(w, http.StatusBadRequest,
+		httpx.WriteError(w, http.StatusBadRequest,
 			`format_override cannot be "custom"; write a custom format string in settings instead`)
 		return
 	}
@@ -782,7 +783,7 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 	// subscription, answering 400 for a change that was half on disk.
 	autodownload, formatOverride, ok, err := s.channels.UpdateConfig(id, req.Autodownload, req.FormatOverride)
 	if err != nil {
-		serverError(w, r, err, "update config failed")
+		httpx.ServerError(w, r, err, "update config failed")
 		return
 	}
 	// "Not subscribed" is only an error for the two fields that live on the
@@ -795,14 +796,14 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 		// subscription is the 400.
 		c, err := s.channels.Get(id)
 		if err != nil {
-			serverError(w, r, err, "load channel failed")
+			httpx.ServerError(w, r, err, "load channel failed")
 			return
 		}
 		if c == nil {
-			writeJSONError(w, http.StatusNotFound, "channel not found")
+			httpx.WriteError(w, http.StatusNotFound, "channel not found")
 			return
 		}
-		writeJSONError(w, http.StatusBadRequest, "channel is not subscribed")
+		httpx.WriteError(w, http.StatusBadRequest, "channel is not subscribed")
 		return
 	}
 
@@ -814,11 +815,11 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 	if req.AutoSummary != nil {
 		v, found, err := s.channels.SetAutoSummary(id, *req.AutoSummary)
 		if err != nil {
-			serverError(w, r, err, "update config failed")
+			httpx.ServerError(w, r, err, "update config failed")
 			return
 		}
 		if !found {
-			writeJSONError(w, http.StatusNotFound, "channel not found")
+			httpx.WriteError(w, http.StatusNotFound, "channel not found")
 			return
 		}
 		autoSummary = v
@@ -831,11 +832,11 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 	if req.KeepReads != nil {
 		v, found, err := s.channels.SetKeepReads(id, *req.KeepReads)
 		if err != nil {
-			serverError(w, r, err, "update config failed")
+			httpx.ServerError(w, r, err, "update config failed")
 			return
 		}
 		if !found {
-			writeJSONError(w, http.StatusNotFound, "channel not found")
+			httpx.WriteError(w, http.StatusNotFound, "channel not found")
 			return
 		}
 		keepReads = v
@@ -857,7 +858,7 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 	if req.AutoSummary == nil || req.KeepReads == nil {
 		c, err := s.channels.Get(id)
 		if err != nil {
-			serverError(w, r, err, "load channel failed")
+			httpx.ServerError(w, r, err, "load channel failed")
 			return
 		}
 		if c != nil {
@@ -871,10 +872,10 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !ok {
-		writeJSON(w, map[string]any{"id": id, "auto_summary": autoSummary, "keep_reads": keepReads})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"id": id, "auto_summary": autoSummary, "keep_reads": keepReads})
 		return
 	}
-	writeJSON(w, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"id": id, "autodownload": autodownload,
 		"format_override": formatOverride, "auto_summary": autoSummary,
 		"keep_reads": keepReads,
@@ -893,60 +894,60 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 // nothing about a page visit says the user wants the channel.
 func (s *server) handleChannelsSubscribe(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	id := r.PathValue("id")
 	c, err := s.channels.Get(id)
 	if err != nil {
-		serverError(w, r, err, "get channel failed")
+		httpx.ServerError(w, r, err, "get channel failed")
 		return
 	}
 	if c == nil {
-		writeJSONError(w, http.StatusNotFound, "channel not added")
+		httpx.WriteError(w, http.StatusNotFound, "channel not added")
 		return
 	}
 	now := store.FormatTime(time.Now())
 	if c.AddedAt == "" {
 		hasDownloads, err := s.channels.HasDownloads(id)
 		if err != nil {
-			serverError(w, r, err, "get channel failed")
+			httpx.ServerError(w, r, err, "get channel failed")
 			return
 		}
 		if !hasDownloads {
-			writeJSONError(w, http.StatusNotFound, "channel not added")
+			httpx.WriteError(w, http.StatusNotFound, "channel not added")
 			return
 		}
 		if err := s.channels.MarkAdded(id, now); err != nil {
-			serverError(w, r, err, "adding the channel failed")
+			httpx.ServerError(w, r, err, "adding the channel failed")
 			return
 		}
 	}
 	if err := s.channels.Subscribe(id, now); err != nil {
-		serverError(w, r, err, "subscribe failed")
+		httpx.ServerError(w, r, err, "subscribe failed")
 		return
 	}
-	writeJSON(w, map[string]string{"status": "subscribed"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "subscribed"})
 }
 
 // handleChannelsUnsubscribe removes a channel's subscription, leaving it
 // added. 404s if the channel was never subscribed.
 func (s *server) handleChannelsUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	id := r.PathValue("id")
 	ok, err := s.channels.Unsubscribe(id)
 	if err != nil {
-		serverError(w, r, err, "unsubscribe failed")
+		httpx.ServerError(w, r, err, "unsubscribe failed")
 		return
 	}
 	if !ok {
-		writeJSONError(w, http.StatusNotFound, "channel not subscribed")
+		httpx.WriteError(w, http.StatusNotFound, "channel not subscribed")
 		return
 	}
-	writeJSON(w, map[string]string{"status": "unsubscribed"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "unsubscribed"})
 }
 
 // handleChannelScan schedules a scan of one channel by moving its
@@ -960,24 +961,24 @@ func (s *server) handleChannelsUnsubscribe(w http.ResponseWriter, r *http.Reques
 // so rather than reporting a success the user will never see the result of.
 func (s *server) handleChannelScan(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	id := r.PathValue("id")
 	sub, err := s.channels.GetSubscription(id)
 	if err != nil {
-		serverError(w, r, err, "schedule scan failed")
+		httpx.ServerError(w, r, err, "schedule scan failed")
 		return
 	}
 	if sub == nil {
-		writeJSONError(w, http.StatusBadRequest, "channel is not subscribed")
+		httpx.WriteError(w, http.StatusBadRequest, "channel is not subscribed")
 		return
 	}
 
 	if s.settings != nil {
 		paused, reason, err := s.settings.YoutubePaused(r.Context())
 		if err != nil {
-			serverError(w, r, err, "read youtube pause state failed")
+			httpx.ServerError(w, r, err, "read youtube pause state failed")
 			return
 		}
 		if paused {
@@ -985,14 +986,14 @@ func (s *server) handleChannelScan(w http.ResponseWriter, r *http.Request) {
 			if reason != "" {
 				msg += ": " + reason
 			}
-			writeJSON(w, map[string]string{"status": "blocked", "reason": msg})
+			httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "blocked", "reason": msg})
 			return
 		}
 		// The scan loop's own cookie rule (ytgate.CookieAllows), escape hatch
 		// included: a rule of its own here drifted from the loop's, so this
 		// endpoint said "blocked" for a channel the loop was scanning.
 		if !ytgate.CookieAllows(s.settings.CookieStatus(r.Context()), s.allowAnonymous) {
-			writeJSON(w, map[string]string{
+			httpx.WriteJSON(w, http.StatusOK, map[string]string{
 				"status": "blocked",
 				"reason": "Your YouTube cookie needs refreshing before Peeq can scan this channel.",
 			})
@@ -1005,10 +1006,10 @@ func (s *server) handleChannelScan(w http.ResponseWriter, r *http.Request) {
 	// records that someone is waiting, which is what earns this pass an activity
 	// row even when it finds nothing new.
 	if err := s.channels.RequestScan(id, now); err != nil {
-		serverError(w, r, err, "schedule scan failed")
+		httpx.ServerError(w, r, err, "schedule scan failed")
 		return
 	}
-	writeJSON(w, map[string]string{"status": "scheduled"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "scheduled"})
 }
 
 // handleChannelsDelete destructively removes a channel and EVERYTHING
@@ -1027,7 +1028,7 @@ func (s *server) handleChannelScan(w http.ResponseWriter, r *http.Request) {
 //  4. Unlink the media/thumbnail files using the refs captured in step 1.
 func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return
 	}
 	id := r.PathValue("id")
@@ -1040,28 +1041,28 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 	// and refusing would leave it the one row in the list you cannot remove.
 	c, err := s.channels.Get(id)
 	if err != nil {
-		serverError(w, r, err, "delete failed")
+		httpx.ServerError(w, r, err, "delete failed")
 		return
 	}
 	if c == nil {
-		writeJSONError(w, http.StatusNotFound, "channel not added")
+		httpx.WriteError(w, http.StatusNotFound, "channel not added")
 		return
 	}
 	if c.AddedAt == "" {
 		hasDownloads, herr := s.channels.HasDownloads(id)
 		if herr != nil {
-			serverError(w, r, herr, "delete failed")
+			httpx.ServerError(w, r, herr, "delete failed")
 			return
 		}
 		if !hasDownloads {
-			writeJSONError(w, http.StatusNotFound, "channel not added")
+			httpx.WriteError(w, http.StatusNotFound, "channel not added")
 			return
 		}
 	}
 	// 1. Read refs BEFORE deleting (we need media paths after the rows are gone).
 	refs, rerr := s.channels.VideoRefs(id)
 	if rerr != nil {
-		serverError(w, r, rerr, "delete failed")
+		httpx.ServerError(w, r, rerr, "delete failed")
 		return
 	}
 	// 2. Cancel any active jobs for those videos (kills a live child). The
@@ -1077,7 +1078,7 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 		// downloading for.
 		jobIDs, err := s.jobs.ActiveIDsForVideos(vids)
 		if err != nil {
-			serverError(w, r, err, "delete failed")
+			httpx.ServerError(w, r, err, "delete failed")
 			return
 		}
 		for _, jid := range jobIDs {
@@ -1086,7 +1087,7 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	// 3. Delete rows (FK-cascades jobs, subscription, ledger).
 	if err := s.channels.DeleteCascade(id); err != nil {
-		serverError(w, r, err, "delete failed")
+		httpx.ServerError(w, r, err, "delete failed")
 		return
 	}
 	// 4. Unlink each video's file — and whatever a pre-migration library still
@@ -1097,5 +1098,5 @@ func (s *server) handleChannelsDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	// The channel's pending cards went with the cascade.
 	s.publishInboxChanged("")
-	writeJSON(w, map[string]string{"status": "deleted"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -493,6 +494,48 @@ func TestVideosStream_recordsStreamAccess(t *testing.T) {
 	}
 	if len(recorder.recorded) != 1 || recorder.recorded[0] != "v1" {
 		t.Fatalf("RecordAccess calls = %v, want exactly [v1]", recorder.recorded)
+	}
+}
+
+// readFromRecorder stands in for net/http's response writer in the one way
+// that matters: its ReadFrom is the path to sendfile.
+type readFromRecorder struct {
+	*httptest.ResponseRecorder
+	readFrom int
+}
+
+func (w *readFromRecorder) ReadFrom(src io.Reader) (int64, error) {
+	w.readFrom++
+	return io.Copy(w.ResponseRecorder, src)
+}
+
+// A video goes out by sendfile, not a userspace copy: http.ServeContent's
+// io.CopyN must still find a ReadFrom on the writer behind every wrapper of
+// New's chain (kit's AccessLog and Recover; kit >= v0.17.4 forwards it).
+func TestVideosStream_keepsSendfileThroughTheChain(t *testing.T) {
+	deps, mediaDir := videosTestDeps(t)
+	mediaPath := filepath.Join(mediaDir, "v1.mp4")
+	if err := os.WriteFile(mediaPath, bytes.Repeat([]byte("v"), 64<<10), 0o644); err != nil {
+		t.Fatalf("write media file: %v", err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
+		t.Fatalf("seed video: %v", err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: mediaPath}); err != nil {
+		t.Fatalf("set downloaded: %v", err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/videos/v1/stream", nil)
+	req.AddCookie(cookie)
+	rec := &readFromRecorder{ResponseRecorder: httptest.NewRecorder()}
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.Len() != 64<<10 {
+		t.Fatalf("stream = %d, %d bytes", rec.Code, rec.Body.Len())
+	}
+	if rec.readFrom == 0 {
+		t.Fatal("the base writer's ReadFrom was never called: every video byte is copied through userspace")
 	}
 }
 

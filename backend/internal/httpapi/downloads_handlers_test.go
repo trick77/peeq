@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -942,6 +943,52 @@ func TestDownloadsStream_noHubConfigured_503(t *testing.T) {
 	rec := doRequest(t, h, sessionCookie, http.MethodGet, "/api/downloads/stream")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /api/downloads/stream (no hub) status = %d, want 503, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// An event published on the hub reaches a client through the whole chain New
+// installs: kit's AccessLog, SecurityHeaders and Recover each wrap the writer,
+// and a flush has to get through all of them for the Inbox to refresh live.
+func TestDownloadsStream_deliversAnEventThroughTheChain(t *testing.T) {
+	deps := downloadsTestDeps(t, &fakeDownloadsRunner{})
+	hub := sse.NewHub[Event](sse.HubOptions{})
+	deps.SSEHub = hub
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/downloads/stream", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.AddCookie(sessionCookie)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	got := make(chan string, 1)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			if strings.HasPrefix(sc.Text(), "data:") {
+				got <- sc.Text()
+				return
+			}
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	PublishInboxChanged(hub, "v1")
+
+	select {
+	case line := <-got:
+		if !strings.Contains(line, `"video_id":"v1"`) {
+			t.Fatalf("event = %q, want the inbox change for v1", line)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no event reached the client within 2s: a wrapper is holding the flush")
 	}
 }
 

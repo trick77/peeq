@@ -3,14 +3,14 @@ package config
 
 import (
 	"fmt"
-	"math"
 	"net"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/trick77/ship/kit/env"
 )
 
 // defaultSearchMaxDistance mirrors rag.DefaultMaxDistance, deliberately as a
@@ -137,145 +137,85 @@ type DevUserConfig struct {
 	Role        string
 }
 
-func env(key, def string) string {
-	if v, ok := os.LookupEnv(key); ok {
-		return v
-	}
-	return def
-}
-
-// envDuration reads a Go duration (e.g. "2s", "500ms") from key, returning def
-// when unset/empty and an error on an unparseable or negative value.
-func envDuration(key string, def time.Duration) (time.Duration, error) {
-	v, ok := os.LookupEnv(key)
-	if !ok || v == "" {
-		return def, nil
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be a duration like 2s or 500ms: %w", key, err)
-	}
-	if d < 0 {
-		return 0, fmt.Errorf("%s must not be negative", key)
-	}
-	return d, nil
-}
-
-// Load reads configuration from the environment, applying defaults.
+// Load reads configuration from the environment, applying defaults. Every
+// fault is reported, not just the first. A variable set to the empty string
+// counts as unset (kit's env.Reader).
 func Load() (Config, error) {
+	return load(os.Getenv)
+}
+
+func load(lookup func(string) string) (Config, error) {
+	r := env.New(lookup)
 	cfg := Config{
-		Addr:       env("BACKEND_ADDR", ":8080"),
-		PublicURL:  env("BACKEND_PUBLIC_URL", ""),
-		DBPath:     env("BACKEND_DB_PATH", "/data/peeq.db"),
-		MediaDir:   env("BACKEND_MEDIA_DIR", "/data/media"),
-		YtdlpDir:   env("BACKEND_YTDLP_DIR", "/data/bin"),
-		AuthMode:   AuthMode(env("BACKEND_AUTH_MODE", "")),
-		ChatModel:  env("BACKEND_CHAT_MODEL", ""),
-		GateModel:  env("BACKEND_GATE_MODEL", ""),
-		EmbedModel: env("BACKEND_EMBED_MODEL", ""),
+		Addr:       r.String("BACKEND_ADDR", ":8080"),
+		PublicURL:  r.String("BACKEND_PUBLIC_URL", ""),
+		DBPath:     r.String("BACKEND_DB_PATH", "/data/peeq.db"),
+		MediaDir:   r.String("BACKEND_MEDIA_DIR", "/data/media"),
+		YtdlpDir:   r.String("BACKEND_YTDLP_DIR", "/data/bin"),
+		AuthMode:   AuthMode(r.Enum("BACKEND_AUTH_MODE", "", string(AuthModeOIDC), string(AuthModeDev))),
+		ChatModel:  r.String("BACKEND_CHAT_MODEL", ""),
+		GateModel:  r.String("BACKEND_GATE_MODEL", ""),
+		EmbedModel: r.String("BACKEND_EMBED_MODEL", ""),
 		OIDC: OIDCConfig{
-			Issuer:       env("BACKEND_OIDC_ISSUER", ""),
-			ClientID:     env("BACKEND_OIDC_CLIENT_ID", ""),
-			ClientSecret: env("BACKEND_OIDC_CLIENT_SECRET", ""),
-			RedirectURL:  env("BACKEND_OIDC_REDIRECT_URL", ""),
+			Issuer:       r.String("BACKEND_OIDC_ISSUER", ""),
+			ClientID:     r.String("BACKEND_OIDC_CLIENT_ID", ""),
+			ClientSecret: r.String("BACKEND_OIDC_CLIENT_SECRET", ""),
+			RedirectURL:  r.String("BACKEND_OIDC_REDIRECT_URL", ""),
 		},
 		Dev: DevUserConfig{
-			Subject:     env("BACKEND_DEV_USER_SUBJECT", "dev-admin"),
-			Username:    env("BACKEND_DEV_USER_USERNAME", "dev"),
-			Email:       env("BACKEND_DEV_USER_EMAIL", "dev@example.local"),
-			DisplayName: env("BACKEND_DEV_USER_NAME", "Dev Admin"),
+			Subject:     r.String("BACKEND_DEV_USER_SUBJECT", "dev-admin"),
+			Username:    r.String("BACKEND_DEV_USER_USERNAME", "dev"),
+			Email:       r.String("BACKEND_DEV_USER_EMAIL", "dev@example.local"),
+			DisplayName: r.String("BACKEND_DEV_USER_NAME", "Dev Admin"),
 			Role:        "admin",
 		},
+		DefaultSubLang:        r.String("BACKEND_DEFAULT_SUB_LANG", "en"),
+		MCPToken:              r.String("BACKEND_MCP_TOKEN", ""),
+		AllowAnonymousYoutube: r.Bool("BACKEND_ALLOW_ANONYMOUS_YOUTUBE", false),
+		// NaN and Inf are refused by env.Float: NaN makes every distance
+		// comparison false, which would silently drop EVERY semantic hit. A
+		// NEGATIVE value disables the cutoff. Zero used to mean that, which put
+		// the dangerous reading on the value a forgotten field takes — see the
+		// resolution in httpapi.New.
+		SearchMaxDistance:     r.Float("BACKEND_SEARCH_MAX_DISTANCE", defaultSearchMaxDistance),
+		SummarizeRequestDelay: nonNegative(r, "BACKEND_SUMMARIZE_REQUEST_DELAY", 10*time.Second),
+		SummarizeVideoDelay:   nonNegative(r, "BACKEND_SUMMARIZE_VIDEO_DELAY", 30*time.Second),
+		AskCallTimeout:        nonNegative(r, "BACKEND_ASK_CALL_TIMEOUT", 90*time.Second),
+		ChatStreamIdleTimeout: nonNegative(r, "BACKEND_CHAT_STREAM_IDLE_TIMEOUT", 90*time.Second),
+		ChatCallTimeout:       nonNegative(r, "BACKEND_CHAT_CALL_TIMEOUT", 15*time.Minute),
+	}
+	// 0 is the summarizer's default, so only an unset variable may yield it.
+	cfg.SummaryChunkTokens = r.Int("BACKEND_SUMMARIZE_SUMMARY_TOKENS", 0)
+	if cfg.SummaryChunkTokens < 0 || (cfg.SummaryChunkTokens == 0 && strings.TrimSpace(lookup("BACKEND_SUMMARIZE_SUMMARY_TOKENS")) != "") {
+		r.Fail("BACKEND_SUMMARIZE_SUMMARY_TOKENS must be a positive integer")
 	}
 
-	cfg.DefaultSubLang = env("BACKEND_DEFAULT_SUB_LANG", "en")
-	cfg.MCPToken = strings.TrimSpace(env("BACKEND_MCP_TOKEN", ""))
 	if strings.IndexFunc(cfg.MCPToken, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
 		// No client can present such a token (httpx.Bearer refuses whitespace,
 		// a header refuses control characters): /mcp would 401 everything.
-		return Config{}, fmt.Errorf("BACKEND_MCP_TOKEN must not contain whitespace or control characters")
+		r.Fail("BACKEND_MCP_TOKEN must not contain whitespace or control characters")
 	}
-	if cfg.MCPToken != "" && strings.TrimSpace(cfg.PublicURL) == "" {
+	if cfg.MCPToken != "" && cfg.PublicURL == "" {
 		// MCP results cite peeq links; relative ones mean nothing to the client.
-		return Config{}, fmt.Errorf("BACKEND_MCP_TOKEN is set but BACKEND_PUBLIC_URL is empty; MCP results link to peeq and need the public URL")
-	}
-	cfg.SearchMaxDistance = defaultSearchMaxDistance
-	if v := env("BACKEND_ALLOW_ANONYMOUS_YOUTUBE", ""); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return Config{}, fmt.Errorf("BACKEND_ALLOW_ANONYMOUS_YOUTUBE must be a boolean")
-		}
-		cfg.AllowAnonymousYoutube = b
-	}
-	if v := env("BACKEND_SEARCH_MAX_DISTANCE", ""); v != "" {
-		f, err := strconv.ParseFloat(v, 64)
-		// NaN and Inf parse cleanly and survive an ordinary range test, so they
-		// have to be rejected by name: NaN makes every distance comparison false,
-		// which would silently drop EVERY semantic hit with no error to explain it.
-		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-			return Config{}, fmt.Errorf("BACKEND_SEARCH_MAX_DISTANCE must be a finite number")
-		}
-		// A NEGATIVE value disables the cutoff. Zero used to mean that, which put
-		// the dangerous reading on the value a forgotten field takes — see the
-		// resolution in httpapi.New.
-		cfg.SearchMaxDistance = f
-	}
-	reqDelay, err := envDuration("BACKEND_SUMMARIZE_REQUEST_DELAY", 10*time.Second)
-	if err != nil {
-		return Config{}, err
-	}
-	cfg.SummarizeRequestDelay = reqDelay
-	vidDelay, err := envDuration("BACKEND_SUMMARIZE_VIDEO_DELAY", 30*time.Second)
-	if err != nil {
-		return Config{}, err
-	}
-	cfg.SummarizeVideoDelay = vidDelay
-
-	askTimeout, err := envDuration("BACKEND_ASK_CALL_TIMEOUT", 90*time.Second)
-	if err != nil {
-		return Config{}, err
-	}
-	cfg.AskCallTimeout = askTimeout
-	idle, err := envDuration("BACKEND_CHAT_STREAM_IDLE_TIMEOUT", 90*time.Second)
-	if err != nil {
-		return Config{}, err
-	}
-	cfg.ChatStreamIdleTimeout = idle
-	callTimeout, err := envDuration("BACKEND_CHAT_CALL_TIMEOUT", 15*time.Minute)
-	if err != nil {
-		return Config{}, err
-	}
-	cfg.ChatCallTimeout = callTimeout
-
-	if v := os.Getenv("BACKEND_SUMMARIZE_SUMMARY_TOKENS"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return Config{}, fmt.Errorf("BACKEND_SUMMARIZE_SUMMARY_TOKENS must be a positive integer")
-		}
-		cfg.SummaryChunkTokens = n
+		r.Fail("BACKEND_MCP_TOKEN is set but BACKEND_PUBLIC_URL is empty; MCP results link to peeq and need the public URL")
 	}
 
 	switch cfg.AuthMode {
-	case AuthModeNone:
 	case AuthModeOIDC:
-		if cfg.OIDC.Issuer == "" {
-			return Config{}, fmt.Errorf("BACKEND_OIDC_ISSUER is required when BACKEND_AUTH_MODE=oidc")
-		}
-		if cfg.OIDC.ClientID == "" {
-			return Config{}, fmt.Errorf("BACKEND_OIDC_CLIENT_ID is required when BACKEND_AUTH_MODE=oidc")
-		}
-		if cfg.OIDC.ClientSecret == "" {
-			return Config{}, fmt.Errorf("BACKEND_OIDC_CLIENT_SECRET is required when BACKEND_AUTH_MODE=oidc")
-		}
-		if cfg.OIDC.RedirectURL == "" {
-			return Config{}, fmt.Errorf("BACKEND_OIDC_REDIRECT_URL is required when BACKEND_AUTH_MODE=oidc")
+		for _, v := range []struct{ name, value string }{
+			{"BACKEND_OIDC_ISSUER", cfg.OIDC.Issuer},
+			{"BACKEND_OIDC_CLIENT_ID", cfg.OIDC.ClientID},
+			{"BACKEND_OIDC_CLIENT_SECRET", cfg.OIDC.ClientSecret},
+			{"BACKEND_OIDC_REDIRECT_URL", cfg.OIDC.RedirectURL},
+		} {
+			if v.value == "" {
+				r.Fail("%s is required when BACKEND_AUTH_MODE=oidc", v.name)
+			}
 		}
 	case AuthModeDev:
 		if err := validateDevAuthLocalOnly(cfg); err != nil {
-			return Config{}, err
+			r.Fail("%v", err)
 		}
-	default:
-		return Config{}, fmt.Errorf("BACKEND_AUTH_MODE must be one of: oidc, dev")
 	}
 
 	// BACKEND_ALLOW_ANONYMOUS_YOUTUBE relaxes the cookie invariant, so it must
@@ -283,10 +223,24 @@ func Load() (Config, error) {
 	// A stray true in a production environment (oidc or unset auth mode) is a
 	// hard boot failure, never a silent behavior change.
 	if cfg.AllowAnonymousYoutube && cfg.AuthMode != AuthModeDev {
-		return Config{}, fmt.Errorf("BACKEND_ALLOW_ANONYMOUS_YOUTUBE=true requires BACKEND_AUTH_MODE=dev")
+		r.Fail("BACKEND_ALLOW_ANONYMOUS_YOUTUBE=true requires BACKEND_AUTH_MODE=dev")
 	}
 
+	if err := r.Err(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// nonNegative is r.Duration with a negative value a fault: every one of these
+// is a delay or a bound, and kit's Duration takes "-5s" as Go does.
+func nonNegative(r *env.Reader, name string, def time.Duration) time.Duration {
+	d := r.Duration(name, def)
+	if d < 0 {
+		r.Fail("%s must not be negative", name)
+		return def
+	}
+	return d
 }
 
 // validateDevAuthLocalOnly ensures dev auth can only be enabled when the

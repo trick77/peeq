@@ -4,61 +4,49 @@ package web
 import (
 	"embed"
 	"io/fs"
-	"mime"
 	"net/http"
 	"strings"
+
+	"github.com/trick77/ship/kit/spa"
 )
 
 //go:embed all:dist
 var distFS embed.FS
 
-// Go's built-in MIME table has no .webmanifest entry, so without this
-// http.FileServer falls through to content sniffing and serves the web app
-// manifest as text/plain. .ico needs no entry — net/http's sniffer recognises
-// the ICO signature on its own.
-func init() {
-	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+// routes are the first path segments the client router knows (parsePath in
+// ui/src/route.ts, old paths it still redirects included). They get the shell;
+// any other path is a real 404, so a typo or a probe (favicon.ico: peeq ships
+// an SVG icon and no .ico) is not answered with the whole app at 200.
+var routes = map[string]bool{
+	"": true, "video": true, "channel": true, "s": true, "channels": true, "search": true, "add": true,
+	"inbox": true, "pending": true, "decide": true, "up-next": true, "history": true, "queue": true,
+	"activity": true, "settings": true,
 }
 
-// Handler serves the embedded frontend (web/dist) as a SPA: existing regular
-// files are served directly; any other path — unknown client-side routes AND
-// directory paths — falls back to index.html (so a directory never renders an
-// http.FileServer listing).
-func Handler() http.Handler {
+// IsRoute reports whether path is one of the SPA's client routes. The shell's
+// own name is one too: a bookmark or an installed app may point at it, and kit
+// leaves it to the route check.
+func IsRoute(path string) bool {
+	if path == "/index.html" {
+		return true
+	}
+	first, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	return routes[first]
+}
+
+func dist() fs.FS {
 	sub, err := fs.Sub(distFS, "dist")
 	if err != nil {
 		panic(err) // dist is embedded at build time; this is a programmer error
 	}
-	fileServer := http.FileServer(http.FS(sub))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if info, err := fs.Stat(sub, trimLeadingSlash(r.URL.Path)); err == nil && !info.IsDir() {
-			// Vite emits content-hashed bundles under /assets/, so they can be cached
-			// forever; index.html (and the SPA fallback below) must not, or clients
-			// pin a stale entrypoint after a deploy.
-			if strings.HasPrefix(r.URL.Path, "/assets/") {
-				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-			} else if r.URL.Path == "/index.html" {
-				w.Header().Set("Cache-Control", "no-cache")
-			}
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-		// peeq ships an SVG icon and declares it in <head>; it deliberately has no
-		// favicon.ico, because the clients that probe for one at the domain root
-		// are RSS readers, Windows bookmark thumbnails and old IE. Without this
-		// the probe would reach the SPA fallback and get index.html with a 200 —
-		// an icon request answered with HTML, which is worse than no icon. A 404
-		// is the honest answer, and every browser handles it by falling back to
-		// the declared icon.
-		if r.URL.Path == "/favicon.ico" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Cache-Control", "no-cache")
-		r2 := r.Clone(r.Context())
-		r2.URL.Path = "/"
-		fileServer.ServeHTTP(w, r2)
-	})
+	return sub
+}
+
+// Handler serves the embedded frontend (kit's spa): files as they are,
+// /assets/ cached forever, the shell on the client routes, revalidated on
+// every load.
+func Handler() http.Handler {
+	return spa.Handler(dist(), spa.Options{Routes: IsRoute})
 }
 
 // IndexHTML returns the embedded index.html shell. The server serves the public
@@ -66,14 +54,4 @@ func Handler() http.Handler {
 // into a card instead of a bare title (see httpapi/share_meta.go).
 func IndexHTML() ([]byte, error) {
 	return distFS.ReadFile("dist/index.html")
-}
-
-func trimLeadingSlash(p string) string {
-	if len(p) > 0 && p[0] == '/' {
-		p = p[1:]
-	}
-	if p == "" {
-		return "."
-	}
-	return p
 }

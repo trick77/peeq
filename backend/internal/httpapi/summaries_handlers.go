@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/trick77/peeq/internal/summaryjobs"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // SummaryLister is the read side of the summary queue the Queue page needs:
@@ -63,15 +64,15 @@ func (s *server) handleSummariesFailedList(w http.ResponseWriter, r *http.Reques
 // chat endpoint that was down or crawling — has been fixed.
 func (s *server) handleSummariesRetryFailed(w http.ResponseWriter, r *http.Request) {
 	if s.summaryList == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "summaries are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "summaries are not configured")
 		return
 	}
 	n, err := s.summaryList.RetryFailed()
 	if err != nil {
-		serverError(w, r, err, "retry failed summaries failed")
+		httpx.ServerError(w, r, err, "retry failed summaries failed")
 		return
 	}
-	writeJSON(w, map[string]int64{"requeued": n})
+	httpx.WriteJSON(w, http.StatusOK, map[string]int64{"requeued": n})
 }
 
 // writeSummaryList renders a job list, joining each row with its video's
@@ -80,18 +81,18 @@ func (s *server) handleSummariesRetryFailed(w http.ResponseWriter, r *http.Reque
 // which is what an empty list already says.
 func (s *server) writeSummaryList(w http.ResponseWriter, r *http.Request, list func() ([]summaryjobs.Job, error), errMsg string) {
 	if s.summaryList == nil {
-		writeJSON(w, []summaryItem{})
+		httpx.WriteJSON(w, http.StatusOK, []summaryItem{})
 		return
 	}
 	all, err := list()
 	if err != nil {
-		serverError(w, r, err, errMsg)
+		httpx.ServerError(w, r, err, errMsg)
 		return
 	}
 
 	index, err := s.videoIndex(idsOf(all, func(j summaryjobs.Job) string { return j.VideoID }))
 	if err != nil {
-		serverError(w, r, err, errMsg)
+		httpx.ServerError(w, r, err, errMsg)
 		return
 	}
 	items := make([]summaryItem, 0, len(all))
@@ -109,5 +110,5 @@ func (s *server) writeSummaryList(w http.ResponseWriter, r *http.Request, list f
 		}
 		items = append(items, item)
 	}
-	writeJSON(w, items)
+	httpx.WriteJSON(w, http.StatusOK, items)
 }

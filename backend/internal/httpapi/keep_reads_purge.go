@@ -7,6 +7,7 @@ import (
 
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // handleKeepReadsImpact answers what turning the channel's keep_reads off
@@ -18,10 +19,10 @@ func (s *server) handleKeepReadsImpact(w http.ResponseWriter, r *http.Request) {
 	}
 	counts, err := s.videos.KeptImpact(c.ID)
 	if err != nil {
-		serverError(w, r, err, "count kept videos failed")
+		httpx.ServerError(w, r, err, "count kept videos failed")
 		return
 	}
-	writeJSON(w, counts)
+	httpx.WriteJSON(w, http.StatusOK, counts)
 }
 
 // loadChannelOr404 is the lookup both keep_reads reads open with: 503 without
@@ -29,16 +30,16 @@ func (s *server) handleKeepReadsImpact(w http.ResponseWriter, r *http.Request) {
 // once it has answered.
 func (s *server) loadChannelOr404(w http.ResponseWriter, r *http.Request) (*channels.Channel, bool) {
 	if s.channels == nil || s.videos == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "channels are not configured")
 		return nil, false
 	}
 	c, err := s.channels.Get(r.PathValue("id"))
 	if err != nil {
-		serverError(w, r, err, "load channel failed")
+		httpx.ServerError(w, r, err, "load channel failed")
 		return nil, false
 	}
 	if c == nil {
-		writeJSONError(w, http.StatusNotFound, "channel not found")
+		httpx.WriteError(w, http.StatusNotFound, "channel not found")
 		return nil, false
 	}
 	return c, true
@@ -60,17 +61,17 @@ func (s *server) handleChannelStorage(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		videoName, _, err := s.channels.NameFromVideos(c.ID)
 		if err != nil {
-			serverError(w, r, err, "load channel failed")
+			httpx.ServerError(w, r, err, "load channel failed")
 			return
 		}
 		name = videoName
 	}
 	st, err := s.videos.ChannelStorage(r.Context(), c.ID, name)
 	if err != nil {
-		serverError(w, r, err, "measure channel storage failed")
+		httpx.ServerError(w, r, err, "measure channel storage failed")
 		return
 	}
-	writeJSON(w, st)
+	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
 // purgeKeptAsync carries out a keep_reads switch-off in the background: the

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/trick77/peeq/internal/activity"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // ActivityReader is the read side of the activity log the Activity page needs.
@@ -51,7 +52,7 @@ type activityListResponse struct {
 // optional dependency.
 func (s *server) handleActivityList(w http.ResponseWriter, r *http.Request) {
 	if s.activity == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "activity is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "activity is not configured")
 		return
 	}
 	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
@@ -69,14 +70,14 @@ func (s *server) handleActivityList(w http.ResponseWriter, r *http.Request) {
 
 	page, err := s.activity.Recent(before, limit, search)
 	if err != nil {
-		serverError(w, r, err, "list activity failed")
+		httpx.ServerError(w, r, err, "list activity failed")
 		return
 	}
 	events := page.Events
 	if events == nil {
 		events = []activity.Event{}
 	}
-	writeJSON(w, activityListResponse{
+	httpx.WriteJSON(w, http.StatusOK, activityListResponse{
 		Events: events, HasMore: page.HasMore, RetainedMax: s.activity.RetainedMax(),
 	})
 }
@@ -107,7 +108,7 @@ func (s *server) handleActivityUpcoming(w http.ResponseWriter, r *http.Request) 
 	if s.channels != nil {
 		scans, err := s.channels.ScanDueSoon(upcomingCap)
 		if err != nil {
-			serverError(w, r, err, "load upcoming failed")
+			httpx.ServerError(w, r, err, "load upcoming failed")
 			return
 		}
 		for _, c := range scans {
@@ -118,7 +119,7 @@ func (s *server) handleActivityUpcoming(w http.ResponseWriter, r *http.Request) 
 		}
 		metas, err := s.channels.MetaDueSoon(upcomingCap)
 		if err != nil {
-			serverError(w, r, err, "load upcoming failed")
+			httpx.ServerError(w, r, err, "load upcoming failed")
 			return
 		}
 		for _, c := range metas {
@@ -132,5 +133,5 @@ func (s *server) handleActivityUpcoming(w http.ResponseWriter, r *http.Request) 
 	if merged == nil {
 		merged = []activity.UpcomingItem{}
 	}
-	writeJSON(w, upcomingResponse{Items: merged, Truncated: truncated})
+	httpx.WriteJSON(w, http.StatusOK, upcomingResponse{Items: merged, Truncated: truncated})
 }

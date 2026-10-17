@@ -12,6 +12,7 @@ import (
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/sharelink"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // ShareLinkStore is the slice of sharelink.Store the share endpoints use —
@@ -111,7 +112,7 @@ func (s *server) shareURL(token string) string {
 // immediately (e.g. after a leak) use DELETE / Stop sharing, not a re-share.
 func (s *server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	if s.shareLinks == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "sharing is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "sharing is not configured")
 		return
 	}
 	v, ok := s.lookupVideo(w, r)
@@ -127,15 +128,15 @@ func (s *server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	}
 	ttl, known := shareTTLs[req.TTL]
 	if !known {
-		writeJSONError(w, http.StatusBadRequest, "ttl must be one of 24h, 7d, 30d, never")
+		httpx.WriteError(w, http.StatusBadRequest, "ttl must be one of 24h, 7d, 30d, never")
 		return
 	}
 	link, err := s.shareLinks.Upsert(r.Context(), v.ID, ttl)
 	if err != nil {
-		serverError(w, r, err, "create share link failed")
+		httpx.ServerError(w, r, err, "create share link failed")
 		return
 	}
-	writeJSON(w, shareStatusResponse{
+	httpx.WriteJSON(w, http.StatusOK, shareStatusResponse{
 		Shared:    true,
 		URL:       s.shareURL(link.Token),
 		Token:     link.Token,
@@ -148,7 +149,7 @@ func (s *server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 // redisplay the link for copying.
 func (s *server) handleGetShare(w http.ResponseWriter, r *http.Request) {
 	if s.shareLinks == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "sharing is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "sharing is not configured")
 		return
 	}
 	v, ok := s.lookupVideo(w, r)
@@ -157,14 +158,14 @@ func (s *server) handleGetShare(w http.ResponseWriter, r *http.Request) {
 	}
 	link, err := s.shareLinks.GetByVideo(r.Context(), v.ID)
 	if err != nil {
-		serverError(w, r, err, "get share link failed")
+		httpx.ServerError(w, r, err, "get share link failed")
 		return
 	}
 	if link == nil {
-		writeJSON(w, shareStatusResponse{Shared: false})
+		httpx.WriteJSON(w, http.StatusOK, shareStatusResponse{Shared: false})
 		return
 	}
-	writeJSON(w, shareStatusResponse{
+	httpx.WriteJSON(w, http.StatusOK, shareStatusResponse{
 		Shared:    true,
 		URL:       s.shareURL(link.Token),
 		Token:     link.Token,
@@ -176,7 +177,7 @@ func (s *server) handleGetShare(w http.ResponseWriter, r *http.Request) {
 // stopping a video that isn't shared still succeeds.
 func (s *server) handleDeleteShare(w http.ResponseWriter, r *http.Request) {
 	if s.shareLinks == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "sharing is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "sharing is not configured")
 		return
 	}
 	v, ok := s.lookupVideo(w, r)
@@ -184,10 +185,10 @@ func (s *server) handleDeleteShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.shareLinks.DeleteByVideo(r.Context(), v.ID); err != nil {
-		serverError(w, r, err, "stop sharing failed")
+		httpx.ServerError(w, r, err, "stop sharing failed")
 		return
 	}
-	writeJSON(w, shareStatusResponse{Shared: false})
+	httpx.WriteJSON(w, http.StatusOK, shareStatusResponse{Shared: false})
 }
 
 // resolveShare turns a /s/{token} path token into the video it grants access
@@ -203,7 +204,7 @@ func (s *server) resolveShare(w http.ResponseWriter, r *http.Request) *videos.Vi
 	}
 	v, err := s.videos.Get(videoID)
 	if err != nil {
-		serverError(w, r, err, "get shared video failed")
+		httpx.ServerError(w, r, err, "get shared video failed")
 		return nil
 	}
 	if v == nil {
@@ -228,7 +229,7 @@ func (s *server) resolveShareID(w http.ResponseWriter, r *http.Request) (string,
 		// A DB fault is ours, not the caller's: answer 500. That is not an
 		// existence signal (a healthy server never 500s here), so it still
 		// doesn't leak whether the token is valid — unlike a 200/404 split.
-		serverError(w, r, err, "resolve share link failed")
+		httpx.ServerError(w, r, err, "resolve share link failed")
 		return "", false
 	}
 	if !ok {
@@ -250,7 +251,7 @@ func (s *server) handleShareVideo(w http.ResponseWriter, r *http.Request) {
 	if link, err := s.shareLinks.GetByVideo(r.Context(), v.ID); err == nil && link != nil {
 		expiresAt = link.ExpiresAt
 	}
-	writeJSON(w, publicVideoDTO{
+	httpx.WriteJSON(w, http.StatusOK, publicVideoDTO{
 		Title:            v.Title,
 		ChannelName:      v.ChannelName,
 		DurationSeconds:  v.DurationSeconds,
@@ -282,7 +283,7 @@ func (s *server) handleShareStream(w http.ResponseWriter, r *http.Request) {
 	}
 	ref, err := s.videos.MediaRef(videoID)
 	if err != nil {
-		serverError(w, r, err, "get shared video failed")
+		httpx.ServerError(w, r, err, "get shared video failed")
 		return
 	}
 	if ref == nil {

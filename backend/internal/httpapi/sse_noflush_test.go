@@ -25,9 +25,11 @@ func TestSSEStreams_writerWithoutFlushIs500(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			// Behind logging(), as in production: its statusRecorder must not
-			// claim a flush the writer underneath cannot do.
-			h := logging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { tc.h(tc.s, w, r) }))
+			// The handler alone: behind kit's AccessLog, whose StatusWriter
+			// always has Flush, the refusal comes later (a failed flush after
+			// the 200). A net/http writer always flushes, so only a test
+			// writer reaches this.
+			h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { tc.h(tc.s, w, r) })
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(noFlushWriter{rec}, httptest.NewRequest(http.MethodGet, tc.path, nil))
 			if rec.Code != http.StatusInternalServerError {

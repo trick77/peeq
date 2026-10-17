@@ -74,8 +74,10 @@ describe("no YouTube image hosts", () => {
     ).toBe(true);
   });
 
+  // Only img-src: the rest of the Go policy (default-src 'self') would block
+  // Vite's inline HMR preamble under `make dev`.
   it("the Vite servers send the same image policy as the Go server", () => {
-    const goPolicy = /const imgSrcPolicy = "([^"]+)"/.exec(
+    const goPolicy = /const csp = "[^"]*?(img-src [^;"]+)/.exec(
       readFileSync(
         resolve(srcDir, "../../backend/internal/httpapi/csp.go"),
         "utf8",

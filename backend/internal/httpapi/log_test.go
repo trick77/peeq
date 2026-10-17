@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/trick77/ship/kit/httpx"
 )
 
 func TestServerError_logsTheCauseAndReturnsTheGenericMessage(t *testing.T) {
@@ -17,7 +19,7 @@ func TestServerError_logsTheCauseAndReturnsTheGenericMessage(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	// When
-	serverError(rec, req, errors.New("sqlite: disk I/O error"), "list videos failed")
+	httpx.ServerError(rec, req, errors.New(`sqlite: disk I/O error near "https://h/x?sig=urlsecret"`), "list videos failed")
 
 	// Then: the client sees only the generic message.
 	if rec.Code != http.StatusInternalServerError {
@@ -35,11 +37,10 @@ func TestServerError_logsTheCauseAndReturnsTheGenericMessage(t *testing.T) {
 	if !strings.Contains(out, "sqlite: disk I/O error") {
 		t.Fatalf("cause not logged: %s", out)
 	}
-	if !strings.Contains(out, "/api/videos") {
-		t.Fatalf("path not logged: %s", out)
-	}
-	// Then: but never the query string.
-	if strings.Contains(out, "secretvalue") {
+	// Then: but never a query string, the request's or one inside the error:
+	// kit logs the error as text, which the process's handler redacts. The
+	// path is the access line's (joined by request id), not this one's.
+	if strings.Contains(out, "secretvalue") || strings.Contains(out, "urlsecret") {
 		t.Fatalf("query string leaked into the log: %s", out)
 	}
 }
@@ -54,10 +55,10 @@ func TestServerError_namesACancelledRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/search", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 
-	serverError(rec, req, errors.New("retrieve: sqlite3: SQL logic error: chunks iter error"), "search failed")
+	httpx.ServerError(rec, req, errors.New("retrieve: sqlite3: SQL logic error: chunks iter error"), "search failed")
 
 	out := logs.String()
-	for _, want := range []string{"WARN", "request cancelled", "/api/search", "context canceled", "chunks iter error"} {
+	for _, want := range []string{"WARN", "request cancelled", "context canceled", "chunks iter error"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("log = %q, want %q", out, want)
 		}

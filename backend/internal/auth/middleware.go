@@ -2,9 +2,9 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
-	"log/slog"
 	"net/http"
+
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // SessionLookup is the session lookup dependency required by Middleware.
@@ -34,50 +34,28 @@ func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(SessionCookieName)
 		if err != nil || cookie.Value == "" {
-			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		session, ok, err := m.sessions.Lookup(r.Context(), cookie.Value)
 		if err != nil {
-			serverError(w, r, err, "session lookup failed")
+			httpx.ServerError(w, r, err, "session lookup failed")
 			return
 		}
 		if !ok {
-			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		user, ok, err := m.users.FindByID(r.Context(), session.UserID)
 		if err != nil {
-			serverError(w, r, err, "user lookup failed")
+			httpx.ServerError(w, r, err, "user lookup failed")
 			return
 		}
 		if !ok {
-			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		ctx := context.WithValue(r.Context(), userContextKey, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
-}
-
-// serverError is httpapi.serverError's shape (this package cannot import
-// httpapi without a cycle): the cause goes to the log with request context,
-// the client gets only the generic message. Only r.URL.Path is logged, never
-// the query string. It deliberately lacks httpapi's URL redaction: the only
-// errors that reach it are session and user lookups, which never embed a URL
-// — and must never embed the session token either (see the middleware test).
-func serverError(w http.ResponseWriter, r *http.Request, err error, clientMessage string) {
-	slog.Error("request failed",
-		"method", r.Method,
-		"path", r.URL.Path,
-		"client_message", clientMessage,
-		"err", err,
-	)
-	writeJSONError(w, http.StatusInternalServerError, clientMessage)
-}
-
-func writeJSONError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }

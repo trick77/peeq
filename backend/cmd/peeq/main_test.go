@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -172,66 +173,6 @@ func TestResolveYtdlpBin_ignoresLegacyZipapp(t *testing.T) {
 	}
 }
 
-// serveOnListener mirrors serve's shutdown behavior (hub.Close registered on
-// Shutdown; see serve's doc comment) but serves on a pre-bound listener
-// instead of letting srv.ListenAndServe bind its own, so a test can learn
-// the port before starting the server.
-func serveOnListener(ctx context.Context, srv *http.Server, ln net.Listener, hub *sse.Hub[httpapi.Event]) error {
-	srv.RegisterOnShutdown(hub.Close)
-	errCh := make(chan error, 1)
-	go func() {
-		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-			return
-		}
-		errCh <- nil
-	}()
-
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	return srv.Shutdown(shutdownCtx)
-}
-
-// TestServe_BindFailureReturnsError proves that a ListenAndServe failure
-// (e.g. the address is already in use) is propagated as an error from
-// serve, rather than serve hanging until ctx is cancelled. Without the fix,
-// the goroutine running ListenAndServe only logged the error and serve kept
-// blocking on <-ctx.Done(), so a boot-time bind failure never surfaced.
-func TestServe_BindFailureReturnsError(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to grab a free port: %v", err)
-	}
-	defer ln.Close()
-
-	addr := ln.Addr().String()
-
-	srv := &http.Server{Addr: addr, Handler: http.NewServeMux()}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- serve(ctx, srv, sse.NewHub[httpapi.Event](sse.HubOptions{}))
-	}()
-
-	select {
-	case err := <-errCh:
-		if err == nil {
-			t.Fatal("expected serve to return a non-nil error on bind failure, got nil")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("serve did not return after a bind failure; it appears to be hanging on ctx.Done() instead of surfacing the error")
-	}
-}
-
 // TestServe_ShutdownReturnsPromptlyWithOpenSSEStream proves that srv.Shutdown
 // (called by serve once ctx is cancelled) returns quickly and with a nil
 // error even while an SSE client is still connected. http.Server.Shutdown
@@ -272,7 +213,7 @@ func TestServe_ShutdownReturnsPromptlyWithOpenSSEStream(t *testing.T) {
 		}
 	})
 
-	srv := &http.Server{Addr: "127.0.0.1:0", Handler: mux}
+	srv := newServer("127.0.0.1:0", mux, hub)
 	ln, err := net.Listen("tcp", srv.Addr)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -283,7 +224,11 @@ func TestServe_ShutdownReturnsPromptlyWithOpenSSEStream(t *testing.T) {
 
 	serveErrCh := make(chan error, 1)
 	go func() {
-		serveErrCh <- serveOnListener(ctx, srv, ln, hub)
+		go func() { _ = srv.Serve(ln) }()
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		serveErrCh <- srv.Shutdown(shutdownCtx)
 	}()
 
 	// Open an SSE stream and leave it connected (never closed by the
@@ -314,24 +259,20 @@ func TestServe_ShutdownReturnsPromptlyWithOpenSSEStream(t *testing.T) {
 	}
 }
 
-// TestParseLogLevel_mapsNamesAndDefaultsToInfo covers parseLogLevel's
-// case-insensitive parsing and defaults to slog.LevelInfo for empty or
-// unrecognized values.
-func TestParseLogLevel_mapsNamesAndDefaultsToInfo(t *testing.T) {
-	// Given / When / Then
-	cases := map[string]slog.Level{
-		"debug":    slog.LevelDebug,
-		"DEBUG":    slog.LevelDebug,
-		" info ":   slog.LevelInfo,
-		"warn":     slog.LevelWarn,
-		"warning":  slog.LevelWarn,
-		"error":    slog.LevelError,
-		"":         slog.LevelInfo,
-		"nonsense": slog.LevelInfo,
+// The process logger is kit's behind peeq's redactor: an error's URL loses
+// its query string, and an unknown level refuses to boot.
+func TestSetupLogging(t *testing.T) {
+	previous := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	var buf bytes.Buffer
+	if err := setupLogging(&buf, "debug"); err != nil {
+		t.Fatal(err)
 	}
-	for raw, want := range cases {
-		if got := parseLogLevel(raw); got != want {
-			t.Errorf("parseLogLevel(%q) = %v, want %v", raw, got, want)
-		}
+	slog.Debug("fetch failed", "err", errors.New(`Get "https://h/cb?code=SECRET": refused`))
+	if out := buf.String(); strings.Contains(out, "SECRET") || !strings.Contains(out, "https://h/cb") {
+		t.Fatalf("log = %q, want the URL without its query", out)
+	}
+	if err := setupLogging(&buf, "verbose"); err == nil || !strings.Contains(err.Error(), "BACKEND_LOG_LEVEL") {
+		t.Fatalf("unknown level err = %v, want one naming BACKEND_LOG_LEVEL", err)
 	}
 }

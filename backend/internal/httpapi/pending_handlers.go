@@ -7,6 +7,7 @@ import (
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // pendingItem is the JSON shape returned by GET /api/pending: one ledger
@@ -63,15 +64,15 @@ type pendingItem struct {
 // whole pending list — thumbnails' metadata included — to take its length.
 func (s *server) handlePendingCount(w http.ResponseWriter, r *http.Request) {
 	if s.ledger == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "pending is not configured")
 		return
 	}
 	n, err := s.ledger.CountPending()
 	if err != nil {
-		serverError(w, r, err, "count pending failed")
+		httpx.ServerError(w, r, err, "count pending failed")
 		return
 	}
-	writeJSON(w, map[string]int{"count": n})
+	httpx.WriteJSON(w, http.StatusOK, map[string]int{"count": n})
 }
 
 // handlePendingList returns every ledger entry in state 'pending'. Mirrors
@@ -80,7 +81,7 @@ func (s *server) handlePendingCount(w http.ResponseWriter, r *http.Request) {
 // indistinguishable from "genuinely nothing pending").
 func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 	if s.ledger == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "pending is not configured")
 		return
 	}
 	var items []channelvideos.Entry
@@ -91,7 +92,7 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 		items, err = s.ledger.ListPending()
 	}
 	if err != nil {
-		serverError(w, r, err, "list pending failed")
+		httpx.ServerError(w, r, err, "list pending failed")
 		return
 	}
 	out := make([]pendingItem, 0, len(items))
@@ -112,7 +113,7 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 			ThumbnailVersion: e.ThumbnailVersion,
 		})
 	}
-	writeJSON(w, out)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // handlePendingDownload promotes a pending ledger entry to a real download:
@@ -132,17 +133,17 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 // page this feature exists to make reachable.
 func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	if s.ledger == nil || s.videos == nil || s.jobs == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "pending is not configured")
 		return
 	}
 	id := r.PathValue("id")
 	e, err := s.ledger.Get(id)
 	if err != nil {
-		serverError(w, r, err, "load pending failed")
+		httpx.ServerError(w, r, err, "load pending failed")
 		return
 	}
 	if e == nil || (e.State != channelvideos.StatePending && e.State != channelvideos.StateIgnored) {
-		writeJSONError(w, http.StatusNotFound, "pending item not found")
+		httpx.WriteError(w, http.StatusNotFound, "pending item not found")
 		return
 	}
 	// Format decision: a manual "Download now" from Pending deliberately uses
@@ -162,12 +163,12 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// A store fault must not read as "not in the pipeline": that path
 		// would overwrite the row with 'queued' and enqueue a duplicate.
-		serverError(w, r, err, "load video failed")
+		httpx.ServerError(w, r, err, "load video failed")
 		return
 	}
 	if v != nil && alreadyInQueue(v.Status) {
 		if err := s.ledger.SetState(e.VideoID, channelvideos.StateQueued); err != nil {
-			serverError(w, r, err, "update pending failed")
+			httpx.ServerError(w, r, err, "update pending failed")
 			return
 		}
 		s.removePendingThumbnail(e.VideoID)
@@ -176,7 +177,7 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 		if v.Status == videos.StatusDownloaded {
 			status = "already_downloaded"
 		}
-		writeJSON(w, map[string]string{"status": status})
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": status})
 		return
 	}
 	// The title is normalised again on the way out of the ledger. Entries
@@ -195,18 +196,18 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 		ChannelID:       e.ChannelID,
 		DurationSeconds: int64(e.DurationSeconds),
 	}, downloadPriority); err != nil {
-		serverError(w, r, err, "enqueue failed")
+		httpx.ServerError(w, r, err, "enqueue failed")
 		return
 	}
 	if e.State == channelvideos.StateIgnored {
 		if err := s.ledger.SetState(e.VideoID, channelvideos.StateQueued); err != nil {
-			serverError(w, r, err, "update pending failed")
+			httpx.ServerError(w, r, err, "update pending failed")
 			return
 		}
 	}
 	s.removePendingThumbnail(e.VideoID)
 	s.publishInboxChanged(e.VideoID)
-	writeJSON(w, map[string]string{"status": "queued"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "queued"})
 }
 
 // handlePendingIgnore marks a pending ledger entry as ignored, removing it
@@ -229,21 +230,21 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 // whose download was cancelled back to 'new', keeps everything.
 func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 	if s.ledger == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "pending is not configured")
 		return
 	}
 	id := r.PathValue("id")
 	e, err := s.ledger.Get(id)
 	if err != nil {
-		serverError(w, r, err, "load pending failed")
+		httpx.ServerError(w, r, err, "load pending failed")
 		return
 	}
 	if e == nil {
-		writeJSONError(w, http.StatusNotFound, "pending item not found")
+		httpx.WriteError(w, http.StatusNotFound, "pending item not found")
 		return
 	}
 	if err := s.ledger.SetState(id, channelvideos.StateIgnored); err != nil {
-		serverError(w, r, err, "ignore failed")
+		httpx.ServerError(w, r, err, "ignore failed")
 		return
 	}
 	// The item just left the inbox, so its cached thumbnail is dead weight —
@@ -262,7 +263,7 @@ func (s *server) handlePendingIgnore(w http.ResponseWriter, r *http.Request) {
 		s.removePendingThumbnail(id)
 	}
 	s.publishInboxChanged(id)
-	writeJSON(w, map[string]string{"status": "ignored"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
 }
 
 // dropInboxRead throws away everything peeq learned by reading a video: the
@@ -371,13 +372,13 @@ func (s *server) removePendingThumbnail(id string) {
 // media.FetchPendingThumbnail.
 func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) {
 	if s.ledger == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "pending is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "pending is not configured")
 		return
 	}
 	id := r.PathValue("id")
 	e, err := s.ledger.Get(id)
 	if err != nil {
-		serverError(w, r, err, "load pending failed")
+		httpx.ServerError(w, r, err, "load pending failed")
 		return
 	}
 	if e == nil {
@@ -386,7 +387,7 @@ func (s *server) handlePendingThumbnail(w http.ResponseWriter, r *http.Request) 
 	}
 	t, err := s.ledger.GetThumbnail(id)
 	if err != nil {
-		serverError(w, r, err, "load pending thumbnail failed")
+		httpx.ServerError(w, r, err, "load pending thumbnail failed")
 		return
 	}
 	if t == nil {

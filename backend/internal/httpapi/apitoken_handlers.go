@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/trick77/peeq/internal/apitoken"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // apiTokenStatusResponse reports whether a machine token exists, without
@@ -26,15 +27,15 @@ type apiTokenCreatedResponse struct {
 // the Settings UI can pick between its empty and active states.
 func (s *server) handleGetAPIToken(w http.ResponseWriter, r *http.Request) {
 	if s.settings == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "settings are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "settings are not configured")
 		return
 	}
 	present, createdAt, err := s.settings.APITokenInfo(r.Context())
 	if err != nil {
-		serverError(w, r, err, "failed to load api token")
+		httpx.ServerError(w, r, err, "failed to load api token")
 		return
 	}
-	writeJSON(w, apiTokenStatusResponse{Present: present, CreatedAt: createdAt})
+	httpx.WriteJSON(w, http.StatusOK, apiTokenStatusResponse{Present: present, CreatedAt: createdAt})
 }
 
 // handlePostAPIToken generates a machine token, stores only its hash, and
@@ -43,18 +44,18 @@ func (s *server) handleGetAPIToken(w http.ResponseWriter, r *http.Request) {
 // is what invalidates any previous token immediately.
 func (s *server) handlePostAPIToken(w http.ResponseWriter, r *http.Request) {
 	if s.settings == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "settings are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "settings are not configured")
 		return
 	}
 	token, err := apitoken.Generate(rand.Reader)
 	if err != nil {
-		serverError(w, r, err, "failed to generate api token")
+		httpx.ServerError(w, r, err, "failed to generate api token")
 		return
 	}
 	createdAt, err := s.settings.SetAPITokenHash(r.Context(), apitoken.Hash(token))
 	if err != nil {
-		serverError(w, r, err, "failed to store api token")
+		httpx.ServerError(w, r, err, "failed to store api token")
 		return
 	}
-	writeJSON(w, apiTokenCreatedResponse{Token: token, CreatedAt: createdAt})
+	httpx.WriteJSON(w, http.StatusOK, apiTokenCreatedResponse{Token: token, CreatedAt: createdAt})
 }

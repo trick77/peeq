@@ -263,6 +263,24 @@ func TestLoad_invalidSummaryTokensFails(t *testing.T) {
 	}
 }
 
+// Every fault in one boot, not one restart per typo: kit's env.Reader joins
+// them, peeq's own checks (Fail) included.
+func TestLoad_reportsEveryFault(t *testing.T) {
+	baseEnv(t)
+	t.Setenv("BACKEND_SUMMARIZE_SUMMARY_TOKENS", "0")
+	t.Setenv("BACKEND_ASK_CALL_TIMEOUT", "-5s")
+	t.Setenv("BACKEND_AUTH_MODE", "saml")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for _, name := range []string{"BACKEND_SUMMARIZE_SUMMARY_TOKENS", "BACKEND_ASK_CALL_TIMEOUT", "BACKEND_AUTH_MODE"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("err = %v, want it to name %s", err, name)
+		}
+	}
+}
+
 func TestLoad_invalidCallTimeoutFails(t *testing.T) {
 	baseEnv(t)
 	t.Setenv("BACKEND_CHAT_CALL_TIMEOUT", "notaduration")
