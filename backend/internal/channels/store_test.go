@@ -28,6 +28,76 @@ func newTestStore(t *testing.T) *Store {
 	return New(db)
 }
 
+func TestList_reportsKeepReads(t *testing.T) {
+	s := newTestStore(t)
+	for _, id := range []string{"UCkeep", "UCplain"} {
+		if err := s.Upsert(Channel{ID: id, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.MarkAdded(id, "2026-07-20 10:00:00"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := s.SetKeepReads("UCkeep", true); err != nil {
+		t.Fatal(err)
+	}
+	items, err := s.List("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, it := range items {
+		got[it.ID] = it.KeepReads
+	}
+	if !got["UCkeep"] || got["UCplain"] {
+		t.Fatalf("keep_reads = %v", got)
+	}
+}
+
+func TestSearchable_isSubscribedOrKeepReads(t *testing.T) {
+	s := newTestStore(t)
+	for _, c := range []Channel{
+		{ID: "UCsub", Name: "Sub", Handle: "@sub", Description: "subscribed"},
+		{ID: "UCkeep", Name: "Keep"},
+		{ID: "UCadded", Name: "Added only"},
+		{ID: "UCcache", Name: "Cache only"},
+		{ID: "UCgone", Name: "Removed but keep_reads"},
+	} {
+		if err := s.Upsert(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"UCadded", "UCsub", "UCkeep"} {
+		if err := s.MarkAdded(id, "2026-07-20 10:00:00"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A cache-only row (never added, nothing downloaded) never shows, even
+	// with keep_reads left set on it.
+	if _, _, err := s.SetKeepReads("UCgone", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Subscribe("UCsub", "2099-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.SetKeepReads("UCkeep", true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Searchable(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != "UCkeep" || got[1].ID != "UCsub" {
+		t.Fatalf("searchable = %+v, want Keep then Sub", got)
+	}
+	if !got[1].Subscribed || got[1].KeepReads || got[1].Handle != "@sub" || got[1].Description != "subscribed" {
+		t.Errorf("Sub = %+v", got[1])
+	}
+	if got[0].Subscribed || !got[0].KeepReads {
+		t.Errorf("Keep = %+v", got[0])
+	}
+}
+
 // TestList_excludesCacheOnlyRows asserts a channel row that exists only as a
 // metadata cache entry (never added by the user) is invisible to every
 // ?filter= value the channels list supports. If this regresses, the user's

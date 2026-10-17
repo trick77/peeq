@@ -369,8 +369,11 @@ func scanCard(rs rowScanner) (Video, error) {
 }
 
 // Get returns the video row for id, or (nil, nil) if there is none.
-func (s *Store) Get(id string) (*Video, error) {
-	row := s.db.QueryRowContext(context.Background(),
+func (s *Store) Get(id string) (*Video, error) { return s.GetCtx(context.Background(), id) }
+
+// GetCtx is Get bounded by ctx.
+func (s *Store) GetCtx(ctx context.Context, id string) (*Video, error) {
+	row := s.db.QueryRowContext(ctx,
 		"SELECT "+videoColumns+" "+videoFrom+" WHERE v.id = ?", id,
 	)
 	v, err := scanVideo(row)
@@ -392,7 +395,12 @@ const getManyChunk = 500
 // id. Ids with no row are absent from the map; duplicates and an empty input
 // cost nothing.
 func (s *Store) GetMany(ids []string) (map[string]*Video, error) {
-	return s.readMany(ids, videoColumns, scanVideo)
+	return s.readMany(context.Background(), ids, videoColumns, scanVideo)
+}
+
+// GetManyCtx is GetMany bounded by ctx.
+func (s *Store) GetManyCtx(ctx context.Context, ids []string) (map[string]*Video, error) {
+	return s.readMany(ctx, ids, videoColumns, scanVideo)
 }
 
 // Titles is GetMany for the list endpoints that join job rows to a title and
@@ -400,7 +408,7 @@ func (s *Store) GetMany(ids []string) (map[string]*Video, error) {
 // sit at the front of the row, so the read never follows a video's text into
 // its overflow pages the way a whole-row read does.
 func (s *Store) Titles(ids []string) (map[string]*Video, error) {
-	return s.readMany(ids, titleColumns, scanTitle)
+	return s.readMany(context.Background(), ids, titleColumns, scanTitle)
 }
 
 const titleColumns = `v.id, v.title, v.channel_id,
@@ -412,7 +420,7 @@ func scanTitle(rs rowScanner) (Video, error) {
 	return v, err
 }
 
-func (s *Store) readMany(ids []string, columns string, scan func(rowScanner) (Video, error)) (map[string]*Video, error) {
+func (s *Store) readMany(ctx context.Context, ids []string, columns string, scan func(rowScanner) (Video, error)) (map[string]*Video, error) {
 	out := make(map[string]*Video, len(ids))
 	uniq := make([]any, 0, len(ids))
 	seen := make(map[string]bool, len(ids))
@@ -424,18 +432,18 @@ func (s *Store) readMany(ids []string, columns string, scan func(rowScanner) (Vi
 	}
 	for start := 0; start < len(uniq); start += getManyChunk {
 		chunk := uniq[start:min(start+getManyChunk, len(uniq))]
-		if err := s.readChunk(chunk, columns, scan, out); err != nil {
+		if err := s.readChunk(ctx, chunk, columns, scan, out); err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
 }
 
-func (s *Store) readChunk(ids []any, columns string, scan func(rowScanner) (Video, error), out map[string]*Video) error {
+func (s *Store) readChunk(ctx context.Context, ids []any, columns string, scan func(rowScanner) (Video, error), out map[string]*Video) error {
 	// The only non-constant spliced in is the placeholder list; every id
 	// travels as a bound argument.
 	query := "SELECT " + columns + " " + videoFrom + " WHERE v.id IN (" + store.Placeholders(len(ids)) + ")" //nolint:gosec // placeholders only
-	rows, err := s.db.QueryContext(context.Background(), query, ids...)
+	rows, err := s.db.QueryContext(ctx, query, ids...)
 	if err != nil {
 		return fmt.Errorf("get videos: %w", err)
 	}
@@ -797,7 +805,12 @@ type ChannelRef struct {
 // question. Rows recorded before channel ids were carry an empty id and are
 // still returned, because the filter has a by-name arm for exactly them.
 func (s *Store) ChannelDirectory() ([]ChannelRef, error) {
-	rows, err := s.db.QueryContext(context.Background(), `
+	return s.ChannelDirectoryCtx(context.Background())
+}
+
+// ChannelDirectoryCtx is ChannelDirectory bounded by ctx.
+func (s *Store) ChannelDirectoryCtx(ctx context.Context) ([]ChannelRef, error) {
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT DISTINCT v.channel_id,
 		       COALESCE(NULLIF(v.channel_name, ''), c.name) AS name,
 		       COALESCE(c.handle, '')

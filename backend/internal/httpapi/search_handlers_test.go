@@ -1516,7 +1516,7 @@ func TestAskLanesTimesEachRungSeparately(t *testing.T) {
 	testee := &server{rag: ragStore, videos: deps.Videos}
 	r := httptest.NewRequest(http.MethodGet, "/api/search/answer?q=electrolytes", nil)
 
-	_, diag := testee.askLanes(r, "electrolytes", "", rag.Filter{}, nil)
+	_, diag := testee.askLanes(r.Context(), "electrolytes", "", rag.Filter{}, nil)
 
 	if len(diag.rungs) == 0 {
 		t.Fatal("no rung was recorded at all")
@@ -1545,7 +1545,7 @@ func TestAskLanesRecordsARungThatMatchedNothing(t *testing.T) {
 	// both and matches nothing, the looser rungs find the one that is there.
 	r := httptest.NewRequest(http.MethodGet, "/api/search/answer?q=electrolytes+zirconium", nil)
 
-	_, diag := testee.askLanes(r, "electrolytes zirconium", "", rag.Filter{}, nil)
+	_, diag := testee.askLanes(r.Context(), "electrolytes zirconium", "", rag.Filter{}, nil)
 
 	var empty int
 	for _, rung := range diag.rungs {
@@ -1577,7 +1577,7 @@ func TestAskLanesRecordsARungThatErrored(t *testing.T) {
 	}
 	r := httptest.NewRequest(http.MethodGet, "/api/search/answer?q=electrolytes", nil)
 
-	_, diag := testee.askLanes(r, "electrolytes", "", rag.Filter{}, nil)
+	_, diag := testee.askLanes(r.Context(), "electrolytes", "", rag.Filter{}, nil)
 
 	if len(diag.rungs) != 1 {
 		t.Fatalf("rungs = %v, want the errored rung recorded and the ladder abandoned", diag.rungs)

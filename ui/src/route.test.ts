@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parsePath, toPath, type RouteState } from "./route";
+import { parsePath, seekFromSearch, toPath, type RouteState } from "./route";
 
 describe("parsePath", () => {
   it("maps / to the Library", () => {
@@ -210,4 +210,21 @@ describe("round-trip", () => {
   it.each(canonical)("%s -> parse -> toPath is stable", (path) => {
     expect(toPath(parsePath(path))).toBe(path);
   });
+});
+
+// /video/<id>?t=<seconds> is the deep link other tools cite a moment with.
+describe("seekFromSearch", () => {
+  it.each([
+    ["?t=754", 754],
+    ["?t=0", 0],
+    ["?x=1&t=12", 12],
+  ])("%s -> %d", (search, want) => {
+    expect(seekFromSearch(search)).toBe(want);
+  });
+  it.each(["", "?t=", "?t=-5", "?t=1.5", "?t=abc", "?t=12s", "?v=1"])(
+    "%s -> no seek",
+    (search) => {
+      expect(seekFromSearch(search)).toBeUndefined();
+    },
+  );
 });

@@ -264,7 +264,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var qv queryVectors
-	lanes, diag := s.askLanes(r, q, u.Topic, filter, &qv)
+	lanes, diag := s.askLanes(r.Context(), q, u.Topic, filter, &qv)
 	diag.understand, diag.understandMs = string(ud.status), ud.ms
 	diag.counting = ud.counting
 	diag.filters, diag.filtersDropped = strings.Join(applied, "|"), ud.dropped
@@ -285,7 +285,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// like the empty answer it replaces.
 	var relaxed []string
 	if !filter.Empty() && len(hits) == 0 {
-		wide, wdiag := s.askLanes(r, q, u.Topic, rag.Filter{}, &qv)
+		wide, wdiag := s.askLanes(r.Context(), q, u.Topic, rag.Filter{}, &qv)
 		wideStart := time.Now()
 		wideHits := rag.FuseWeighted(wide, searchCandidates)
 		// Accounted for OUTSIDE the branch below, because the second search ran

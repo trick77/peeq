@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -110,6 +111,12 @@ type Config struct {
 	// (validateDevAuthLocalOnly), so this can never be reachable from the
 	// network.
 	AllowAnonymousYoutube bool
+
+	// MCPToken (BACKEND_MCP_TOKEN) is the bearer secret for POST /mcp, the MCP
+	// server other tools search the library through. Empty leaves the route
+	// unmounted. A separate secret from the extension's API token on purpose:
+	// that one may only write a cookie, this one reads the library.
+	MCPToken string
 }
 
 // OIDCConfig holds OpenID Connect settings.
@@ -181,6 +188,11 @@ func Load() (Config, error) {
 	}
 
 	cfg.DefaultSubLang = env("BACKEND_DEFAULT_SUB_LANG", "en")
+	cfg.MCPToken = strings.TrimSpace(env("BACKEND_MCP_TOKEN", ""))
+	if cfg.MCPToken != "" && strings.TrimSpace(cfg.PublicURL) == "" {
+		// MCP results cite peeq links; relative ones mean nothing to the client.
+		return Config{}, fmt.Errorf("BACKEND_MCP_TOKEN is set but BACKEND_PUBLIC_URL is empty; MCP results link to peeq and need the public URL")
+	}
 	cfg.SearchMaxDistance = defaultSearchMaxDistance
 	if v := env("BACKEND_ALLOW_ANONYMOUS_YOUTUBE", ""); v != "" {
 		b, err := strconv.ParseBool(v)

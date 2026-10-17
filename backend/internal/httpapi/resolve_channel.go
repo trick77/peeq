@@ -72,7 +72,14 @@ func (s *server) resolveChannels(names []string) channelResolution {
 		slog.Warn("search: channel directory unavailable, ignoring channel filter", "err", err)
 		return out
 	}
+	return resolveChannelsIn(dir, names)
+}
 
+// resolveChannelsIn is resolveChannels over a directory the caller chose: the
+// MCP server resolves against the channels it lists, not only the ones that
+// already have videos.
+func resolveChannelsIn(dir []videos.ChannelRef, names []string) channelResolution {
+	var out channelResolution
 	seenID := map[string]bool{}
 	seenName := map[string]bool{}
 	// Matched is deduped too: two spellings of one channel ("Veritasium",

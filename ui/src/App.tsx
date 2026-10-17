@@ -20,7 +20,7 @@ import { History } from "./views/History";
 import { Search } from "./views/Search";
 import { useSearchState, type SearchState } from "./searchState";
 import { Share } from "./views/Share";
-import { useRoute } from "./route";
+import { seekFromSearch, useRoute } from "./route";
 import { TabBar } from "./shell/TabBar";
 import { NowDock } from "./shell/NowDock";
 import { useSpaceToPlay } from "./shell/useSpaceToPlay";
@@ -367,7 +367,14 @@ export function App() {
   // rail's "Now playing" without going through openVideo/openVideoAt again —
   // the Player unmounts whenever the view navigates away) can never replay
   // it and override the user's real resume position.
-  const [pendingSeek, setPendingSeek] = useState<number | undefined>(undefined);
+  //
+  // A cold load of /video/<id>?t=<seconds> (the link an MCP search result
+  // cites) seeds it, so the moment opens the same way a Search click does.
+  const [pendingSeek, setPendingSeek] = useState<number | undefined>(() =>
+    route.view === "player"
+      ? seekFromSearch(window.location.search)
+      : undefined,
+  );
   useEffect(() => {
     if (!authChecked || !user) return;
     let active = true;
