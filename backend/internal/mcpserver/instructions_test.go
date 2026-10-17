@@ -23,7 +23,7 @@ func TestInstructions_listSubscribedChannelsForAutoSearch(t *testing.T) {
 	kept := strings.Index(got, "- Kept")
 	big := strings.Index(got, "- Big")
 	small := strings.Index(got, "- Small")
-	if kept < 0 || big < 0 || small < 0 || !(kept < big && big < small) {
+	if kept < 0 || big < 0 || small < 0 || kept >= big || big >= small {
 		t.Errorf("order wrong (keep_reads first, then by video count):\n%s", got)
 	}
 	if !strings.Contains(got, "Kept (full catalogue indexed)") {
