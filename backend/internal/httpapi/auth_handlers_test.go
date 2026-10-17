@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/logx"
+	"github.com/trick77/ship/kit/auth"
 )
 
 // The transient cookies kit/auth's OIDC names from CookiePrefix "peeq_"
@@ -99,6 +100,33 @@ func TestAuthLogin_oidcStartsWithPKCE(t *testing.T) {
 		if !got[name] {
 			t.Errorf("cookie %s not set (HttpOnly)", name)
 		}
+	}
+}
+
+// A callback the provider vouches for ends in a session carrying its claims.
+func TestAuthCallback_successIssuesASession(t *testing.T) {
+	h := New(testDepsWithOIDCBackend(t, stubOIDCBackend{verified: &auth.Claims{Subject: "idp-sub", Email: "jan@example.com"}}))
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=c&state=xyz", nil)
+	req.AddCookie(&http.Cookie{Name: oidcStateCookieName, Value: "xyz"})
+	req.AddCookie(&http.Cookie{Name: oidcNonceCookieName, Value: "nonce123"})
+	req.AddCookie(&http.Cookie{Name: oidcPKCECookieName, Value: "verifier123"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
+		t.Fatalf("callback = %d %q, want a redirect to /", rec.Code, rec.Header().Get("Location"))
+	}
+	var session *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == SessionCookie && c.Value != "" {
+			session = c
+		}
+	}
+	if session == nil {
+		t.Fatal("no session cookie issued")
+	}
+	me := doReq(t, h, session, http.MethodGet, "/api/auth/me", nil)
+	if !strings.Contains(me.Body.String(), `"sub":"idp-sub"`) {
+		t.Fatalf("/me = %s, want the provider's claims", me.Body.String())
 	}
 }
 

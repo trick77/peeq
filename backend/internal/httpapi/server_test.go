@@ -66,6 +66,9 @@ func testDeps(t *testing.T) Deps {
 // failure.
 type stubOIDCBackend struct {
 	exchangeErr error
+	// verified, when set, makes the exchange succeed and Verify answer it
+	// with the nonce "nonce123": a provider that signed the user in.
+	verified *auth.Claims
 }
 
 func (stubOIDCBackend) AuthCodeURL(state string, opts ...oauth2.AuthCodeOption) string {
@@ -77,10 +80,16 @@ func (s stubOIDCBackend) Exchange(context.Context, string, ...oauth2.AuthCodeOpt
 	if s.exchangeErr != nil {
 		return nil, s.exchangeErr
 	}
+	if s.verified != nil {
+		return &oauth2.Token{AccessToken: "at"}, nil
+	}
 	return nil, errors.New("stub: exchange not expected in this test")
 }
 
-func (stubOIDCBackend) Verify(context.Context, *oauth2.Token) (auth.Claims, string, error) {
+func (s stubOIDCBackend) Verify(context.Context, *oauth2.Token) (auth.Claims, string, error) {
+	if s.verified != nil {
+		return *s.verified, "nonce123", nil
+	}
 	return auth.Claims{}, "", errors.New("stub: verify not expected in this test")
 }
 
@@ -143,6 +152,19 @@ func TestServer_devLoginThenEmptyVideos(t *testing.T) {
 // TestServer_noAuthConfigured_failsClosed asserts requireAuth never fails
 // open: with no dev claims and no OIDC backend configured (AuthMode unset),
 // neither the videos endpoint nor login can produce an authenticated session.
+// With no session signer wired at all (a wiring bug), every gated route and
+// login answer a refusal: requireAuth never fails open.
+func TestServer_noSessions_failsClosed(t *testing.T) {
+	h := New(Deps{DevAuthClaims: auth.Claims{Subject: "dev"}})
+	for path, want := range map[string]int{"/api/videos": 401, "/api/auth/me": 401, "/api/auth/login": 503, "/api/auth/logout": 503} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != want {
+			t.Errorf("%s = %d, want %d", path, rec.Code, want)
+		}
+	}
+}
+
 func TestServer_noAuthConfigured_failsClosed(t *testing.T) {
 	h := New(Deps{
 		Sessions: testSessions(t),

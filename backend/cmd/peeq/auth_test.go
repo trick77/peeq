@@ -51,4 +51,58 @@ func TestNewAuth(t *testing.T) {
 		!strings.Contains(err.Error(), "BACKEND_AUTH_MODE") {
 		t.Errorf("unset auth mode: err = %v", err)
 	}
+
+	dev.AllowAnonymousYoutube = true
+	if _, s, _, err := newAuth(context.Background(), dev); err != nil || s == nil {
+		t.Errorf("dev with anonymous YouTube: %v", err)
+	}
+}
+
+// OIDC mode reads the provider's discovery document at boot: a provider that
+// answers yields the flow, one that does not refuses the boot.
+func TestNewAuth_oidcDiscovery(t *testing.T) {
+	var issuer string
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/.well-known/openid-configuration" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"issuer":"` + issuer + `","authorization_endpoint":"` + issuer + `/authorize",` +
+			`"token_endpoint":"` + issuer + `/token","jwks_uri":"` + issuer + `/jwks",` +
+			`"id_token_signing_alg_values_supported":["RS256"]}`))
+	}))
+	defer idp.Close()
+	issuer = idp.URL
+
+	cfg := config.Config{
+		AuthMode:      config.AuthModeOIDC,
+		PublicURL:     "https://peeq.example.com",
+		SessionSecret: strings.Repeat("k", 32),
+		SessionTTL:    time.Hour,
+		OIDC: config.OIDCConfig{
+			Issuer: issuer, ClientID: "peeq", ClientSecret: "s",
+			RedirectURL: "https://peeq.example.com/api/auth/callback",
+		},
+	}
+	oidc, sessions, claims, err := newAuth(context.Background(), cfg)
+	if err != nil || oidc == nil || sessions == nil || claims.Subject != "" {
+		t.Fatalf("oidc: oidc=%v sessions=%v claims=%+v err=%v", oidc, sessions, claims, err)
+	}
+	rec := httptest.NewRecorder()
+	oidc.Start(rec, httptest.NewRequest(http.MethodGet, "/api/auth/login", nil))
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, issuer+"/authorize") ||
+		!strings.Contains(loc, "scope=openid+profile+email&") {
+		t.Errorf("login redirect = %q, want the provider with openid profile email", loc)
+	}
+	for _, c := range rec.Result().Cookies() {
+		if !c.Secure {
+			t.Errorf("cookie %s not Secure behind an https public URL", c.Name)
+		}
+	}
+
+	idp.Close()
+	if _, _, _, err := newAuth(context.Background(), cfg); err == nil {
+		t.Error("an unreachable provider booted")
+	}
 }
