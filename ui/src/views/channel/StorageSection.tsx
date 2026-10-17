@@ -32,6 +32,10 @@ function parts(g: StorageGroup): string {
   ].join(" · ");
 }
 
+// AFTER_PURGE_MS is when a switch-off measures again: long enough for the
+// background purge of a typical channel to have finished.
+const AFTER_PURGE_MS = 3000;
+
 function videos(n: number): string {
   return `${n} ${n === 1 ? "video" : "videos"}`;
 }
@@ -41,23 +45,47 @@ function videos(n: number): string {
 // stores for those videos, and what it keeps after a file went. Measured on
 // its own request when the Settings tab opens — it visits every video of the
 // channel, too much for the header's load.
-export function StorageSection({ channelId }: { channelId: string }) {
-  const [storage, setStorage] = useState<ChannelStorage | null>(null);
-  const [error, setError] = useState<string | null>(null);
+//
+// It measures again whenever the switch flips, and once more a few seconds
+// after it goes off: the purge that follows runs in the background, so the
+// first answer can still show what is about to go. Each answer is keyed to
+// the channel and switch state it was measured for, so a stale one — another
+// channel's, or from before the flip — is never shown.
+export function StorageSection({
+  channelId,
+  keepReads,
+}: {
+  channelId: string;
+  keepReads: boolean;
+}) {
+  const key = `${channelId}:${keepReads}`;
+  const [result, setResult] = useState<{
+    key: string;
+    storage?: ChannelStorage;
+    error?: string;
+  } | null>(null);
 
   useEffect(() => {
     let active = true;
-    getChannelStorage(channelId)
-      .then((s) => {
-        if (active) setStorage(s);
-      })
-      .catch((e: Error) => {
-        if (active) setError(e.message);
-      });
+    const measure = () =>
+      getChannelStorage(channelId)
+        .then((storage) => {
+          if (active) setResult({ key, storage });
+        })
+        .catch((e: Error) => {
+          if (active) setResult({ key, error: e.message });
+        });
+    measure();
+    const again = keepReads ? undefined : setTimeout(measure, AFTER_PURGE_MS);
     return () => {
       active = false;
+      clearTimeout(again);
     };
-  }, [channelId]);
+  }, [channelId, keepReads, key]);
+
+  const current = result?.key === key ? result : null;
+  const storage = current?.storage;
+  const error = current?.error;
 
   return (
     <div className="chan-srow">
@@ -74,8 +102,8 @@ export function StorageSection({ channelId }: { channelId: string }) {
               {videos(storage.on_disk.videos)} on disk
             </div>
             <div>
-              <b>Their transcripts and search</b>{" "}
-              {size(dbBytes(storage.on_disk))} — {parts(storage.on_disk)}
+              <b>Their data in peeq</b> {size(dbBytes(storage.on_disk))} —{" "}
+              {parts(storage.on_disk)}
             </div>
             <div>
               <b>Kept in Search</b> {size(dbBytes(storage.kept))} ·{" "}

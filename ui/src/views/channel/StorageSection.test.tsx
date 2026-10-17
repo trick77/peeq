@@ -43,7 +43,7 @@ describe("StorageSection", () => {
       }),
       other: group(),
     });
-    render(<StorageSection channelId="UCa" />);
+    render(<StorageSection channelId="UCa" keepReads />);
 
     expect(await screen.findByText(/1\.9 GB/)).toBeInTheDocument();
     expect(screen.getByText(/4 videos on disk/)).toBeInTheDocument();
@@ -61,7 +61,7 @@ describe("StorageSection", () => {
       kept: group(),
       other: group({ videos: 1, summary_bytes: 2048 }),
     });
-    render(<StorageSection channelId="UCa" />);
+    render(<StorageSection channelId="UCa" keepReads />);
     expect(await screen.findByText(/New and in progress/)).toBeInTheDocument();
     expect(screen.getByText(/1 video$/)).toBeInTheDocument();
   });
@@ -70,9 +70,53 @@ describe("StorageSection", () => {
     vi.mocked(getChannelStorage).mockRejectedValue(
       new Error("failed to measure channel storage"),
     );
-    render(<StorageSection channelId="UCa" />);
+    render(<StorageSection channelId="UCa" keepReads />);
     expect(
       await screen.findByText("failed to measure channel storage"),
     ).toBeInTheDocument();
+  });
+
+  it("measures again after a switch-off, once the purge had time", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(getChannelStorage).mockResolvedValue({
+        on_disk: group(),
+        kept: group({ videos: 8 }),
+        other: group(),
+      });
+      const { rerender } = render(<StorageSection channelId="UCa" keepReads />);
+      await screen.findByText(/8 videos without a file/);
+      expect(getChannelStorage).toHaveBeenCalledTimes(1);
+
+      vi.mocked(getChannelStorage).mockResolvedValue({
+        on_disk: group(),
+        kept: group(),
+        other: group(),
+      });
+      rerender(<StorageSection channelId="UCa" keepReads={false} />);
+      expect(getChannelStorage).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(getChannelStorage).toHaveBeenCalledTimes(3);
+      expect(
+        await screen.findByText(/0 videos without a file/),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never shows another channel's numbers while measuring", async () => {
+    vi.mocked(getChannelStorage).mockResolvedValueOnce({
+      on_disk: group({ videos: 4 }),
+      kept: group(),
+      other: group(),
+    });
+    const { rerender } = render(<StorageSection channelId="UCa" keepReads />);
+    await screen.findByText(/4 videos on disk/);
+
+    vi.mocked(getChannelStorage).mockReturnValueOnce(new Promise(() => {}));
+    rerender(<StorageSection channelId="UCb" keepReads />);
+    expect(screen.queryByText(/4 videos on disk/)).not.toBeInTheDocument();
+    expect(screen.getByText("Measuring…")).toBeInTheDocument();
   });
 });

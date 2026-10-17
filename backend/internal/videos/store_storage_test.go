@@ -55,7 +55,7 @@ func TestChannelStorage_splitsOnDiskKeptAndOther(t *testing.T) {
 		}
 	}
 
-	got, err := s.ChannelStorage(ctx, "UC1")
+	got, err := s.ChannelStorage(ctx, "UC1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,5 +84,63 @@ func TestChannelStorage_splitsOnDiskKeptAndOther(t *testing.T) {
 		if g != w {
 			t.Errorf("%s = %+v, want %+v", name, g, w)
 		}
+	}
+}
+
+// The edges: a legacy row with no channel id counts through the name fallback
+// (as in the header), a NULL file size counts as nothing rather than failing,
+// an ignored video that was once downloaded is not "kept" (a switch-off does
+// not purge it), and a channel with no chunks needs no vector width.
+func TestChannelStorage_edges(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	ctx := context.Background()
+	if _, err := db.Exec(`INSERT INTO channels (id, name) VALUES ('UC1','Chan')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []Video{
+		{ID: "legacy", URL: "u", ChannelName: "Chan"},
+		{ID: "nullsize", URL: "u", ChannelID: "UC1"},
+		{ID: "wasdl", URL: "u", ChannelID: "UC1"},
+	} {
+		if err := s.Upsert(v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE videos SET status = 'downloaded', filesize_bytes = 7 WHERE id = 'legacy'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE videos SET status = 'downloaded', filesize_bytes = NULL WHERE id = 'nullsize'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE videos SET status = 'new' WHERE id = 'wasdl'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO channel_videos (video_id, channel_id, title, state) VALUES ('wasdl','UC1','t','ignored')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTranscript("wasdl", TranscriptSourceDownload, "x"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ChannelStorage(ctx, "UC1", "Chan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OnDisk.Videos != 2 || got.OnDisk.FileBytes != 7 {
+		t.Fatalf("on disk = %+v, want 2 videos and 7 bytes (legacy row in, NULL size as 0)", got.OnDisk)
+	}
+	if got.Kept.Videos != 0 || got.Other.Videos != 1 {
+		t.Fatalf("kept = %+v other = %+v, want the once-downloaded ignore under other", got.Kept, got.Other)
+	}
+	if got.OnDisk.VectorBytes != 0 {
+		t.Fatalf("vector bytes = %d with no chunks", got.OnDisk.VectorBytes)
+	}
+
+	if _, err := db.Exec(`DROP TABLE video_in_depth`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ChannelStorage(ctx, "UC1", ""); err == nil {
+		t.Fatal("want an error from a broken query")
 	}
 }

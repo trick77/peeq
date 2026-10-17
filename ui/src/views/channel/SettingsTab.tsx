@@ -245,7 +245,7 @@ export function SettingsTab({
           />
         </div>
 
-        <StorageSection channelId={detail.id} />
+        <StorageSection channelId={detail.id} keepReads={detail.keep_reads} />
       </div>
 
       <div className="chan-danger">

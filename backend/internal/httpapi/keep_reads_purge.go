@@ -5,27 +5,18 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/videos"
 )
 
 // handleKeepReadsImpact answers what turning the channel's keep_reads off
 // would take, so the confirm dialog can name real numbers before anything goes.
 func (s *server) handleKeepReadsImpact(w http.ResponseWriter, r *http.Request) {
-	if s.channels == nil || s.videos == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+	c, ok := s.loadChannelOr404(w, r)
+	if !ok {
 		return
 	}
-	id := r.PathValue("id")
-	c, err := s.channels.Get(id)
-	if err != nil {
-		serverError(w, r, err, "load channel failed")
-		return
-	}
-	if c == nil {
-		writeJSONError(w, http.StatusNotFound, "channel not found")
-		return
-	}
-	counts, err := s.videos.KeptImpact(id)
+	counts, err := s.videos.KeptImpact(c.ID)
 	if err != nil {
 		serverError(w, r, err, "count kept videos failed")
 		return
@@ -33,26 +24,36 @@ func (s *server) handleKeepReadsImpact(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, counts)
 }
 
+// loadChannelOr404 is the lookup both keep_reads reads open with: 503 without
+// the stores, 500 on a failed read, 404 for an unknown channel. ok is false
+// once it has answered.
+func (s *server) loadChannelOr404(w http.ResponseWriter, r *http.Request) (*channels.Channel, bool) {
+	if s.channels == nil || s.videos == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return nil, false
+	}
+	c, err := s.channels.Get(r.PathValue("id"))
+	if err != nil {
+		serverError(w, r, err, "load channel failed")
+		return nil, false
+	}
+	if c == nil {
+		writeJSONError(w, http.StatusNotFound, "channel not found")
+		return nil, false
+	}
+	return c, true
+}
+
 // handleChannelStorage answers what peeq stores for a channel, split into its
 // videos on disk, what is kept after a file went, and the rest — the channel
 // Settings tab shows it beside the keep switch. Its own request, never part of
 // the channel detail: it visits every video row of the channel.
 func (s *server) handleChannelStorage(w http.ResponseWriter, r *http.Request) {
-	if s.channels == nil || s.videos == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+	c, ok := s.loadChannelOr404(w, r)
+	if !ok {
 		return
 	}
-	id := r.PathValue("id")
-	c, err := s.channels.Get(id)
-	if err != nil {
-		serverError(w, r, err, "load channel failed")
-		return
-	}
-	if c == nil {
-		writeJSONError(w, http.StatusNotFound, "channel not found")
-		return
-	}
-	st, err := s.videos.ChannelStorage(r.Context(), id)
+	st, err := s.videos.ChannelStorage(r.Context(), c.ID, c.Name)
 	if err != nil {
 		serverError(w, r, err, "measure channel storage failed")
 		return

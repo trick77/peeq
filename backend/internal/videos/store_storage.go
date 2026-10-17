@@ -27,9 +27,10 @@ type StorageGroup struct {
 }
 
 // ChannelStorage splits a channel's storage by what the keep_reads switch is
-// about: OnDisk is the downloaded videos, Kept is what survives a file
-// (tombstones and ignored reads kept for search), Other is everything else
-// (the New tab, queued or failed work).
+// about: OnDisk is the downloaded videos, Kept is what survives a file and
+// what turning the switch off purges (tombstones and ignored reads, by the
+// same rule as keptVideos), Other is everything else (the New tab, queued or
+// failed work).
 type ChannelStorage struct {
 	OnDisk StorageGroup `json:"on_disk"`
 	Kept   StorageGroup `json:"kept"`
@@ -42,14 +43,21 @@ type ChannelStorage struct {
 // posters are the big values on these rows, and reading them would walk their
 // overflow pages. The channel page asks for this on its own request, never on
 // load, because it still visits every row of the channel.
-const channelStorageQuery = `
+//
+// The where clause is channels.Stats' own, legacy name fallback included, so
+// the files here add up to the header's figure. Reading status and file size
+// from the row costs what that header already pays on every channel load.
+func channelStorageQuery(where string) string {
+	return `
 SELECT CASE
          WHEN v.status = 'downloaded' THEN 'on_disk'
-         WHEN v.status = 'tombstoned' OR (v.status = 'new' AND cv.state = 'ignored') THEN 'kept'
+         WHEN v.status = 'tombstoned' THEN 'kept'
+         WHEN v.status = 'new' AND cv.state = 'ignored'
+              AND COALESCE((SELECT t.source FROM video_transcripts t WHERE t.video_id = v.id), '') != 'download' THEN 'kept'
          ELSE 'other'
        END AS grp,
        COUNT(*),
-       SUM(CASE WHEN v.status = 'downloaded' THEN v.filesize_bytes ELSE 0 END),
+       SUM(CASE WHEN v.status = 'downloaded' THEN COALESCE(v.filesize_bytes, 0) ELSE 0 END),
        SUM(COALESCE((SELECT octet_length(t.vtt) FROM video_transcripts t WHERE t.video_id = v.id), 0)),
        SUM(COALESCE(octet_length(v.summary), 0) + COALESCE(octet_length(v.chapters), 0)
            + COALESCE(octet_length(v.key_points), 0)
@@ -59,21 +67,27 @@ SELECT CASE
        SUM(COALESCE((SELECT octet_length(th.bytes) FROM video_thumbnails th WHERE th.video_id = v.id), 0))
 FROM videos v
 LEFT JOIN channel_videos cv ON cv.video_id = v.id
-WHERE v.channel_id = ?
+WHERE ` + where + `
 GROUP BY grp`
+}
 
 // ChannelStorage measures what peeq stores for one channel's videos.
-func (s *Store) ChannelStorage(ctx context.Context, channelID string) (ChannelStorage, error) {
-	dim, err := rag.NewStore(s.db).BuiltDim(ctx)
-	if err != nil {
-		return ChannelStorage{}, err
+// channelName is the fallback for videos written before channel ids were
+// recorded, as for channels.Store.Stats; "" matches on channel_id alone.
+func (s *Store) ChannelStorage(ctx context.Context, channelID, channelName string) (ChannelStorage, error) {
+	where := "v.channel_id = ?"
+	args := []any{channelID}
+	if channelName != "" {
+		where = "(v.channel_id = ? OR (v.channel_id = '' AND v.channel_name = ?))"
+		args = append(args, channelName)
 	}
-	rows, err := s.db.QueryContext(ctx, channelStorageQuery, channelID)
+	rows, err := s.db.QueryContext(ctx, channelStorageQuery(where), args...)
 	if err != nil {
 		return ChannelStorage{}, fmt.Errorf("channel storage %s: %w", channelID, err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out ChannelStorage
+	var chunksBy [3]int64
 	for rows.Next() {
 		var grp string
 		var g StorageGroup
@@ -83,18 +97,27 @@ func (s *Store) ChannelStorage(ctx context.Context, channelID string) (ChannelSt
 			return ChannelStorage{}, fmt.Errorf("channel storage %s: %w", channelID, err)
 		}
 		g.SearchTextBytes = 2 * chunkText
-		g.VectorBytes = chunks * int64(dim) * 4
 		switch grp {
 		case "on_disk":
-			out.OnDisk = g
+			out.OnDisk, chunksBy[0] = g, chunks
 		case "kept":
-			out.Kept = g
+			out.Kept, chunksBy[1] = g, chunks
 		default:
-			out.Other = g
+			out.Other, chunksBy[2] = g, chunks
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return ChannelStorage{}, fmt.Errorf("channel storage %s: %w", channelID, err)
+	}
+	// The vector width only matters once there is a chunk to multiply.
+	if chunksBy[0]+chunksBy[1]+chunksBy[2] > 0 {
+		dim, err := rag.NewStore(s.db).BuiltDim(ctx)
+		if err != nil {
+			return ChannelStorage{}, err
+		}
+		out.OnDisk.VectorBytes = chunksBy[0] * int64(dim) * 4
+		out.Kept.VectorBytes = chunksBy[1] * int64(dim) * 4
+		out.Other.VectorBytes = chunksBy[2] * int64(dim) * 4
 	}
 	return out, nil
 }
