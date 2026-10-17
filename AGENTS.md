@@ -36,6 +36,9 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - HTTP: stdlib `net/http` (Go 1.22+ method routing), no web framework.
 - Plumbing that kit (`github.com/trick77/ship/kit`) has comes from kit, never hand-rolled: `version`, `sqlitex.DSN`,
   `httpx.Bearer` + `secret.Match`, `run.Context`/`run.Sleep`, `sse`. Lint config is ship's (no local copy).
+- Sign-in is `kit/auth`: OIDC + signed cookie sessions, no user or session table. `/api/auth/me` = the
+  session's Claims. No server-side revoke: logout clears the cookie, rotating `BACKEND_SESSION_SECRET`
+  ends every session. Bearer routes are `internal/tokenauth`, never a session.
 - Runtime image is `debian:13-slim` (glibc, apt), **not** distroless — peeq shells out to `ffmpeg` and
   `yt-dlp`, both needing a real userland. See the comment in `backend/Containerfile` for why this
   deviates from loom's distroless-static runtime.

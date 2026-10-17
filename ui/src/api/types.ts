@@ -1,11 +1,7 @@
 // types.ts — the JSON shapes peeq's backend actually returns, mirrored
-// field-for-field from the Go DTOs (backend/internal/httpapi/*.go). Two
-// conventions collide here, both preserved deliberately:
-//   - videos/downloads/settings/cookie: snake_case (Go's default json tags)
-//   - the User returned by /api/auth/me: camelCase (auth/model.go sets
-//     explicit `json:"displayName"`/`json:"role"` tags)
-// Do not "fix" one to match the other — that would just diverge from what
-// the wire actually sends.
+// field-for-field from the Go DTOs (backend/internal/httpapi/*.go), in the
+// wire's snake_case. The User returned by /api/auth/me is kit/auth's Claims
+// (sub, preferred_username, ...), snake_case too.
 //
 // The enum-valued fields below are typed against ./enums, whose sets are held
 // to the Go constants by src/wireenums.test.ts. Before that they were plain
@@ -15,20 +11,19 @@ import type {
   Availability,
   CookieStatus,
   JobState,
-  Role,
   SummaryJobState,
   SummaryStatus,
   VideoStatus,
 } from "./enums";
 
-export type { Role };
-
+// User is GET /api/auth/me: the claims the session cookie carries (kit/auth's
+// Claims). Only sub is always set; the rest is what the provider sent.
 export type User = {
-  id: string;
-  username: string;
-  email: string;
-  displayName: string;
-  role: Role;
+  sub: string;
+  preferred_username?: string;
+  email?: string;
+  name?: string;
+  groups?: string[];
 };
 
 // VideoFilter mirrors the ?filter= values videos.Store.List understands.

@@ -9,9 +9,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/playback"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/auth"
 )
 
 // playbackTestDeps is videosTestDeps plus the playback store, sharing the same
@@ -33,14 +33,11 @@ func playbackTestDeps(t *testing.T) Deps {
 func playbackTestDepsDB(t *testing.T) (Deps, *sql.DB) {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Videos:         videos.New(db),
-		Playback:       playback.New(db),
-		MediaDir:       t.TempDir(),
+		Sessions: testSessions(t),
+		Videos:   videos.New(db),
+		Playback: playback.New(db),
+		MediaDir: t.TempDir(),
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",

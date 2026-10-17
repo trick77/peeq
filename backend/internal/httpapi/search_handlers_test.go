@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/auth"
 )
 
 // searchTestDeps builds Deps wired for the search/reprocess API: dev auth
@@ -41,15 +41,12 @@ func searchTestDepsWithDB(t *testing.T) (Deps, *sql.DB) {
 func searchTestDepsWithStores(t *testing.T) (Deps, *sql.DB, *rag.Store) {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	ragStore := rag.NewStore(db)
 	return Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Videos:         videos.New(db),
-		Rag:            ragStore,
+		Sessions: testSessions(t),
+		Settings: settings.New(db),
+		Videos:   videos.New(db),
+		Rag:      ragStore,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -659,16 +656,13 @@ func TestReprocess_downloadedWithSubtitleReturns202(t *testing.T) {
 // dropped.
 func TestReprocess_categoryResetFailure500(t *testing.T) {
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Videos:         videos.New(db),
-		Rag:            rag.NewStore(db),
-		SummaryJobs:    &spySummaryJobs{},
-		DevAuthClaims:  auth.Claims{Subject: "dev-tester", PreferredUsername: "dev"},
+		Sessions:      testSessions(t),
+		Settings:      settings.New(db),
+		Videos:        videos.New(db),
+		Rag:           rag.NewStore(db),
+		SummaryJobs:   &spySummaryJobs{},
+		DevAuthClaims: auth.Claims{Subject: "dev-tester", PreferredUsername: "dev"},
 	}
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u1"}); err != nil {
 		t.Fatalf("seed v1: %v", err)

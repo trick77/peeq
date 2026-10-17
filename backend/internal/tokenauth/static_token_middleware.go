@@ -1,4 +1,4 @@
-package auth
+package tokenauth
 
 import (
 	"net/http"

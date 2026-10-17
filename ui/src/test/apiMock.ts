@@ -7,7 +7,7 @@ import { vi } from "vitest";
 // the other file.
 export function apiMock() {
   return {
-    getMe: vi.fn().mockResolvedValue({ id: "u1", email: "a@b.c" }),
+    getMe: vi.fn().mockResolvedValue({ sub: "u1", email: "a@b.c" }),
     listDownloads: vi.fn().mockResolvedValue([]),
     cookieHealth: vi.fn().mockResolvedValue({ status: "valid" }),
     downloadsStatus: vi

@@ -10,33 +10,30 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/activity"
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/summaryjobs"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/auth"
 )
 
 func activityTestDeps(t *testing.T) (Deps, *activity.Store, *channels.Store, *jobs.Store, *videos.Store, *summaryjobs.Store, *sql.DB) {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	act := activity.New(db)
 	ch := channels.New(db)
 	jb := jobs.New(db)
 	vids := videos.New(db)
 	sj := summaryjobs.New(db)
 	return Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Activity:       act,
-		Channels:       ch,
-		Jobs:           jb,
-		Videos:         vids,
-		SummaryList:    sj,
+		Sessions:    testSessions(t),
+		Settings:    settings.New(db),
+		Activity:    act,
+		Channels:    ch,
+		Jobs:        jb,
+		Videos:      vids,
+		SummaryList: sj,
 		DevAuthClaims: auth.Claims{
 			Subject: "dev-tester", PreferredUsername: "dev",
 			Email: "dev@example.local", Name: "Dev Tester",

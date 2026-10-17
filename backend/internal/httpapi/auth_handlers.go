@@ -4,86 +4,83 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/logx"
+	"github.com/trick77/ship/kit/auth"
 	"github.com/trick77/ship/kit/httpx"
 )
+
+// SessionCookie names the session cookie (kit/auth's Sessions): the claims
+// travel in it, signed, so there is no session table to look up or revoke.
+const SessionCookie = "peeq_session"
 
 // handleAuthLogin starts a login. In dev mode (DevAuthClaims.Subject set) it
 // short-circuits straight to a session, never contacting OIDC — peeq is
 // single-user and dev auth only runs loopback-bound (enforced by config).
 func (s *server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if s.devAuthClaims.Subject != "" {
-		s.createSessionFromClaims(w, r, s.devAuthClaims)
+		s.issueSession(w, r, s.devAuthClaims)
 		return
 	}
-	if !s.authSvc.OIDCConfigured() {
+	if s.oidc == nil {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "oidc is not configured")
 		return
 	}
-	s.authSvc.StartLogin(w, r)
+	s.oidc.Start(w, r)
 }
 
-// handleAuthCallback completes an OIDC login. The transient state/nonce
-// cookies StartLogin set are cleared here regardless of outcome so they don't
-// linger for their full ~10 minute lifetime.
+// handleAuthCallback completes an OIDC login. kit clears the transient state,
+// nonce and PKCE cookies whatever the outcome.
 func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
-	if !s.authSvc.OIDCConfigured() {
+	if s.oidc == nil {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "oidc is not configured")
 		return
 	}
-	claims, err := s.authSvc.HandleCallback(r)
-	s.authSvc.ClearOIDCCookies(w)
+	claims, err := s.oidc.Callback(w, r)
 	if err != nil {
-		// The browser only ever sees the generic code — the five distinct
-		// failure modes in HandleCallback (bad state, bad nonce, code
-		// exchange rejected, token verification failed) are otherwise
-		// indistinguishable from the outside, which makes a misconfigured
-		// provider undebuggable.
+		// The browser only ever sees the generic code — the failure modes
+		// (provider denied, bad state, bad nonce, code exchange rejected, token
+		// verification failed) are otherwise indistinguishable from the
+		// outside, which makes a misconfigured provider undebuggable.
 		slog.Warn("oidc callback failed", "err", logx.RedactErr(err))
 		http.Redirect(w, r, "/?auth_error=oidc_callback_failed", http.StatusFound)
 		return
 	}
-	s.createSessionFromClaims(w, r, claims)
+	s.issueSession(w, r, claims)
 }
 
-// createSessionFromClaims upserts the local user from claims, creates a
-// session, sets the session cookie, and redirects to the app root.
-func (s *server) createSessionFromClaims(w http.ResponseWriter, r *http.Request, claims auth.Claims) {
-	if s.authSvc == nil {
+// issueSession sets the session cookie for claims and redirects to the app root.
+func (s *server) issueSession(w http.ResponseWriter, r *http.Request, claims auth.Claims) {
+	if s.sessions == nil {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "auth is not configured")
 		return
 	}
-	session, _, err := s.authSvc.CreateSessionFromClaims(r.Context(), claims)
-	if err != nil {
+	if err := s.sessions.Issue(w, claims); err != nil {
 		httpx.ServerError(w, r, err, "session create failed")
 		return
 	}
-	http.SetCookie(w, s.authSvc.CookieFor(session.Token, session.ExpiresAt))
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-func (s *server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
-	if s.authSvc == nil {
+// handleAuthLogout clears the session cookie. That is all a logout can do: the
+// session lives in the cookie, so a copy taken before stays valid until it
+// expires (BACKEND_SESSION_TTL); rotating BACKEND_SESSION_SECRET ends them all.
+// Not behind requireAuth: clearing needs no valid session, and a dead one (a
+// pre-0038 token, a rotated key) must still be clearable.
+func (s *server) handleAuthLogout(w http.ResponseWriter, _ *http.Request) {
+	if s.sessions == nil {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "auth is not configured")
 		return
 	}
-	if cookie, err := r.Cookie(auth.SessionCookieName); err == nil {
-		if err := s.authSvc.Revoke(r.Context(), cookie.Value); err != nil {
-			// The cookie is cleared regardless, but a session left live in
-			// the DB is security-relevant — don't let it vanish silently.
-			slog.Error("session revoke failed", "err", logx.RedactErr(err))
-		}
-	}
-	http.SetCookie(w, s.authSvc.ClearCookie())
+	s.sessions.Clear(w)
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"redirectUrl": "/"})
 }
 
+// handleAuthMe answers the session's identity, the claims the login carried.
 func (s *server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
-	user, ok := auth.UserFromContext(r.Context())
+	claims, ok := auth.FromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, user)
+	httpx.WriteJSON(w, http.StatusOK, claims)
 }

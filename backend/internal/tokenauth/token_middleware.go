@@ -1,4 +1,7 @@
-package auth
+// Package tokenauth gates the bearer-token routes: the extension's cookie push
+// (a DB-stored token) and /mcp (a secret from the environment). Neither is a
+// session: browser sign-in is kit/auth's.
+package tokenauth
 
 import (
 	"context"
@@ -28,8 +31,8 @@ func NewTokenMiddleware(tokens TokenHashLookup) *TokenMiddleware {
 }
 
 // RequireToken rejects requests without a valid "Authorization: Bearer
-// <token>" header. It puts no user in the request context — handlers behind
-// it must not call UserFromContext.
+// <token>" header. It puts no identity in the request context — handlers
+// behind it must not call auth.FromContext.
 func (m *TokenMiddleware) RequireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		presented, ok := httpx.Bearer(r)

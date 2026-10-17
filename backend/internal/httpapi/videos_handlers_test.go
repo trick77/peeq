@@ -12,13 +12,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/auth"
 )
 
 // videosTestDeps builds Deps wired for the videos API: dev auth plus a
@@ -27,15 +27,12 @@ import (
 func videosTestDeps(t *testing.T) (Deps, string) {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	mediaDir := t.TempDir()
 	return Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Videos:         videos.New(db),
-		MediaDir:       mediaDir,
+		Sessions: testSessions(t),
+		Settings: settings.New(db),
+		Videos:   videos.New(db),
+		MediaDir: mediaDir,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -68,15 +65,12 @@ func doReq(t *testing.T, h http.Handler, cookie *http.Cookie, method, path strin
 func videosTestDepsDB(t *testing.T) (Deps, string, *sql.DB) {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	mediaDir := t.TempDir()
 	return Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Videos:         videos.New(db),
-		MediaDir:       mediaDir,
+		Sessions: testSessions(t),
+		Settings: settings.New(db),
+		Videos:   videos.New(db),
+		MediaDir: mediaDir,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -1039,16 +1033,13 @@ type redownloadTestHarness struct {
 func newRedownloadTestServer(t *testing.T) *redownloadTestHarness {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	videosStore := videos.New(db)
 	jobsStore := jobs.New(db)
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Videos:         videosStore,
-		Jobs:           jobsStore,
+		Sessions: testSessions(t),
+		Settings: settings.New(db),
+		Videos:   videosStore,
+		Jobs:     jobsStore,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -1366,12 +1357,8 @@ func TestVideosList_storeError_500(t *testing.T) {
 // TestVideosList_noStoreConfigured_emptyArray covers the s.videos == nil
 // branch of handleListVideos.
 func TestVideosList_noStoreConfigured_emptyArray(t *testing.T) {
-	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Sessions: testSessions(t),
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -2166,12 +2153,8 @@ func TestVideosCounts_storeError_500(t *testing.T) {
 // TestVideosCounts_noStoreConfigured_zeroed covers the s.videos == nil branch:
 // the client reads every key, so the zero answer still carries them all.
 func TestVideosCounts_noStoreConfigured_zeroed(t *testing.T) {
-	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Sessions: testSessions(t),
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",

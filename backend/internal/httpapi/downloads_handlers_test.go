@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
+	"github.com/trick77/ship/kit/auth"
 	"github.com/trick77/ship/kit/sse"
 )
 
@@ -124,15 +124,12 @@ func (f *fakeDownloadsRunner) Metadata(_ context.Context, _ string) (*ytdlp.Meta
 func downloadsTestDeps(t *testing.T, runner DownloadsRunner) Deps {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	return Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Jobs:           jobs.New(db),
-		Videos:         videos.New(db),
-		Runner:         runner,
+		Sessions: testSessions(t),
+		Settings: settings.New(db),
+		Jobs:     jobs.New(db),
+		Videos:   videos.New(db),
+		Runner:   runner,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -150,15 +147,12 @@ func downloadsTestDeps(t *testing.T, runner DownloadsRunner) Deps {
 func downloadsTestDepsDB(t *testing.T, runner DownloadsRunner) (Deps, *sql.DB) {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	return Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Jobs:           jobs.New(db),
-		Videos:         videos.New(db),
-		Runner:         runner,
+		Sessions: testSessions(t),
+		Settings: settings.New(db),
+		Jobs:     jobs.New(db),
+		Videos:   videos.New(db),
+		Runner:   runner,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -561,12 +555,8 @@ func TestYoutubePauseResume(t *testing.T) {
 // with 503 when any of jobs/videos/runner is unwired, rather than panicking
 // on a nil dependency.
 func TestDownloads_postNotConfigured(t *testing.T) {
-	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Sessions: testSessions(t),
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -768,12 +758,8 @@ func TestDownloads_postSettlesPendingLedgerRow(t *testing.T) {
 // TestDownloads_listNoJobsConfigured_emptyArray asserts GET /api/downloads
 // returns an empty array (not 503/500) when no Jobs store is wired.
 func TestDownloads_listNoJobsConfigured_emptyArray(t *testing.T) {
-	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Sessions: testSessions(t),
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -811,12 +797,8 @@ func TestDownloads_listStoreError_500(t *testing.T) {
 // TestYoutubePause_settingsNotConfigured_503 covers the s.settings == nil
 // guard on both the pause and resume routes.
 func TestYoutubePause_settingsNotConfigured_503(t *testing.T) {
-	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Sessions: testSessions(t),
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -913,12 +895,8 @@ func TestDownloads_cancelStoreError_500(t *testing.T) {
 // TestDownloads_cancelNotConfigured_503 covers the "neither worker nor jobs
 // store wired" default branch.
 func TestDownloads_cancelNotConfigured_503(t *testing.T) {
-	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Sessions: testSessions(t),
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",

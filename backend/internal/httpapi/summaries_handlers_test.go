@@ -7,10 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/summaryjobs"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/auth"
 )
 
 // summariesTestDeps builds Deps wired for the summaries API: dev auth plus a
@@ -20,16 +20,13 @@ import (
 func summariesTestDeps(t *testing.T) (Deps, *summaryjobs.Store, *videos.Store, *sql.DB) {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	sj := summaryjobs.New(db)
 	vids := videos.New(db)
 	return Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Videos:         vids,
-		SummaryList:    sj,
+		Sessions:    testSessions(t),
+		Settings:    settings.New(db),
+		Videos:      vids,
+		SummaryList: sj,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",

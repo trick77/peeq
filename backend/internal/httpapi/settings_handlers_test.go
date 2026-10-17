@@ -11,8 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/tokenauth"
+	"github.com/trick77/ship/kit/auth"
 )
 
 // flakyDBTX satisfies settings.DBTX but lets a test force either
@@ -45,12 +46,8 @@ func (f *flakyDBTX) QueryRowContext(ctx context.Context, query string, args ...a
 // configured" 503 branch.
 func testDepsNilSettings(t *testing.T) Deps {
 	t.Helper()
-	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	return Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
+		Sessions: testSessions(t),
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -60,23 +57,18 @@ func testDepsNilSettings(t *testing.T) Deps {
 	}
 }
 
-// testDepsFlakySettings builds Deps whose auth stores are backed by a
-// normal working DB (so login always succeeds) but whose Settings store is
-// backed by a flakyDBTX over a second, separately migrated DB, so a test
-// can force Get/Update to fail independently of authentication.
+// testDepsFlakySettings builds Deps whose Settings store is backed by a
+// flakyDBTX, so a test can force Get/Update to fail; login needs no DB
+// (the session lives in its cookie), so it always succeeds.
 func testDepsFlakySettings(t *testing.T) (Deps, *flakyDBTX) {
 	t.Helper()
-	authDB := openTestDB(t)
-	sessions := auth.NewSessionStore(authDB, false)
-	users := auth.NewUserStore(authDB)
 	settingsDB := openTestDB(t)
 	flaky := &flakyDBTX{db: settingsDB}
 	settingsStore := settings.New(flaky)
 	return Deps{
-		AuthService:     auth.NewService(nil, sessions, users),
-		AuthMiddleware:  auth.NewMiddleware(sessions, users),
+		Sessions:        testSessions(t),
 		Settings:        settingsStore,
-		TokenMiddleware: auth.NewTokenMiddleware(settingsStore),
+		TokenMiddleware: tokenauth.NewTokenMiddleware(settingsStore),
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -98,7 +90,7 @@ func loginAndGetCookie(t *testing.T, h http.Handler) *http.Cookie {
 	loginRec := httptest.NewRecorder()
 	h.ServeHTTP(loginRec, loginReq)
 	for _, c := range loginRec.Result().Cookies() {
-		if c.Name == auth.SessionCookieName {
+		if c.Name == SessionCookie {
 			return c
 		}
 	}

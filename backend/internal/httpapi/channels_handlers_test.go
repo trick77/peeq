@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
@@ -26,6 +25,7 @@ import (
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
+	"github.com/trick77/ship/kit/auth"
 )
 
 // testResolver is a ChannelResolver whose ResolveChannel behavior is
@@ -94,11 +94,8 @@ func (r *testResolver) ResolveChannel(_ context.Context, _ string) (ytdlp.Channe
 func channelsTestDeps(t *testing.T, resolver ChannelResolver) Deps {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	return Deps{
-		AuthService:     auth.NewService(nil, sessions, users),
-		AuthMiddleware:  auth.NewMiddleware(sessions, users),
+		Sessions:        testSessions(t),
 		Settings:        settings.New(db),
 		Channels:        channels.New(db),
 		Videos:          videos.New(db),
@@ -756,8 +753,6 @@ func seedVideoRow(t *testing.T, deps Deps, id, channelID, channelName string) {
 // silently subscribe the user to its channel.
 func TestDownloadsPost_doesNotAddChannel(t *testing.T) {
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	runner := &fakeDownloadsRunner{meta: &ytdlp.Meta{
 		ID:      "vid00000001",
 		Title:   "Auto Added Video",
@@ -767,13 +762,12 @@ func TestDownloadsPost_doesNotAddChannel(t *testing.T) {
 		ChannelID: "UCauto000000000000000000",
 	}}
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Jobs:           jobs.New(db),
-		Videos:         videos.New(db),
-		Channels:       channels.New(db),
-		Runner:         runner,
+		Sessions: testSessions(t),
+		Settings: settings.New(db),
+		Jobs:     jobs.New(db),
+		Videos:   videos.New(db),
+		Channels: channels.New(db),
+		Runner:   runner,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -834,8 +828,6 @@ func newPendingTestServer(t *testing.T) *pendingTestHarness {
 func newPendingTestServerWith(t *testing.T, adjust func(*Deps)) *pendingTestHarness {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	channelsStore := channels.New(db)
 	ledgerStore := channelvideos.New(db)
 	videosStore := videos.New(db)
@@ -843,15 +835,14 @@ func newPendingTestServerWith(t *testing.T, adjust func(*Deps)) *pendingTestHarn
 	ragStore := rag.NewStore(db)
 	mediaDir := t.TempDir()
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Channels:       channelsStore,
-		Ledger:         ledgerStore,
-		Videos:         videosStore,
-		Jobs:           jobsStore,
-		Rag:            ragStore,
-		MediaDir:       mediaDir,
+		Sessions: testSessions(t),
+		Settings: settings.New(db),
+		Channels: channelsStore,
+		Ledger:   ledgerStore,
+		Videos:   videosStore,
+		Jobs:     jobsStore,
+		Rag:      ragStore,
+		MediaDir: mediaDir,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -939,8 +930,6 @@ func seedDownloadedVideo(store *videos.Store, channelID, videoID, mediaPath stri
 func newChannelsDeleteServer(t *testing.T) *channelsDeleteHarness {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	channelsStore := channels.New(db)
 	videosStore := videos.New(db)
 	jobsStore := jobs.New(db)
@@ -951,14 +940,13 @@ func newChannelsDeleteServer(t *testing.T) *channelsDeleteHarness {
 	// unnoticed.
 	mediaDir := t.TempDir()
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Channels:       channelsStore,
-		Videos:         videosStore,
-		Jobs:           jobsStore,
-		Worker:         worker,
-		MediaDir:       mediaDir,
+		Sessions: testSessions(t),
+		Settings: settings.New(db),
+		Channels: channelsStore,
+		Videos:   videosStore,
+		Jobs:     jobsStore,
+		Worker:   worker,
+		MediaDir: mediaDir,
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
 			PreferredUsername: "dev",
@@ -1441,14 +1429,11 @@ func TestChannelDetail_resolveFailure_stillMarksAttempted(t *testing.T) {
 // the page must still render from whatever is already cached.
 func TestChannelDetail_noResolver_doesNotBackgroundResolve(t *testing.T) {
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	deps := Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Channels:       channels.New(db),
-		Videos:         videos.New(db),
+		Sessions: testSessions(t),
+		Settings: settings.New(db),
+		Channels: channels.New(db),
+		Videos:   videos.New(db),
 		// ChannelResolver intentionally left nil.
 		DevAuthClaims: auth.Claims{
 			Subject:           "dev-tester",
@@ -1487,12 +1472,9 @@ func (r *dbClosingResolver) ResolveChannel(_ context.Context, _ string) (ytdlp.C
 // logged rather than left to crash the goroutine or retry silently forever.
 func TestChannelDetail_resolveFailure_cacheOnlyRow_upsertError(t *testing.T) {
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	resolver := &dbClosingResolver{db: db, err: errors.New("boom")}
 	deps := Deps{
-		AuthService:     auth.NewService(nil, sessions, users),
-		AuthMiddleware:  auth.NewMiddleware(sessions, users),
+		Sessions:        testSessions(t),
 		Settings:        settings.New(db),
 		Channels:        channels.New(db),
 		Videos:          videos.New(db),
@@ -1525,8 +1507,6 @@ func TestChannelDetail_resolveFailure_cacheOnlyRow_upsertError(t *testing.T) {
 // than crashing the goroutine.
 func TestChannelDetail_resolveFailure_addedRow_markAttemptedError(t *testing.T) {
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	chStore := channels.New(db)
 	if err := chStore.Upsert(channels.Channel{ID: "UCpending", Name: "Pending Resolve"}); err != nil {
 		t.Fatalf("seed channel: %v", err)
@@ -1536,8 +1516,7 @@ func TestChannelDetail_resolveFailure_addedRow_markAttemptedError(t *testing.T) 
 	}
 	resolver := &dbClosingResolver{db: db, err: errors.New("boom")}
 	deps := Deps{
-		AuthService:     auth.NewService(nil, sessions, users),
-		AuthMiddleware:  auth.NewMiddleware(sessions, users),
+		Sessions:        testSessions(t),
 		Settings:        settings.New(db),
 		Channels:        chStore,
 		Videos:          videos.New(db),
@@ -2576,12 +2555,9 @@ type channelsListTestHarness struct {
 func newChannelsListTestServer(t *testing.T, resolver ChannelResolver) *channelsListTestHarness {
 	t.Helper()
 	db := openTestDB(t)
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	channelsStore := channels.New(db)
 	deps := Deps{
-		AuthService:     auth.NewService(nil, sessions, users),
-		AuthMiddleware:  auth.NewMiddleware(sessions, users),
+		Sessions:        testSessions(t),
 		Settings:        settings.New(db),
 		Channels:        channelsStore,
 		ChannelResolver: resolver,
@@ -3798,7 +3774,7 @@ func TestPendingCount(t *testing.T) {
 	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"count":2}` {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if rec := get(t, New(Deps{AuthService: deps.AuthService, AuthMiddleware: deps.AuthMiddleware, Settings: deps.Settings, DevAuthClaims: deps.DevAuthClaims})); rec.Code != http.StatusServiceUnavailable {
+	if rec := get(t, New(Deps{Sessions: deps.Sessions, Settings: deps.Settings, DevAuthClaims: deps.DevAuthClaims})); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("no ledger: status = %d, want 503", rec.Code)
 	}
 	if _, err := deps.Channels.DB().Exec(`DROP TABLE channel_videos`); err != nil {

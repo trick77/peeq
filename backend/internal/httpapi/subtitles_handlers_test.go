@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/auth"
 )
 
 // TestVideosSubtitles_servesVTT covers the happy path: the stored transcript is
@@ -89,13 +89,12 @@ func TestVideosSubtitles_ignoresSubtitlePathEntirely(t *testing.T) {
 func TestVideosSubtitles_storeErrorIs500(t *testing.T) {
 	db := openTestDB(t)
 	deps := Deps{
-		AuthService:    auth.NewService(nil, auth.NewSessionStore(db, false), auth.NewUserStore(db)),
-		AuthMiddleware: auth.NewMiddleware(auth.NewSessionStore(db, false), auth.NewUserStore(db)),
-		Settings:       settings.New(db),
-		Videos:         videos.New(db),
-		Channels:       channels.New(db),
-		MediaDir:       t.TempDir(),
-		DevAuthClaims:  auth.Claims{Subject: "dev-tester", PreferredUsername: "dev", Email: "dev@example.local", Name: "Dev Tester"},
+		Sessions:      testSessions(t),
+		Settings:      settings.New(db),
+		Videos:        videos.New(db),
+		Channels:      channels.New(db),
+		MediaDir:      t.TempDir(),
+		DevAuthClaims: auth.Claims{Subject: "dev-tester", PreferredUsername: "dev", Email: "dev@example.local", Name: "Dev Tester"},
 	}
 	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u"}); err != nil {
 		t.Fatalf("seed video: %v", err)

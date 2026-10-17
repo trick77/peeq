@@ -209,7 +209,7 @@ describe("App dock bootstrap", () => {
     // whatever an earlier describe left behind — the paused-banner tests
     // above overwrite downloadsStatus, and clearAllMocks only drops call
     // history, not implementations.
-    vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+    vi.mocked(getMe).mockResolvedValue({ sub: "u1", email: "a@b.c" } as User);
     vi.mocked(downloadsStatus).mockResolvedValue({
       paused: false,
       low_disk: false,
@@ -293,7 +293,7 @@ describe("App deep links", () => {
     // whatever an earlier describe left behind — the paused-banner tests
     // overwrite downloadsStatus, and clearAllMocks only drops call history,
     // not implementations.
-    vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+    vi.mocked(getMe).mockResolvedValue({ sub: "u1", email: "a@b.c" } as User);
     vi.mocked(listDownloads).mockResolvedValue([]);
     vi.mocked(downloadsStatus).mockResolvedValue({
       paused: false,
@@ -847,7 +847,7 @@ describe("App routing", () => {
 describe("App queue and summaries", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+    vi.mocked(getMe).mockResolvedValue({ sub: "u1", email: "a@b.c" } as User);
     vi.mocked(downloadsStatus).mockResolvedValue({
       paused: false,
       low_disk: false,
@@ -1071,7 +1071,7 @@ describe("App session check", () => {
     expect(container.innerHTML).toBe("");
 
     // And the app arrives directly, with no sign-in screen in between.
-    answer({ id: "u1", email: "a@b.c" } as User);
+    answer({ sub: "u1", email: "a@b.c" } as User);
     await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
   }, 20000);
 
@@ -1101,7 +1101,7 @@ describe("App session check", () => {
 
   it("remembers a signed-in check for the next reload", async () => {
     const store = stubStorage();
-    vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+    vi.mocked(getMe).mockResolvedValue({ sub: "u1", email: "a@b.c" } as User);
     render(<App />);
     await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
 
@@ -1135,7 +1135,7 @@ describe("App session check", () => {
 
 describe("App inbox count", () => {
   beforeEach(() => {
-    vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+    vi.mocked(getMe).mockResolvedValue({ sub: "u1", email: "a@b.c" } as User);
     // A stream that stays open and delivers nothing: an earlier suite's
     // stream fires an activity event on connect, which would count here.
     vi.mocked(streamDownloads).mockReturnValue(new Promise<void>(() => {}));
@@ -1160,7 +1160,7 @@ describe("App session expiry", () => {
   beforeEach(() => {
     // The session-check suite above leaves getMe rejecting; this one needs a
     // signed-in shell to expire.
-    vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+    vi.mocked(getMe).mockResolvedValue({ sub: "u1", email: "a@b.c" } as User);
   });
 
   it("returns to the sign-in card when a request reports the session expired", async () => {

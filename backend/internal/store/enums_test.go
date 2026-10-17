@@ -7,7 +7,6 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/settings"
@@ -61,7 +60,6 @@ func TestEnumConstantsMatchTheCheckConstraints(t *testing.T) {
 		{"summary_jobs", "state", summaryjobs.States, "0001_init.sql", "summary_jobs"},
 		{"channel_videos", "state", channelvideos.States,
 			"0014_channel_videos_unavailable.sql", "channel_videos_new"},
-		{"users", "role", roleStrings(), "0001_init.sql", "users"},
 	}
 
 	for _, c := range cases {
@@ -83,16 +81,6 @@ func TestEnumConstantsMatchTheCheckConstraints(t *testing.T) {
 			}
 		})
 	}
-}
-
-// roleStrings adapts auth.Roles, which is []Role rather than []string because
-// the role column is the one enum Go gives a defined type.
-func roleStrings() []string {
-	out := make([]string, 0, len(auth.Roles))
-	for _, r := range auth.Roles {
-		out = append(out, string(r))
-	}
-	return out
 }
 
 // readMigration loads a migration by name from the package's own directory.
