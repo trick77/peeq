@@ -61,4 +61,3 @@ func countsString(cs []CategoryCount) string {
 	}
 	return strings.Join(parts, " ")
 }
-

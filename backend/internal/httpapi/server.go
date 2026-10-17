@@ -15,6 +15,7 @@ import (
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
+	"github.com/trick77/peeq/internal/mcpserver"
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
@@ -192,6 +193,10 @@ type Deps struct {
 	// Test-only: zero means the production default (defaultResolveCap); a test
 	// that needs a short cap sets it on its own server instead of a global.
 	ResolveCap time.Duration
+
+	// MCPToken is the bearer secret for POST /mcp (config.MCPToken). Empty
+	// leaves the route unmounted, so it answers 404 like any unknown path.
+	MCPToken string
 }
 
 // SearchEmbedder embeds free-text search queries into vectors comparable
@@ -427,9 +432,9 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/cookie/health", s.requireAuth(http.HandlerFunc(s.handleCookieHealth)))
 	mux.Handle("GET /api/settings/token", s.requireAuth(http.HandlerFunc(s.handleGetAPIToken)))
 	mux.Handle("POST /api/settings/token", s.requireAuth(http.HandlerFunc(s.handlePostAPIToken)))
-	// The only route in peeq that bypasses OIDC: the /api/machine surface,
-	// token-gated for the browser extension. Kept deliberately narrow — a
-	// cookie write, nothing that can read the library.
+	// The /api/machine surface bypasses OIDC, token-gated for the browser
+	// extension. Kept deliberately narrow — a cookie write, nothing that can
+	// read the library. /mcp, below, is the other bearer-gated bypass.
 	mux.Handle("PUT /api/machine/cookie", s.requireToken(http.HandlerFunc(s.handleMachineCookie)))
 	mux.Handle("POST /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsPost)))
 	mux.Handle("GET /api/downloads", s.requireAuth(http.HandlerFunc(s.handleDownloadsList)))
@@ -475,6 +480,18 @@ func New(d Deps) http.Handler {
 	// shared streamSSE helper, which sends no body.
 	mux.Handle("GET /api/search/answer", s.requireAuth(http.HandlerFunc(s.handleAnswer)))
 	mux.Handle("POST /api/videos/{id}/reprocess", s.requireAuth(http.HandlerFunc(s.handleReprocess)))
+	// Bearer-gated like /api/machine but a separate secret: the MCP server, gated on its own
+	// static bearer secret (never the extension token) and an Origin check.
+	// Read-only over the library. Every method lands on it so GET and DELETE
+	// get a proper 405.
+	if d.MCPToken != "" {
+		mux.Handle("/mcp", mcpserver.New(mcpserver.Deps{
+			Library:   mcpLibrary{s: s},
+			Token:     d.MCPToken,
+			PublicURL: d.PublicURL,
+			Version:   d.Version,
+		}))
+	}
 	if s.static != nil {
 		// More specific than the SPA catch-all, so the share page (and only it)
 		// is served with link-preview meta injected; /s/ and /s/a/b still fall

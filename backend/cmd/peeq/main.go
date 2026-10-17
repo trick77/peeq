@@ -471,6 +471,7 @@ func run() error {
 		ShareLinks:      shareLinksStore,
 		PlaybackGrants:  playbackGrantStore,
 		PublicURL:       cfg.PublicURL,
+		MCPToken:        cfg.MCPToken,
 		MediaDir:        cfg.MediaDir,
 		Runner:          runner,
 		Worker:          worker,
