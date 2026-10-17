@@ -52,7 +52,7 @@ var toolOrder = []string{"search", "get_video", "get_transcript", "list_youtube_
 var tools = map[string]tool{
 	"search": {
 		name:  "search",
-		title: "Search peeq",
+		title: "Search your video library",
 		description: "Search the user's peeq library of YouTube videos: transcripts, summaries, chapters " +
 			"and peeq's in-depth analysis. Returns the best-matching videos, each with timestamped " +
 			"moments and links that open the video at that moment; cite them.",
@@ -61,7 +61,7 @@ var tools = map[string]tool{
 	},
 	"get_video": {
 		name:  "get_video",
-		title: "Get a peeq video",
+		title: "Get a video's summaries",
 		description: "Read one video from peeq by id: metadata, short summary, key points, chapters with " +
 			"timestamps and the in-depth summary. Use it after search to go deeper into one result.",
 		schema: objectSchema(map[string]any{
@@ -71,7 +71,7 @@ var tools = map[string]tool{
 	},
 	"get_transcript": {
 		name:  "get_transcript",
-		title: "Read a peeq transcript",
+		title: "Read a video's transcript",
 		description: "Read a video's transcript as timestamped lines, optionally only a window of it. Long " +
 			"transcripts come back in parts; the reply says which start_seconds to request next.",
 		schema: objectSchema(map[string]any{
@@ -85,7 +85,7 @@ var tools = map[string]tool{
 	},
 	"list_youtube_channels": {
 		name:  "list_youtube_channels",
-		title: "List peeq channels",
+		title: "List your YouTube channels",
 		description: "List the channels in peeq: subscriptions plus channels whose caption-only reads are kept, " +
 			"with description, video count and top peeq and YouTube categories. Use it to find the right " +
 			"channel name for search.",
@@ -109,7 +109,7 @@ func (h *handler) toolDefs(ctx context.Context) []map[string]any {
 			"title":       t.title,
 			"description": desc,
 			"inputSchema": t.schema,
-			"annotations": map[string]any{"readOnlyHint": true, "openWorldHint": false},
+			"annotations": map[string]any{"title": t.title, "readOnlyHint": true, "openWorldHint": false},
 		})
 	}
 	return out

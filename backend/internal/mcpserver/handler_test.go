@@ -329,3 +329,33 @@ func toolNames(r rpcReply) []string {
 	}
 	return out
 }
+
+func TestToolsListCarriesDisplayTitles(t *testing.T) {
+	want := map[string]string{
+		"search":                "Search your video library",
+		"get_video":             "Get a video's summaries",
+		"get_transcript":        "Read a video's transcript",
+		"list_youtube_channels": "List your YouTube channels",
+	}
+	h := newTestHandler(&fakeLibrary{})
+	for era, r := range map[string]rpcReply{
+		"legacy": legacyCall(t, h, "tools/list", nil),
+		"modern": modernCall(t, h, "tools/list", nil),
+	} {
+		tools, _ := r.body.Result["tools"].([]any)
+		if len(tools) != len(want) {
+			t.Fatalf("%s: %d tools, want %d", era, len(tools), len(want))
+		}
+		for _, tl := range tools {
+			m, _ := tl.(map[string]any)
+			name, _ := m["name"].(string)
+			ann, _ := m["annotations"].(map[string]any)
+			if m["title"] != want[name] || ann["title"] != want[name] {
+				t.Errorf("%s %s: title %v, annotations.title %v, want %q", era, name, m["title"], ann["title"], want[name])
+			}
+			if ann["readOnlyHint"] != true || ann["openWorldHint"] != false {
+				t.Errorf("%s %s: annotations = %v", era, name, ann)
+			}
+		}
+	}
+}
