@@ -11,13 +11,13 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/auth"
 )
 
 // The shape of a library that made the Library page slow in production: every
@@ -111,23 +111,20 @@ func seedLibraryBench(b *testing.B) (http.Handler, *http.Cookie) {
 		}
 	}
 
-	sessions := auth.NewSessionStore(db, false)
-	users := auth.NewUserStore(db)
 	h := New(Deps{
-		AuthService:    auth.NewService(nil, sessions, users),
-		AuthMiddleware: auth.NewMiddleware(sessions, users),
-		Settings:       settings.New(db),
-		Videos:         vs,
-		Channels:       cs,
-		Ledger:         ledger,
-		Jobs:           js,
-		DevAuthClaims:  auth.Claims{Subject: "dev-tester", PreferredUsername: "dev", Email: "dev@example.local", Name: "Dev Tester"},
+		Sessions:      testSessions(b),
+		Settings:      settings.New(db),
+		Videos:        vs,
+		Channels:      cs,
+		Ledger:        ledger,
+		Jobs:          js,
+		DevAuthClaims: auth.Claims{Subject: "dev-tester", PreferredUsername: "dev", Email: "dev@example.local", Name: "Dev Tester"},
 	})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/auth/login", nil))
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == auth.SessionCookieName {
+		if c.Name == SessionCookie {
 			return h, c
 		}
 	}

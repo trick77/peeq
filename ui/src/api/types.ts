@@ -15,20 +15,19 @@ import type {
   Availability,
   CookieStatus,
   JobState,
-  Role,
   SummaryJobState,
   SummaryStatus,
   VideoStatus,
 } from "./enums";
 
-export type { Role };
-
+// User is GET /api/auth/me: the claims the session cookie carries (kit/auth's
+// Claims). Only sub is always set; the rest is what the provider sent.
 export type User = {
-  id: string;
-  username: string;
-  email: string;
-  displayName: string;
-  role: Role;
+  sub: string;
+  preferred_username?: string;
+  email?: string;
+  name?: string;
+  groups?: string[];
 };
 
 // VideoFilter mirrors the ?filter= values videos.Store.List understands.

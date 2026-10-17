@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/trick77/peeq/internal/auth"
+	"github.com/trick77/peeq/internal/tokenauth"
 )
 
 // maxBodyBytes bounds one request body. Tool arguments are a query and a few
@@ -54,7 +54,7 @@ func New(d Deps) http.Handler {
 		publicURL: strings.TrimRight(d.PublicURL, "/"),
 		version:   d.Version,
 	}
-	authed := auth.NewStaticTokenMiddleware(d.Token).RequireToken(http.HandlerFunc(h.serve))
+	authed := tokenauth.NewStaticTokenMiddleware(d.Token).RequireToken(http.HandlerFunc(h.serve))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Before auth: a page on another origin (DNS rebinding included) learns
 		// nothing, not even whether a guessed token was right.

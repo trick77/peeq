@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/channelmeta"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
@@ -20,7 +19,9 @@ import (
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
+	"github.com/trick77/peeq/internal/tokenauth"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/auth"
 	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/sse"
 )
@@ -38,13 +39,15 @@ type Deps struct {
 	// Optional: when empty, that route delegates to Static like any other path.
 	Shell []byte
 
-	// AuthService drives login/callback/logout and session creation.
-	AuthService *auth.Service
-	// AuthMiddleware protects authenticated routes.
-	AuthMiddleware *auth.Middleware
+	// OIDC drives the provider login; nil in dev mode, where login issues
+	// DevAuthClaims instead, and then the callback answers 503.
+	OIDC *auth.OIDC
+	// Sessions signs and checks the session cookie that gates every
+	// authenticated route. nil fails closed: every such route answers 401.
+	Sessions *auth.Sessions
 	// TokenMiddleware gates the machine endpoints on the API token. Optional:
 	// when nil, PUT /api/machine/cookie returns 401 rather than being open.
-	TokenMiddleware *auth.TokenMiddleware
+	TokenMiddleware *tokenauth.TokenMiddleware
 	// Settings is the singleton settings store backing the Settings API.
 	Settings *settings.Store
 	// Playback is the singleton "now playing" pointer store. Optional: when nil,
@@ -261,9 +264,9 @@ type server struct {
 	version       string
 	static        http.Handler
 	shell         []byte
-	authSvc       *auth.Service
-	authMW        *auth.Middleware
-	tokenMW       *auth.TokenMiddleware
+	oidc          *auth.OIDC
+	sessions      *auth.Sessions
+	tokenMW       *tokenauth.TokenMiddleware
 	settings      *settings.Store
 	playback      PlaybackStore
 	devAuthClaims auth.Claims
@@ -342,8 +345,8 @@ func New(d Deps) http.Handler {
 		version:        d.Version,
 		static:         d.Static,
 		shell:          d.Shell,
-		authSvc:        d.AuthService,
-		authMW:         d.AuthMiddleware,
+		oidc:           d.OIDC,
+		sessions:       d.Sessions,
 		tokenMW:        d.TokenMiddleware,
 		settings:       d.Settings,
 		playback:       d.Playback,
@@ -543,18 +546,24 @@ func New(d Deps) http.Handler {
 	))
 }
 
-// requireAuth wraps next with session authentication. If no middleware is
-// configured at all (a wiring bug, not a supported mode) requests are
-// rejected rather than let through unauthenticated — requireAuth must never
-// fail open.
+// requireAuth wraps next with session authentication (kit/auth's Guard, no
+// group: peeq is single-user). The refusals answer peeq's JSON error, which
+// the SPA reads. If no sessions are configured at all (a wiring bug, not a
+// supported mode) requests are rejected rather than let through
+// unauthenticated — requireAuth must never fail open.
 func (s *server) requireAuth(next http.Handler) http.Handler {
-	if s.authMW == nil {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
-		})
+	if s.sessions == nil {
+		return unauthorized
 	}
-	return s.authMW.RequireAuth(next)
+	forbidden := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		httpx.WriteError(w, http.StatusForbidden, "forbidden")
+	})
+	return s.sessions.Guard("", unauthorized, forbidden)(next)
 }
+
+var unauthorized = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	httpx.WriteError(w, http.StatusUnauthorized, "unauthorized")
+})
 
 // requireToken gates a machine route on the API token. Mirrors requireAuth's
 // nil-safety: an unwired middleware rejects rather than opens the route.

@@ -44,7 +44,8 @@ func TestMigrate_createsPhase2Tables(t *testing.T) {
 	if err := Migrate(db); err != nil {
 		t.Fatal(err)
 	}
-	for _, tbl := range []string{"channels", "subscriptions", "channel_videos", "users", "sessions"} {
+	// users and sessions are gone since 0038 (kit/auth's cookie sessions).
+	for _, tbl := range []string{"channels", "subscriptions", "channel_videos"} {
 		var n int
 		if err := db.QueryRow(
 			"select count(*) from sqlite_master where type='table' and name=?", tbl,

@@ -14,7 +14,7 @@ vi.mock("../signedInHint", () => ({
   writeSignedInHint: vi.fn(),
 }));
 
-const user = { id: "u1", email: "a@b.c" } as User;
+const user = { sub: "u1", email: "a@b.c" } as User;
 
 describe("useAuthBootstrap", () => {
   beforeEach(() => {

@@ -86,7 +86,3 @@ export const SUMMARY_PHASE_NAMES = [
   "embedding",
 ] as const;
 export type SummaryPhase = (typeof SUMMARY_PHASE_NAMES)[number];
-
-// Account role — backend/internal/auth/model.go.
-export const ROLES = ["admin", "user"] as const;
-export type Role = (typeof ROLES)[number];

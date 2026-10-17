@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/activity"
-	"github.com/trick77/peeq/internal/auth"
 	"github.com/trick77/peeq/internal/captionfetch"
 	"github.com/trick77/peeq/internal/channelmeta"
 	"github.com/trick77/peeq/internal/channels"
@@ -43,9 +42,11 @@ import (
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/summarize"
 	"github.com/trick77/peeq/internal/summaryjobs"
+	"github.com/trick77/peeq/internal/tokenauth"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 	"github.com/trick77/peeq/web"
+	"github.com/trick77/ship/kit/auth"
 	"github.com/trick77/ship/kit/httpx"
 	"github.com/trick77/ship/kit/logging"
 	kitrun "github.com/trick77/ship/kit/run"
@@ -118,60 +119,10 @@ func run() error {
 		return fmt.Errorf("database schema is stale (missing Phase-2 tables): %w; recreate it with `rm ./data/peeq.db*` and restart", err)
 	}
 
-	// Secure (HTTPS-only) cookies whenever the app is reachable over https;
-	// dev mode is loopback-only http, so this stays false there.
-	secureCookies := strings.HasPrefix(cfg.PublicURL, "https://")
-	sessions := auth.NewSessionStore(db, secureCookies)
-	if _, err := sessions.DeleteExpired(context.Background()); err != nil {
+	oidc, sessions, devClaims, err := newAuth(context.Background(), cfg)
+	if err != nil {
 		return err
 	}
-	users := auth.NewUserStore(db)
-	authMW := auth.NewMiddleware(sessions, users)
-
-	// The OIDC backend is only constructed (and discovery only attempted)
-	// when AuthMode is oidc. In dev mode oidcSvc stays nil and devClaims is
-	// populated instead; httpapi's dev short-circuit in handleAuthLogin means
-	// the nil OIDC backend is never dereferenced (Service.StartLogin /
-	// HandleCallback would panic on a nil backend otherwise).
-	var oidcSvc *auth.OIDCService
-	var devClaims auth.Claims
-	switch cfg.AuthMode {
-	case config.AuthModeOIDC:
-		discovered, err := auth.NewOIDCServiceFromDiscovery(context.Background(), auth.OIDCServiceConfig{
-			Issuer:       cfg.OIDC.Issuer,
-			ClientID:     cfg.OIDC.ClientID,
-			ClientSecret: cfg.OIDC.ClientSecret,
-			RedirectURL:  cfg.OIDC.RedirectURL,
-			SecureCookie: secureCookies,
-		})
-		if err != nil {
-			return err
-		}
-		oidcSvc = discovered
-	case config.AuthModeDev:
-		slog.Warn("dev auth enabled; loopback only")
-		if cfg.AllowAnonymousYoutube {
-			// config.Load already refuses to boot with this set outside dev
-			// auth, so reaching here means it's safe (loopback-only), but the
-			// cookie invariant is still being relaxed and that must be loud.
-			slog.Warn("anonymous YouTube access enabled; cookie invariant relaxed; dev only")
-		}
-		devClaims = auth.Claims{
-			Subject:           cfg.Dev.Subject,
-			PreferredUsername: cfg.Dev.Username,
-			Email:             cfg.Dev.Email,
-			Name:              cfg.Dev.DisplayName,
-		}
-	default:
-		// AuthMode is unset. config.Load() accepts this without error (it
-		// stays permissive so callers can validate at whichever layer fits),
-		// but every route peeq serves is requireAuth-gated, so a server that
-		// boots with no way to ever obtain a session is just broken with
-		// extra steps. Reject at boot rather than come up silently inert.
-		return fmt.Errorf("BACKEND_AUTH_MODE must be %q or %q (got %q)", config.AuthModeOIDC, config.AuthModeDev, cfg.AuthMode)
-	}
-
-	authSvc := auth.NewService(oidcSvc, sessions, users)
 	settingsStore := settings.New(db)
 	playbackStore := playback.New(db)
 	jobsStore := jobs.New(db)
@@ -452,9 +403,9 @@ func run() error {
 		Ready:           []httpx.Check{{Name: "db", Run: db.PingContext}},
 		Static:          web.Handler(),
 		Shell:           shell,
-		AuthService:     authSvc,
-		AuthMiddleware:  authMW,
-		TokenMiddleware: auth.NewTokenMiddleware(settingsStore),
+		OIDC:            oidc,
+		Sessions:        sessions,
+		TokenMiddleware: tokenauth.NewTokenMiddleware(settingsStore),
 		Settings:        settingsStore,
 		Playback:        playbackStore,
 		DevAuthClaims:   devClaims,
@@ -737,6 +688,63 @@ func newServer(addr string, h http.Handler, hub *sse.Hub[httpapi.Event]) *http.S
 	srv := httpx.NewServer(addr, h)
 	srv.RegisterOnShutdown(hub.Close)
 	return srv
+}
+
+// newAuth builds sign-in for cfg.AuthMode: the OIDC flow (discovery is a
+// network call, made once here) or, in dev mode, the fixed identity login
+// issues instead. Sessions are kit/auth's signed cookies, keyed by
+// BACKEND_SESSION_SECRET; dev mode without one uses a key per process, so a
+// restart signs out.
+func newAuth(ctx context.Context, cfg config.Config) (*auth.OIDC, *auth.Sessions, auth.Claims, error) {
+	// Secure (HTTPS-only) cookies whenever the app is reachable over https;
+	// dev mode is loopback-only http, so this stays false there.
+	secure := strings.HasPrefix(cfg.PublicURL, "https://")
+	key := auth.RandomKey()
+	if cfg.SessionSecret != "" {
+		key = auth.DeriveKey(cfg.SessionSecret, "peeq session")
+	}
+	sessions, err := auth.NewSessions(auth.SessionConfig{Name: httpapi.SessionCookie, Key: key, TTL: cfg.SessionTTL, Secure: secure})
+	if err != nil {
+		return nil, nil, auth.Claims{}, err
+	}
+	switch cfg.AuthMode {
+	case config.AuthModeOIDC:
+		oidc, err := auth.NewOIDC(ctx, auth.OIDCConfig{
+			Issuer:       cfg.OIDC.Issuer,
+			ClientID:     cfg.OIDC.ClientID,
+			ClientSecret: cfg.OIDC.ClientSecret,
+			RedirectURL:  cfg.OIDC.RedirectURL,
+			// Not kit's default: peeq checks no group, and asking for the
+			// groups scope only makes the session cookie bigger.
+			Scopes:       []string{"openid", "profile", "email"},
+			CookiePrefix: "peeq_",
+			Secure:       secure,
+		})
+		if err != nil {
+			return nil, nil, auth.Claims{}, err
+		}
+		return oidc, sessions, auth.Claims{}, nil
+	case config.AuthModeDev:
+		slog.Warn("dev auth enabled; loopback only")
+		if cfg.AllowAnonymousYoutube {
+			// config.Load already refuses to boot with this set outside dev
+			// auth, so reaching here means it's safe (loopback-only), but the
+			// cookie invariant is still being relaxed and that must be loud.
+			slog.Warn("anonymous YouTube access enabled; cookie invariant relaxed; dev only")
+		}
+		return nil, sessions, auth.Claims{
+			Subject:           cfg.Dev.Subject,
+			PreferredUsername: cfg.Dev.Username,
+			Email:             cfg.Dev.Email,
+			Name:              cfg.Dev.DisplayName,
+		}, nil
+	}
+	// AuthMode is unset. config.Load() accepts this without error, but every
+	// route peeq serves is requireAuth-gated, so a server that boots with no
+	// way to ever obtain a session is just broken with extra steps. Reject at
+	// boot rather than come up silently inert.
+	return nil, nil, auth.Claims{}, fmt.Errorf("BACKEND_AUTH_MODE must be %q or %q (got %q)",
+		config.AuthModeOIDC, config.AuthModeDev, cfg.AuthMode)
 }
 
 // newModelClients builds the embedding client and the two chat clients on the

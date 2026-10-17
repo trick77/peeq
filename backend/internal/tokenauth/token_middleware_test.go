@@ -1,4 +1,4 @@
-package auth
+package tokenauth
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/apitoken"
+	"github.com/trick77/ship/kit/auth"
 )
 
 // fakeTokens is a TokenHashLookup returning a fixed hash.
@@ -85,12 +86,12 @@ func TestRequireToken_rejectsBadCredentials(t *testing.T) {
 
 func TestRequireToken_doesNotPutAUserInTheContext(t *testing.T) {
 	// A token request is not a session. Handlers behind RequireToken must
-	// not be able to assume UserFromContext works.
+	// not be able to assume auth.FromContext works.
 	const token = "peeq_valid-token-value"
 	var sawUser bool
 	mw := NewTokenMiddleware(fakeTokens{hash: apitoken.Hash(token)})
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, sawUser = UserFromContext(r.Context())
+		_, sawUser = auth.FromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
 	})
 	req := httptest.NewRequest(http.MethodPut, "/api/machine/cookie", nil)

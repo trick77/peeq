@@ -6,7 +6,6 @@ import {
   AVAILABILITIES,
   COOKIE_STATUSES,
   JOB_STATES,
-  ROLES,
   SUMMARY_JOB_STATES,
   SUMMARY_PHASE_NAMES,
   SUMMARY_STATUSES,
@@ -29,7 +28,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const goFile = (rel: string) => resolve(HERE, "../../backend/", rel);
 
 // goSliceValues reads an ordered `var <name> = []Elem{ ConstA, ConstB }`
-// declaration — `[]string` for most sets, `[]Role` for auth.Roles — and
+// declaration — `[]string`, or a defined element type — and
 // resolves each entry through the `ConstA = "value"` constants declared in the
 // same file.
 //
@@ -41,8 +40,8 @@ const goFile = (rel: string) => resolve(HERE, "../../backend/", rel);
 function goSliceValues(file: string, sliceName: string): string[] {
   const source = readFileSync(goFile(file), "utf8");
 
-  // The element type is matched loosely (`[]string` or `[]Role`): auth.Roles
-  // is the one set Go gives a defined type, and it is still the same shape.
+  // The element type is matched loosely (`[]string` or `[]SomeType`): a set
+  // Go gives a defined type is still the same shape.
   const block = source.match(
     new RegExp(`var ${sliceName} = \\[\\]\\w+\\{([\\s\\S]*?)\\n\\}`),
   );
@@ -56,7 +55,7 @@ function goSliceValues(file: string, sliceName: string): string[] {
 
   return names.map((name) => {
     // Tolerate an optional type between the name and "=", so a typed const
-    // block (RoleAdmin Role = "admin") reads the same as an untyped one.
+    // block (StateDone State = "done") reads the same as an untyped one.
     const decl = source.match(
       new RegExp(`^\\s*${name}\\s+(?:\\w+\\s+)?=\\s*"([^"]*)"`, "m"),
     );
@@ -108,11 +107,6 @@ describe("wire enum sync", () => {
       name: "summarize phase",
       ts: SUMMARY_PHASE_NAMES,
       go: goSliceValues("internal/summarize/phase.go", "Phases"),
-    },
-    {
-      name: "auth.Role",
-      ts: ROLES,
-      go: goSliceValues("internal/auth/model.go", "Roles"),
     },
   ];
 

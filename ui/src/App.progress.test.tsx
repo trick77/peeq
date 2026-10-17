@@ -27,7 +27,7 @@ beforeEach(() => {
   window.history.replaceState(null, "", "/video/v1");
   playerRenders.count = 0;
   pushFrame = null;
-  vi.mocked(getMe).mockResolvedValue({ id: "u1", email: "a@b.c" } as User);
+  vi.mocked(getMe).mockResolvedValue({ sub: "u1", email: "a@b.c" } as User);
   vi.mocked(listDownloads).mockResolvedValue([
     {
       job_id: 3,

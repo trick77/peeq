@@ -75,6 +75,7 @@ func TestLoad_allowAnonymousYoutube_requiresDevAuth(t *testing.T) {
 	oidcBad["BACKEND_OIDC_CLIENT_ID"] = "client"
 	oidcBad["BACKEND_OIDC_CLIENT_SECRET"] = "secret"
 	oidcBad["BACKEND_OIDC_REDIRECT_URL"] = "https://issuer.example/callback"
+	oidcBad["BACKEND_SESSION_SECRET"] = strings.Repeat("s", 32)
 	setEnv(oidcBad)
 	_, err = Load()
 	if err == nil {
@@ -221,6 +222,49 @@ func baseEnv(t *testing.T) {
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 	t.Setenv("BACKEND_PUBLIC_URL", "")
+}
+
+// The session cookie is only as strong as its key: OIDC needs a real secret,
+// dev may run on a random one. The TTL takes whole days.
+func TestLoad_session(t *testing.T) {
+	baseEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("dev without a secret: %v", err)
+	}
+	if cfg.SessionTTL != 30*24*time.Hour {
+		t.Errorf("default SessionTTL = %v, want 30d", cfg.SessionTTL)
+	}
+	t.Setenv("BACKEND_SESSION_TTL", "7d")
+	if cfg, err = Load(); err != nil || cfg.SessionTTL != 7*24*time.Hour {
+		t.Errorf("SessionTTL 7d = %v, %v", cfg.SessionTTL, err)
+	}
+	for _, ttl := range []string{"0d", "-1h"} {
+		t.Setenv("BACKEND_SESSION_TTL", ttl)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "BACKEND_SESSION_TTL") {
+			t.Errorf("TTL %q: err = %v, want one naming BACKEND_SESSION_TTL", ttl, err)
+		}
+	}
+	t.Setenv("BACKEND_SESSION_TTL", "")
+	t.Setenv("BACKEND_SESSION_SECRET", "short")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "BACKEND_SESSION_SECRET") {
+		t.Errorf("short secret: err = %v", err)
+	}
+
+	t.Setenv("BACKEND_SESSION_SECRET", "")
+	t.Setenv("BACKEND_AUTH_MODE", "oidc")
+	t.Setenv("BACKEND_ADDR", ":8080")
+	t.Setenv("BACKEND_OIDC_ISSUER", "https://issuer.example")
+	t.Setenv("BACKEND_OIDC_CLIENT_ID", "client")
+	t.Setenv("BACKEND_OIDC_CLIENT_SECRET", "secret")
+	t.Setenv("BACKEND_OIDC_REDIRECT_URL", "https://peeq.example/api/auth/callback")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "BACKEND_SESSION_SECRET is required") {
+		t.Errorf("oidc without a secret: err = %v", err)
+	}
+	t.Setenv("BACKEND_SESSION_SECRET", strings.Repeat("s", 32))
+	if _, err := Load(); err != nil {
+		t.Errorf("oidc with a secret: %v", err)
+	}
 }
 
 func TestLoad_summaryTokensAndCallTimeout(t *testing.T) {

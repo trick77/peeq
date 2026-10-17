@@ -118,7 +118,21 @@ type Config struct {
 	// unmounted. A separate secret from the extension's API token on purpose:
 	// that one may only write a cookie, this one reads the library.
 	MCPToken string
+
+	// SessionSecret (BACKEND_SESSION_SECRET) signs the session cookie, which
+	// carries the identity itself: there is no session table. Required with
+	// OIDC, at least 32 characters. Rotating it signs everyone out, and is the
+	// only way to end a session before SessionTTL. Dev mode may leave it
+	// empty: a random key per process, so a restart signs out.
+	SessionSecret string
+	// SessionTTL (BACKEND_SESSION_TTL, default 30d) is how long a login lasts.
+	// Nothing renews a session: it ends this long after sign-in.
+	SessionTTL time.Duration
 }
+
+// minSessionSecret is the shortest BACKEND_SESSION_SECRET accepted: an HMAC
+// key is no stronger than the secret it is derived from.
+const minSessionSecret = 32
 
 // OIDCConfig holds OpenID Connect settings.
 type OIDCConfig struct {
@@ -134,7 +148,6 @@ type DevUserConfig struct {
 	Username    string
 	Email       string
 	DisplayName string
-	Role        string
 }
 
 // Load reads configuration from the environment, applying defaults. Every
@@ -167,8 +180,9 @@ func load(lookup func(string) string) (Config, error) {
 			Username:    r.String("BACKEND_DEV_USER_USERNAME", "dev"),
 			Email:       r.String("BACKEND_DEV_USER_EMAIL", "dev@example.local"),
 			DisplayName: r.String("BACKEND_DEV_USER_NAME", "Dev Admin"),
-			Role:        "admin",
 		},
+		SessionSecret:         r.String("BACKEND_SESSION_SECRET", ""),
+		SessionTTL:            nonNegative(r, "BACKEND_SESSION_TTL", 30*24*time.Hour),
 		DefaultSubLang:        r.String("BACKEND_DEFAULT_SUB_LANG", "en"),
 		MCPToken:              r.String("BACKEND_MCP_TOKEN", ""),
 		AllowAnonymousYoutube: r.Bool("BACKEND_ALLOW_ANONYMOUS_YOUTUBE", false),
@@ -212,10 +226,19 @@ func load(lookup func(string) string) (Config, error) {
 				r.Fail("%s is required when BACKEND_AUTH_MODE=oidc", v.name)
 			}
 		}
+		if len(cfg.SessionSecret) < minSessionSecret {
+			r.Fail("BACKEND_SESSION_SECRET is required when BACKEND_AUTH_MODE=oidc, at least %d characters (openssl rand -base64 48)", minSessionSecret)
+		}
 	case AuthModeDev:
 		if err := validateDevAuthLocalOnly(cfg); err != nil {
 			r.Fail("%v", err)
 		}
+	}
+	if cfg.SessionSecret != "" && len(cfg.SessionSecret) < minSessionSecret {
+		r.Fail("BACKEND_SESSION_SECRET must be at least %d characters", minSessionSecret)
+	}
+	if cfg.SessionTTL == 0 && strings.TrimSpace(lookup("BACKEND_SESSION_TTL")) != "" {
+		r.Fail("BACKEND_SESSION_TTL must be positive")
 	}
 
 	// BACKEND_ALLOW_ANONYMOUS_YOUTUBE relaxes the cookie invariant, so it must
