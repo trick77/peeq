@@ -13,6 +13,7 @@ function baseChannel(overrides: Partial<Channel> = {}): Channel {
     subscribed: false,
     autodownload: false,
     auto_summary: true,
+    keep_reads: false,
     format_override: "",
     pending_count: 3,
     downloaded_count: 0,
@@ -29,6 +30,7 @@ const subscribed = baseChannel({
   name: "Subbed Channel",
   subscribed: true,
   autodownload: true,
+  keep_reads: true,
   downloaded_count: 12,
   pending_count: 0,
 });
@@ -413,6 +415,28 @@ describe("Channels", () => {
         .closest(".channel-row") as HTMLElement;
       expect(
         within(addedRow).queryByRole("img", { name: "Auto-add is on" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("the kept-in-Search marker", () => {
+    it("marks a channel with keep_reads on, and only that one", async () => {
+      render(<Channels />);
+      await showAll();
+      await screen.findByText("Subbed Channel");
+
+      const subbedRow = screen
+        .getByText("Subbed Channel")
+        .closest(".channel-row") as HTMLElement;
+      expect(
+        within(subbedRow).getByRole("img", { name: "Kept in Search is on" }),
+      ).toBeInTheDocument();
+
+      const addedRow = screen
+        .getByText("Added Channel")
+        .closest(".channel-row") as HTMLElement;
+      expect(
+        within(addedRow).queryByRole("img", { name: "Kept in Search is on" }),
       ).not.toBeInTheDocument();
     });
   });

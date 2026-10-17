@@ -93,6 +93,35 @@ export async function getKeepReadsImpact(id: string): Promise<KeepReadsImpact> {
   );
 }
 
+// StorageGroup mirrors videos.StorageGroup: what peeq stores for a set of a
+// channel's videos. search_text_bytes counts the chunk text and the
+// full-text index's copy of it; vector_bytes is the live embedding payload.
+export type StorageGroup = {
+  videos: number;
+  file_bytes: number;
+  transcript_bytes: number;
+  summary_bytes: number;
+  search_text_bytes: number;
+  vector_bytes: number;
+  poster_bytes: number;
+};
+
+// ChannelStorage splits a channel's storage: videos on disk, what is kept
+// after a file went (deleted and ignored videos kept for search), and the
+// rest (the New tab, queued work).
+export type ChannelStorage = {
+  on_disk: StorageGroup;
+  kept: StorageGroup;
+  other: StorageGroup;
+};
+
+export async function getChannelStorage(id: string): Promise<ChannelStorage> {
+  return api.get<ChannelStorage>(
+    `/api/channels/${encodeURIComponent(id)}/storage`,
+    "failed to measure channel storage",
+  );
+}
+
 export async function subscribeChannel(
   id: string,
 ): Promise<{ status: string }> {

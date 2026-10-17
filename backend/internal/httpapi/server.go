@@ -481,6 +481,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("PUT /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelsPut)))
 	mux.Handle("DELETE /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelsDelete)))
 	mux.Handle("GET /api/channels/{id}/keep-reads/impact", s.requireAuth(http.HandlerFunc(s.handleKeepReadsImpact)))
+	mux.Handle("GET /api/channels/{id}/storage", s.requireAuth(http.HandlerFunc(s.handleChannelStorage)))
 	mux.Handle("POST /api/channels/{id}/subscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsSubscribe)))
 	mux.Handle("POST /api/channels/{id}/unsubscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsUnsubscribe)))
 	mux.Handle("POST /api/channels/{id}/scan", s.requireAuth(http.HandlerFunc(s.handleChannelScan)))

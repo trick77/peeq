@@ -67,7 +67,10 @@ type channelItem struct {
 	// AutoSummary is whether peeq reads this channel's new videos before the
 	// user decides on them. Unlike Autodownload it lives on the channel, not
 	// the subscription, so it is meaningful on an unsubscribed row too.
-	AutoSummary     bool   `json:"auto_summary"`
+	AutoSummary bool `json:"auto_summary"`
+	// KeepReads is the channel's "keep in Search after the file is gone"
+	// switch, for the list's marker beside the auto-add one.
+	KeepReads       bool   `json:"keep_reads"`
 	FormatOverride  string `json:"format_override,omitempty"`
 	PendingCount    int    `json:"pending_count"`
 	DownloadedCount int    `json:"downloaded_count"`
@@ -274,6 +277,7 @@ func (s *server) handleChannelsList(w http.ResponseWriter, r *http.Request) {
 			Subscribed:      it.Subscribed,
 			Autodownload:    it.Autodownload,
 			AutoSummary:     it.AutoSummary,
+			KeepReads:       it.KeepReads,
 			FormatOverride:  it.FormatOverride,
 			PendingCount:    it.PendingCount,
 			DownloadedCount: it.DownloadedCount,

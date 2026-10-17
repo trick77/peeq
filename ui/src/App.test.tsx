@@ -772,6 +772,7 @@ describe("App routing", () => {
         subscribed: true,
         autodownload: false,
         auto_summary: true,
+        keep_reads: true,
         format_override: "",
         pending_count: 0,
         downloaded_count: 3,

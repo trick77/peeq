@@ -15,6 +15,7 @@ vi.mock("../api/channels", () => ({
   scanChannel: vi.fn(),
   refreshChannel: vi.fn(),
   getKeepReadsImpact: vi.fn(),
+  getChannelStorage: vi.fn(() => new Promise(() => {})),
   channelAvatarUrl: (id: string) => `/api/channels/${id}/avatar`,
   channelBannerUrl: (id: string) => `/api/channels/${id}/banner`,
 }));
