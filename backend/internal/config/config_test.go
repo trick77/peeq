@@ -389,6 +389,18 @@ func TestLoad_mcpToken(t *testing.T) {
 	}
 }
 
+// httpx.Bearer refuses a token with whitespace inside, so such a secret
+// would mount /mcp and then 401 every request; boot refuses it instead.
+func TestLoad_mcpTokenWithInnerWhitespaceRefused(t *testing.T) {
+	t.Setenv("BACKEND_AUTH_MODE", "dev")
+	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
+	t.Setenv("BACKEND_PUBLIC_URL", "http://localhost:8080")
+	t.Setenv("BACKEND_MCP_TOKEN", "abc 123")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "BACKEND_MCP_TOKEN") {
+		t.Fatalf("Load() err = %v, want one naming BACKEND_MCP_TOKEN", err)
+	}
+}
+
 // MCP results link back into peeq; without a public URL every link would be
 // relative and useless to the client citing it.
 func TestLoad_mcpTokenNeedsAPublicURL(t *testing.T) {

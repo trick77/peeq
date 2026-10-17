@@ -15,20 +15,22 @@ jobs:
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      # Cached: go run below builds golangci-lint from source.
       - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
-          cache: false
+          cache-dependency-path: backend/go.sum
       # As ship check lints, until ship check is the gate: ship's config
       # (peeq keeps no copy) at the kit tag go.mod requires, and ship's pinned
       # golangci-lint built by go run, so it is built with go.mod's Go.
       - name: golangci-lint
         working-directory: backend
         run: |
-          curl -fsSL https://raw.githubusercontent.com/trick77/ship/kit/v0.17.1/internal/check/golangci.yaml -o "$RUNNER_TEMP/golangci.yaml"
+          kit=$(go list -m -f '{{.Version}}' github.com/trick77/ship/kit)
+          curl -fsSL "https://raw.githubusercontent.com/trick77/ship/kit/$kit/internal/check/golangci.yaml" -o "$RUNNER_TEMP/golangci.yaml"
           go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run -c "$RUNNER_TEMP/golangci.yaml" ./...
 
   backend:

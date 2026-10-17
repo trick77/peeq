@@ -49,6 +49,13 @@ func (rec *statusRecorder) Flush() {
 	}
 }
 
+// FlushError is Flush with its error: http.ResponseController prefers it, so
+// kit/sse sees a flush to a client that left fail and ends the stream (Done)
+// instead of writing into a dead buffer until the next heartbeat.
+func (rec *statusRecorder) FlushError() error {
+	return http.NewResponseController(rec.ResponseWriter).Flush()
+}
+
 // Unwrap exposes the underlying writer for http.ResponseController, which the
 // video range-streaming handler relies on.
 func (rec *statusRecorder) Unwrap() http.ResponseWriter {

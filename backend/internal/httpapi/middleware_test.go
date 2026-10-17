@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -256,5 +257,19 @@ func TestRecovery_turnsPanicsInto500AndLogsThem(t *testing.T) {
 	}
 	if !strings.Contains(out, "stack=") {
 		t.Fatalf("no stack trace captured: %s", out)
+	}
+}
+
+// failingFlusher is a writer whose flush fails, as one to a client that left.
+type failingFlusher struct{ *httptest.ResponseRecorder }
+
+func (failingFlusher) FlushError() error { return io.ErrClosedPipe }
+
+// kit/sse learns a reader left from a failed flush; the wrapper must pass the
+// error up rather than swallow it as Flush does.
+func TestStatusRecorder_flushErrorReachesResponseController(t *testing.T) {
+	rec := &statusRecorder{ResponseWriter: failingFlusher{httptest.NewRecorder()}}
+	if err := http.NewResponseController(rec).Flush(); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("Flush err = %v, want %v", err, io.ErrClosedPipe)
 	}
 }

@@ -151,9 +151,10 @@ const (
 func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// The ONE case that must refuse rather than degrade, and therefore the one
 	// check that has to happen before the stream opens: sse.Open sends the
-	// 200, and after that there is no way back to a 503. Everything else — a blank query, a query nothing matched, a chat
-	// endpoint that is down — is a legitimate 200 whose content says so, and is
-	// answered through the stream so the browser has a single code path.
+	// 200, and after that there is no way back to a 503. Everything else — a
+	// blank query, a query nothing matched, a chat endpoint that is down — is a
+	// legitimate 200 whose content says so, and is answered through the stream
+	// so the browser has a single code path.
 	if s.rag == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "search is not configured")
 		return
