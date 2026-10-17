@@ -96,6 +96,25 @@ func TestSearch_textAndSourcesFollowTheContract(t *testing.T) {
 	}
 }
 
+// Looking a tool up must not build the channel hint: that is two queries per
+// call for a description nobody reads during a call.
+func TestToolCallDoesNotReadTheChannelHint(t *testing.T) {
+	lib := searchFixture()
+	callTool(t, lib, "search", map[string]any{"query": "x"})
+	if lib.channelsN != 0 {
+		t.Errorf("Channels called %d times during a search call", lib.channelsN)
+	}
+}
+
+func TestSearchSchemaListsEveryArgument(t *testing.T) {
+	props, _ := searchSchema()["properties"].(map[string]any)
+	for _, k := range []string{"query", "channel", "category", "youtube_category", "after", "before", "mode", "k"} {
+		if _, ok := props[k]; !ok {
+			t.Errorf("schema lacks %s", k)
+		}
+	}
+}
+
 func TestSearch_summaryIsTrimmed(t *testing.T) {
 	text := toolText(t, callTool(t, searchFixture(), "search", map[string]any{"query": "x"}))
 	for _, line := range strings.Split(text, "\n") {

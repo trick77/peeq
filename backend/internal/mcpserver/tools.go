@@ -47,61 +47,67 @@ type tool struct {
 // toolOrder is the deterministic tools/list order.
 var toolOrder = []string{"search", "get_video", "get_transcript", "list_channels"}
 
-func (h *handler) tools(ctx context.Context) map[string]tool {
-	return map[string]tool{
-		"search": {
-			name:  "search",
-			title: "Search peeq",
-			description: "Search the user's peeq library of YouTube videos: transcripts, summaries, chapters " +
-				"and peeq's in-depth analysis. Returns the best-matching videos, each with timestamped " +
-				"moments and links that open the video at that moment; cite them.\n\n" + h.channelHint(ctx),
-			schema: searchSchema(),
-			run:    runSearch,
-		},
-		"get_video": {
-			name:  "get_video",
-			title: "Get a peeq video",
-			description: "Read one video from peeq by id: metadata, short summary, key points, chapters with " +
-				"timestamps and the in-depth summary. Use it after search to go deeper into one result.",
-			schema: objectSchema(map[string]any{
-				"id": map[string]any{"type": "string", "description": "The video id, as shown in search results."},
-			}, "id"),
-			run: runGetVideo,
-		},
-		"get_transcript": {
-			name:  "get_transcript",
-			title: "Read a peeq transcript",
-			description: "Read a video's transcript as timestamped lines, optionally only a window of it. Long " +
-				"transcripts come back in parts; the reply says which start_seconds to request next.",
-			schema: objectSchema(map[string]any{
-				"id": map[string]any{"type": "string", "description": "The video id."},
-				"start_seconds": map[string]any{"type": "integer", "minimum": 0,
-					"description": "Start of the window, in seconds from the start of the video. Default 0."},
-				"end_seconds": map[string]any{"type": "integer", "minimum": 0,
-					"description": "End of the window in seconds, exclusive. Default: the end of the video."},
-			}, "id"),
-			run: runGetTranscript,
-		},
-		"list_channels": {
-			name:  "list_channels",
-			title: "List peeq channels",
-			description: "List the channels in peeq: subscriptions plus channels whose caption-only reads are kept, " +
-				"with description, video count and top categories. Use it to find the right channel name for search.",
-			schema: objectSchema(map[string]any{}),
-			run:    runListChannels,
-		},
-	}
+// tools is the static registry. It reads nothing, so looking a tool up for a
+// call costs no query; only toolDefs adds the per-request channel hint.
+var tools = map[string]tool{
+	"search": {
+		name:  "search",
+		title: "Search peeq",
+		description: "Search the user's peeq library of YouTube videos: transcripts, summaries, chapters " +
+			"and peeq's in-depth analysis. Returns the best-matching videos, each with timestamped " +
+			"moments and links that open the video at that moment; cite them.",
+		schema: searchSchema(),
+		run:    runSearch,
+	},
+	"get_video": {
+		name:  "get_video",
+		title: "Get a peeq video",
+		description: "Read one video from peeq by id: metadata, short summary, key points, chapters with " +
+			"timestamps and the in-depth summary. Use it after search to go deeper into one result.",
+		schema: objectSchema(map[string]any{
+			"id": map[string]any{"type": "string", "description": "The video id, as shown in search results."},
+		}, "id"),
+		run: runGetVideo,
+	},
+	"get_transcript": {
+		name:  "get_transcript",
+		title: "Read a peeq transcript",
+		description: "Read a video's transcript as timestamped lines, optionally only a window of it. Long " +
+			"transcripts come back in parts; the reply says which start_seconds to request next.",
+		schema: objectSchema(map[string]any{
+			"id": map[string]any{"type": "string", "description": "The video id."},
+			"start_seconds": map[string]any{"type": "integer", "minimum": 0,
+				"description": "Start of the window, in seconds from the start of the video. Default 0."},
+			"end_seconds": map[string]any{"type": "integer", "minimum": 0,
+				"description": "End of the window in seconds, exclusive. Default: the end of the video."},
+		}, "id"),
+		run: runGetTranscript,
+	},
+	"list_channels": {
+		name:  "list_channels",
+		title: "List peeq channels",
+		description: "List the channels in peeq: subscriptions plus channels whose caption-only reads are kept, " +
+			"with description, video count and top peeq and YouTube categories. Use it to find the right " +
+			"channel name for search.",
+		schema: objectSchema(map[string]any{}),
+		run:    runListChannels,
+	},
 }
 
 func (h *handler) toolDefs(ctx context.Context) []map[string]any {
-	all := h.tools(ctx)
 	out := make([]map[string]any, 0, len(toolOrder))
 	for _, name := range toolOrder {
-		t := all[name]
+		t := tools[name]
+		desc := t.description
+		if name == "search" {
+			if hint := h.channelHint(ctx); hint != "" {
+				desc += "\n\n" + hint
+			}
+		}
 		out = append(out, map[string]any{
 			"name":        t.name,
 			"title":       t.title,
-			"description": t.description,
+			"description": desc,
 			"inputSchema": t.schema,
 			"annotations": map[string]any{"readOnlyHint": true, "openWorldHint": false},
 		})
@@ -128,7 +134,10 @@ func searchSchema() map[string]any {
 		"channel": map[string]any{"type": "string",
 			"description": "Limit to one channel: its name, @handle or id. Matched case-insensitively and tolerant of typos."},
 		"category": map[string]any{"type": "string", "enum": videos.CategoryIDs(),
-			"description": "Limit to one video category."},
+			"description": "Limit to one of peeq's own fixed video categories."},
+		"youtube_category": map[string]any{"type": "string",
+			"description": "Limit to one of YouTube's own category labels, e.g. \"Science & Technology\" or " +
+				"\"Education\". Exact label, case-insensitive; independent of category."},
 		"after":  date("on or after"),
 		"before": date("on or before"),
 		"mode": map[string]any{"type": "string", "enum": []string{"hybrid", "keyword"}, "default": "hybrid",
@@ -148,7 +157,7 @@ func (h *handler) callTool(w http.ResponseWriter, r *http.Request, req request, 
 		writeRPCError(w, http.StatusOK, req.ID, codeInvalidParams, "tools/call needs a tool name", nil)
 		return
 	}
-	t, ok := h.tools(r.Context())[p.Name]
+	t, ok := tools[p.Name]
 	if !ok {
 		writeRPCError(w, http.StatusOK, req.ID, codeInvalidParams, "unknown tool: "+p.Name, nil)
 		return

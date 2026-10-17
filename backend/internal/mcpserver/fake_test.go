@@ -15,6 +15,7 @@ const testToken = "test-mcp-token"
 // fakeLibrary is a Library whose answers are set per test.
 type fakeLibrary struct {
 	channels    []Channel
+	channelsN   int
 	scopes      map[string]ChannelScope
 	result      SearchResult
 	searchErr   error
@@ -23,7 +24,10 @@ type fakeLibrary struct {
 	transcripts map[string]*Transcript
 }
 
-func (f *fakeLibrary) Channels(context.Context) ([]Channel, error) { return f.channels, nil }
+func (f *fakeLibrary) Channels(context.Context) ([]Channel, error) {
+	f.channelsN++
+	return f.channels, nil
+}
 
 func (f *fakeLibrary) ResolveChannel(_ context.Context, name string) (ChannelScope, error) {
 	if s, ok := f.scopes[strings.ToLower(name)]; ok {
