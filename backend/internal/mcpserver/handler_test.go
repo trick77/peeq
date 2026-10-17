@@ -333,9 +333,9 @@ func toolNames(r rpcReply) []string {
 func TestToolsListCarriesDisplayTitles(t *testing.T) {
 	want := map[string]string{
 		"search":                "Search your video library",
-		"get_video":             "Get a video's summaries",
+		"get_video":             "Get a video's details and summaries",
 		"get_transcript":        "Read a video's transcript",
-		"list_youtube_channels": "List your YouTube channels",
+		"list_youtube_channels": "List YouTube channels in your library",
 	}
 	h := newTestHandler(&fakeLibrary{})
 	for era, r := range map[string]rpcReply{

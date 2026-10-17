@@ -11,7 +11,7 @@ import (
 // channelDescriptionRunes trims a description in list_youtube_channels.
 const channelDescriptionRunes = 240
 
-func runListChannels(ctx context.Context, h *handler, raw json.RawMessage) toolResult {
+func runListYouTubeChannels(ctx context.Context, h *handler, raw json.RawMessage) toolResult {
 	var a struct{}
 	if err := decodeArgs(raw, &a); err != nil {
 		return errorResult("invalid arguments: " + err.Error())

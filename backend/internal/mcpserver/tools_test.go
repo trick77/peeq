@@ -478,7 +478,21 @@ func TestGetTranscript_missing(t *testing.T) {
 	}
 }
 
-func TestListChannels(t *testing.T) {
+// The retired list_channels name still answers (a client may hold an old
+// tool list) but is not listed.
+func TestRetiredListChannelsAliasAnswersButIsNotListed(t *testing.T) {
+	lib := &fakeLibrary{channels: []Channel{{ID: "UCV", Name: "Veritasium", Subscribed: true, Videos: 1}}}
+	if text := toolText(t, callTool(t, lib, "list_channels", map[string]any{})); !strings.Contains(text, "Veritasium") {
+		t.Fatalf("alias call text = %q", text)
+	}
+	listed := modernCall(t, newTestHandler(lib), "tools/list", nil)
+	raw, _ := json.Marshal(listed.body.Result["tools"])
+	if strings.Contains(string(raw), `"name":"list_channels"`) {
+		t.Fatalf("retired name is listed: %s", raw)
+	}
+}
+
+func TestListYouTubeChannels(t *testing.T) {
 	lib := &fakeLibrary{channels: []Channel{
 		{ID: "UCV", Name: "Veritasium", Handle: "@veritasium", Description: "An element of truth.",
 			Subscribed: true, KeepReads: true, Videos: 42,

@@ -92,11 +92,11 @@ Each tool carries a display title, sent both as `title` and `annotations.title`
   the Search page, no query-understanding model call; `keyword`: literal full-text
   match), `k` (videos, default 6, max 10). If the query cannot be embedded, hybrid
   falls back to keyword-only and says so.
-- `get_video` ("Get a video's summaries") — `id`: metadata (peeq and YouTube categories, tags), short summary,
+- `get_video` ("Get a video's details and summaries") — `id`: metadata (peeq and YouTube categories, tags), short summary,
   key points, chapters, in-depth summary, links.
 - `get_transcript` ("Read a video's transcript") — `id`, optional `start_seconds`, `end_seconds` (exclusive):
   `[mm:ss] text` lines. A cut transcript ends with the `start_seconds` to request next.
-- `list_youtube_channels` ("List your YouTube channels") — subscribed channels plus channels whose caption-only reads are
+- `list_youtube_channels` ("List YouTube channels in your library") — subscribed channels plus channels whose caption-only reads are
   kept: id, handle, description, video count, top peeq and YouTube categories.
 
 ### Auto-search hint

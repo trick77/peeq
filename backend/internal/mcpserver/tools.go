@@ -61,7 +61,7 @@ var tools = map[string]tool{
 	},
 	"get_video": {
 		name:  "get_video",
-		title: "Get a video's summaries",
+		title: "Get a video's details and summaries",
 		description: "Read one video from peeq by id: metadata, short summary, key points, chapters with " +
 			"timestamps and the in-depth summary. Use it after search to go deeper into one result.",
 		schema: objectSchema(map[string]any{
@@ -85,13 +85,21 @@ var tools = map[string]tool{
 	},
 	"list_youtube_channels": {
 		name:  "list_youtube_channels",
-		title: "List your YouTube channels",
+		title: "List YouTube channels in your library",
 		description: "List the channels in peeq: subscriptions plus channels whose caption-only reads are kept, " +
 			"with description, video count and top peeq and YouTube categories. Use it to find the right " +
 			"channel name for search.",
 		schema: objectSchema(map[string]any{}),
-		run:    runListChannels,
+		run:    runListYouTubeChannels,
 	},
+}
+
+// toolAliases maps retired tool names to their replacement. They answer calls
+// but are never listed: a client that cached the old tools/list (up to the ttl,
+// or a whole session for an initialize-era client) keeps working until it
+// refreshes.
+var toolAliases = map[string]string{
+	"list_channels": "list_youtube_channels",
 }
 
 func (h *handler) toolDefs(ctx context.Context) []map[string]any {
@@ -104,6 +112,9 @@ func (h *handler) toolDefs(ctx context.Context) []map[string]any {
 				desc += "\n\n" + hint
 			}
 		}
+		// The title goes out twice on purpose: the top-level title is the
+		// current spec's display name, annotations.title the older one some
+		// clients still read. Dropping either loses the title for those clients.
 		out = append(out, map[string]any{
 			"name":        t.name,
 			"title":       t.title,
@@ -158,6 +169,9 @@ func (h *handler) callTool(w http.ResponseWriter, r *http.Request, req request, 
 		return
 	}
 	t, ok := tools[p.Name]
+	if !ok {
+		t, ok = tools[toolAliases[p.Name]]
+	}
 	if !ok {
 		writeRPCError(w, http.StatusOK, req.ID, codeInvalidParams, "unknown tool: "+p.Name, nil)
 		return
