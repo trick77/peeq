@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // defaultSearchMaxDistance mirrors rag.DefaultMaxDistance, deliberately as a
@@ -189,9 +190,10 @@ func Load() (Config, error) {
 
 	cfg.DefaultSubLang = env("BACKEND_DEFAULT_SUB_LANG", "en")
 	cfg.MCPToken = strings.TrimSpace(env("BACKEND_MCP_TOKEN", ""))
-	if strings.ContainsAny(cfg.MCPToken, " \t\r\n") {
-		// httpx.Bearer refuses such a token: /mcp would mount and 401 everything.
-		return Config{}, fmt.Errorf("BACKEND_MCP_TOKEN must not contain whitespace")
+	if strings.IndexFunc(cfg.MCPToken, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		// No client can present such a token (httpx.Bearer refuses whitespace,
+		// a header refuses control characters): /mcp would 401 everything.
+		return Config{}, fmt.Errorf("BACKEND_MCP_TOKEN must not contain whitespace or control characters")
 	}
 	if cfg.MCPToken != "" && strings.TrimSpace(cfg.PublicURL) == "" {
 		// MCP results cite peeq links; relative ones mean nothing to the client.

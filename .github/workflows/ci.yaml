@@ -18,11 +18,12 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      # Cached: go run below builds golangci-lint from source.
+      # Uncached: a go.sum-keyed cache would race the backend job's identical
+      # key, and miss golangci-lint (not in go.sum) anyway.
       - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          cache: false
       # As ship check lints, until ship check is the gate: ship's config
       # (peeq keeps no copy) at the kit tag go.mod requires, and ship's pinned
       # golangci-lint built by go run, so it is built with go.mod's Go.

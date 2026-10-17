@@ -395,9 +395,12 @@ func TestLoad_mcpTokenWithInnerWhitespaceRefused(t *testing.T) {
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
 	t.Setenv("BACKEND_PUBLIC_URL", "http://localhost:8080")
-	t.Setenv("BACKEND_MCP_TOKEN", "abc 123")
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "BACKEND_MCP_TOKEN") {
-		t.Fatalf("Load() err = %v, want one naming BACKEND_MCP_TOKEN", err)
+	// A control character cannot travel in a header either.
+	for _, tok := range []string{"abc 123", "abc\v123", "abc\x01123"} {
+		t.Setenv("BACKEND_MCP_TOKEN", tok)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "BACKEND_MCP_TOKEN") {
+			t.Fatalf("Load(%q) err = %v, want one naming BACKEND_MCP_TOKEN", tok, err)
+		}
 	}
 }
 

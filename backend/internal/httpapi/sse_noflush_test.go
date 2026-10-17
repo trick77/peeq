@@ -25,8 +25,11 @@ func TestSSEStreams_writerWithoutFlushIs500(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
+			// Behind logging(), as in production: its statusRecorder must not
+			// claim a flush the writer underneath cannot do.
+			h := logging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { tc.h(tc.s, w, r) }))
 			rec := httptest.NewRecorder()
-			tc.h(tc.s, noFlushWriter{rec}, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			h.ServeHTTP(noFlushWriter{rec}, httptest.NewRequest(http.MethodGet, tc.path, nil))
 			if rec.Code != http.StatusInternalServerError {
 				t.Fatalf("status = %d, want 500", rec.Code)
 			}
