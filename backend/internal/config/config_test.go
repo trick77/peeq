@@ -367,3 +367,23 @@ func TestComposeInterpolationsCarryADefault(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_mcpToken(t *testing.T) {
+	t.Setenv("BACKEND_AUTH_MODE", "dev")
+	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected ok, got %v", err)
+	}
+	if cfg.MCPToken != "" {
+		t.Fatalf("MCPToken defaulted to %q; unset must leave /mcp unmounted", cfg.MCPToken)
+	}
+	t.Setenv("BACKEND_MCP_TOKEN", "  abc123  ")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("expected ok, got %v", err)
+	}
+	if cfg.MCPToken != "abc123" {
+		t.Fatalf("MCPToken = %q, want the trimmed value", cfg.MCPToken)
+	}
+}
