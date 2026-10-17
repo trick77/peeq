@@ -26,7 +26,7 @@ plus reading one video or its transcript. Read-only.
 
 ## Token
 
-`BACKEND_MCP_TOKEN` is the bearer secret. Unset → `/mcp` is not mounted (`404`).
+`BACKEND_MCP_TOKEN` is the bearer secret. Unset → `/mcp` is not mounted (`404`). Set, it requires `BACKEND_PUBLIC_URL` (links in results are absolute); boot refuses otherwise.
 It is deliberately **not** the extension's API token from Settings: that token
 may only write a cookie, this one reads the library.
 
@@ -75,7 +75,7 @@ peeq still enforces the token.
 ## Tools
 
 - `search` — `query` (required), `channel` (name, @handle or id; case-insensitive,
-  typo-tolerant; an unknown one is an error listing the closest names), `category`
+  typo-tolerant, resolved against the channels list_channels shows plus any with videos; an unknown one is an error listing the closest names, a listed one with no videos yet says so), `category`
   (peeq's fixed category enum), `youtube_category` (YouTube's own label, e.g.
   "Science & Technology", "Education"; exact, case-insensitive), `after`/`before`
   (`YYYY-MM-DD`, inclusive), `mode` (`hybrid` default: keyword + semantic fused like
@@ -92,7 +92,7 @@ peeq still enforces the token.
 ### Auto-search hint
 
 The instructions (`server/discover` and `initialize`) and the `search` description
-are built per request. They list every subscribed channel (at most 40, keep_reads
+are built per request (reused for a minute). They list every subscribed channel (at most 40, keep_reads
 channels first, then by video count) under "search peeq automatically when the
 user's question touches these channels' topics", each with its top categories and,
 while the ~3 KB budget allows, a trimmed description. keep_reads channels are marked
@@ -120,6 +120,10 @@ The user can always ask explicitly ("search peeq for …", "in channel X …").
   present only when the id has YouTube's 11-character shape.
 - `get_video` returns one source for the video; the other tools return text only.
 - No results → a plain sentence and `"sources": []`.
+- Past the 24 KB cap, trailing items are dropped whole together with their sources and
+  the text ends "(N more results omitted; narrow the query)".
+- A failed search (deadline, or keyword and semantic lanes both down) is `isError: true`
+  "search failed (…)", never an empty result.
 - `/video/<id>?t=<seconds>` is the SPA's player deep link; it opens at that moment.
 
 ## Smoke test
