@@ -72,9 +72,16 @@ RUN echo "yt-dlp layer: ${VERSION}" \
 # debian:13-slim (glibc, apt) and installs both directly.
 FROM debian:13-slim AS runtime
 # upgrade: the base image lags Debian's security fixes, and the release's trivy
-# scan fails on any fixed HIGH or CRITICAL finding.
-RUN apt-get update && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends \
+# scan fails on any fixed HIGH or CRITICAL finding. VERSION is the cache key,
+# as in the ytdlp stage: without it a cached upgrade layer would carry the
+# fixes of whichever release first built it. Non-interactive: a package that
+# asks a debconf or conffile question has no one to answer it here.
+ARG VERSION=dev
+RUN echo "upgrade layer: ${VERSION}" \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::=--force-confdef \
+       -o Dpkg::Options::=--force-confold upgrade -y \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ffmpeg \
     ca-certificates \
     curl \

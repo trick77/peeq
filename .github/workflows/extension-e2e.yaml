@@ -8,7 +8,7 @@ name: Extension e2e
 on:
   pull_request:
     branches: [master]
-    paths: ["extension/**"]
+    paths: ["extension/**", ".github/workflows/extension-e2e.yaml", "ui/.nvmrc"]
   workflow_dispatch:
 
 permissions:
