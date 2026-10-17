@@ -4,6 +4,7 @@ import { Icon } from "../../icons";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { ChannelDeleteWarning } from "../../components/ChannelDeleteWarning";
 import { FormatPicker } from "../../components/FormatPicker";
+import { StorageSection } from "./StorageSection";
 import {
   updateChannel,
   scanChannel,
@@ -243,6 +244,8 @@ export function SettingsTab({
             onChange={toggleKeepReads}
           />
         </div>
+
+        <StorageSection channelId={detail.id} />
       </div>
 
       <div className="chan-danger">

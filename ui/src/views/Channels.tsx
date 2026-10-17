@@ -539,6 +539,18 @@ export function Channels({
                     <Icon name="download" size="12px" label="Auto-add is on" />
                   </span>
                 ) : null}
+                {c.keep_reads ? (
+                  <span
+                    className="chan-autotag"
+                    title="Kept in Search — deleted videos stay searchable"
+                  >
+                    <Icon
+                      name="search"
+                      size="12px"
+                      label="Kept in Search is on"
+                    />
+                  </span>
+                ) : null}
               </div>
               <div className="channel-by">
                 {c.handle ? `${c.handle}${DOT}` : ""}

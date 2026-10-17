@@ -378,6 +378,9 @@ export type Channel = {
   // on the channel rather than the subscription, so unlike autodownload it is
   // meaningful on an unsubscribed row.
   auto_summary: boolean;
+  // keep_reads is the "keep in Search after the file is gone" switch; the
+  // list marks it beside auto-add.
+  keep_reads: boolean;
   format_override?: string;
   pending_count: number;
   downloaded_count: number;

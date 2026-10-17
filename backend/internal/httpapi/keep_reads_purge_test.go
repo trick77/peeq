@@ -161,6 +161,82 @@ func TestClaimPurge_overlappingOffAsksForARerun(t *testing.T) {
 	}
 }
 
+func TestChannelStorage_endpoint(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	seedOffChannelTomb(t, deps)
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rr := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCk/storage", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var got videos.ChannelStorage
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Kept.Videos != 1 || got.OnDisk.Videos != 0 {
+		t.Fatalf("storage = %+v, want the tombstone under kept", got)
+	}
+
+	if rr := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCnope/storage", nil); rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown channel status = %d, want 404", rr.Code)
+	}
+	if _, err := deps.Channels.DB().Exec(`ALTER TABLE video_transcripts RENAME COLUMN vtt TO vtt_x`); err != nil {
+		t.Fatal(err)
+	}
+	if rr := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCk/storage", nil); rr.Code != http.StatusInternalServerError {
+		t.Fatalf("broken query status = %d, want 500", rr.Code)
+	}
+}
+
+func TestChannelStorage_endpointErrors(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	deps.Videos = nil
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	if rr := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCk/storage", nil); rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rr.Code)
+	}
+	deps = channelsTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`ALTER TABLE channels RENAME COLUMN subscriber_count TO subscriber_count_x`); err != nil {
+		t.Fatal(err)
+	}
+	h = New(deps)
+	cookie = loginAndGetCookie(t, h)
+	if rr := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCk/storage", nil); rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rr.Code)
+	}
+}
+
+// The channel list carries the switch, for its marker.
+func TestChannelsList_reportsKeepReads(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	if _, err := deps.Channels.DB().Exec(`INSERT INTO channels (id, name, added_at, keep_reads) VALUES ('UCon', 'on', '2026-01-01', 1), ('UCoff', 'off', '2026-01-01', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+	rr := doReq(t, h, cookie, http.MethodGet, "/api/channels", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var items []struct {
+		ID        string `json:"id"`
+		KeepReads bool   `json:"keep_reads"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, it := range items {
+		got[it.ID] = it.KeepReads
+	}
+	if !got["UCon"] || got["UCoff"] {
+		t.Fatalf("keep_reads = %v, want UCon on and UCoff off", got)
+	}
+}
+
 func TestKeepReadsImpact_unknownChannel_404(t *testing.T) {
 	h := newChannelsTestServer(t, &testResolver{})
 	cookie := loginAndGetCookie(t, h)

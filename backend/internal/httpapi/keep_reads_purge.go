@@ -33,6 +33,33 @@ func (s *server) handleKeepReadsImpact(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, counts)
 }
 
+// handleChannelStorage answers what peeq stores for a channel, split into its
+// videos on disk, what is kept after a file went, and the rest — the channel
+// Settings tab shows it beside the keep switch. Its own request, never part of
+// the channel detail: it visits every video row of the channel.
+func (s *server) handleChannelStorage(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil || s.videos == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "channels are not configured")
+		return
+	}
+	id := r.PathValue("id")
+	c, err := s.channels.Get(id)
+	if err != nil {
+		serverError(w, r, err, "load channel failed")
+		return
+	}
+	if c == nil {
+		writeJSONError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+	st, err := s.videos.ChannelStorage(r.Context(), id)
+	if err != nil {
+		serverError(w, r, err, "measure channel storage failed")
+		return
+	}
+	writeJSON(w, st)
+}
+
 // purgeKeptAsync carries out a keep_reads switch-off in the background: the
 // channel's tombstones and kept inbox reads are purged, its inbox videos lose
 // their index (videos.Store.PurgeKept). A channel can hold hundreds, which is
