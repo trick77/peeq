@@ -23,7 +23,6 @@ function makePending(overrides: Partial<PendingItem> = {}): PendingItem {
     title: "Pending upload",
     duration_seconds: 60,
     url: "https://youtube.com/watch?v=p1",
-    thumbnail_url: "",
     published_at: "",
     discovered_at: "2026-07-24 08:00:00",
     summary_status: "",
@@ -45,6 +44,7 @@ function makeDetail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     gone: false,
     added: true,
     archived_count: 0,
+    indexed_count: 0,
     runtime_seconds: 0,
     disk_bytes: 0,
     subscribed: true,
@@ -92,6 +92,26 @@ describe("NewTab", () => {
     expect(screen.queryByRole("button", { name: /scan now/i })).toBeNull();
   });
 
+  it("loads each poster from peeq's pending endpoint, never from YouTube", async () => {
+    // The browser must never contact a YouTube host: the poster comes from
+    // /api/pending/{id}/thumbnail, which serves peeq's cached copy.
+    vi.mocked(listPending).mockResolvedValue([
+      makePending({ video_id: "p1", thumbnail_version: "42" }),
+      makePending({ video_id: "p2", title: "Uncached poster" }),
+    ]);
+    const { container } = render(
+      <NewTab detail={makeDetail()} onChanged={() => {}} />,
+    );
+    await screen.findByText("Uncached poster");
+    const srcs = Array.from(container.querySelectorAll("img")).map((img) =>
+      img.getAttribute("src"),
+    );
+    expect(srcs).toEqual([
+      "/api/pending/p1/thumbnail?v=42",
+      "/api/pending/p2/thumbnail",
+    ]);
+  });
+
   it("shows the publish date beside the duration, and omits it when unknown", async () => {
     // The row list carries the same date as the Inbox card, just on the sub
     // line; an undated row must degrade to duration alone, never to a
@@ -106,7 +126,6 @@ describe("NewTab", () => {
         title: "Dated upload",
         duration_seconds: 125,
         url: "https://youtu.be/p1",
-        thumbnail_url: "https://img.example/p1.jpg",
         published_at: daysAgoISO(3),
         discovered_at: "2026-07-24 08:00:00",
         summary_status: "",
@@ -121,7 +140,6 @@ describe("NewTab", () => {
         title: "Undated upload",
         duration_seconds: 60,
         url: "https://youtu.be/p2",
-        thumbnail_url: "https://img.example/p2.jpg",
         discovered_at: "2026-07-24 08:00:00",
         summary_status: "",
         auto_summary: false,
@@ -222,7 +240,6 @@ describe("NewTab", () => {
         title: "Linked upload",
         duration_seconds: 125,
         url: "https://youtu.be/p1",
-        thumbnail_url: "https://img.example/p1.jpg",
         discovered_at: "2026-07-24 08:00:00",
         summary_status: "",
         auto_summary: false,
@@ -237,7 +254,6 @@ describe("NewTab", () => {
         title: "Urlless upload",
         duration_seconds: 60,
         url: "",
-        thumbnail_url: "https://img.example/p2.jpg",
         discovered_at: "2026-07-24 08:00:00",
         summary_status: "",
         auto_summary: false,

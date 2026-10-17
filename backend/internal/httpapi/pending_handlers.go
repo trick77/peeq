@@ -12,7 +12,12 @@ import (
 // pendingItem is the JSON shape returned by GET /api/pending: one ledger
 // entry awaiting a keep/ignore decision. It has no local media yet — a
 // pending item lives only in the channel_videos ledger, never in the videos
-// table, so there is no thumbnail_path here, only the remote thumbnail_url.
+// table, so its poster is served by /api/pending/{id}/thumbnail.
+//
+// The ledger's remote thumbnail_url is deliberately NOT in this shape: the
+// browser must never load a YouTube host (a signed i.ytimg.com URL also
+// expires and renders as a broken image), and a URL the client never receives
+// is one no component can put in an <img>.
 type pendingItem struct {
 	VideoID         string `json:"video_id"`
 	ChannelID       string `json:"channel_id"`
@@ -20,7 +25,6 @@ type pendingItem struct {
 	Title           string `json:"title"`
 	DurationSeconds int    `json:"duration_seconds"`
 	URL             string `json:"url"`
-	ThumbnailURL    string `json:"thumbnail_url"`
 	// PublishedAt is YYYY-MM-DD, omitted when the scan never learned a date.
 	// It is yt-dlp's approximate tab date, not the exact upload_date a
 	// downloaded video carries. DiscoveredAt is when the scan first saw the
@@ -99,7 +103,6 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 			Title:            e.Title,
 			DurationSeconds:  e.DurationSeconds,
 			URL:              e.URL,
-			ThumbnailURL:     e.ThumbnailURL,
 			PublishedAt:      e.PublishedAt,
 			DiscoveredAt:     e.DiscoveredAt,
 			SummaryStatus:    e.SummaryStatus,

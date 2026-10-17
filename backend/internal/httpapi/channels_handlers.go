@@ -352,6 +352,7 @@ type channelDetail struct {
 	AddedAt string `json:"added_at,omitempty"`
 
 	ArchivedCount     int    `json:"archived_count"`
+	IndexedCount      int    `json:"indexed_count"`
 	RuntimeSeconds    int64  `json:"runtime_seconds"`
 	DiskBytes         int64  `json:"disk_bytes"`
 	NewestPublishedAt string `json:"newest_published_at,omitempty"`
@@ -371,7 +372,7 @@ type channelDetail struct {
 }
 
 // handleChannelDetail returns the data behind the channel page: identity,
-// the four header stats, and (if added) the subscription/schedule state.
+// the header stats, and (if added) the subscription/schedule state.
 // It serves both an added channel AND one the user never added but whose
 // videos live in the library (added by URL) — videos.channel_id has no
 // foreign key to channels, so that case is real. 404 is reserved for an id
@@ -422,6 +423,7 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 		ID:                id,
 		Name:              name,
 		ArchivedCount:     stats.ArchivedCount,
+		IndexedCount:      stats.IndexedCount,
 		RuntimeSeconds:    stats.RuntimeSeconds,
 		DiskBytes:         stats.DiskBytes,
 		NewestPublishedAt: stats.NewestPublishedAt,

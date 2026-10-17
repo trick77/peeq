@@ -24,6 +24,7 @@ function detail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     gone: false,
     added: true,
     archived_count: 0,
+    indexed_count: 0,
     runtime_seconds: 0,
     disk_bytes: 0,
     subscribed: true,

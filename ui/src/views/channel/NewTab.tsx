@@ -3,6 +3,8 @@ import { Button } from "../../ui";
 import { Icon } from "../../icons";
 import { listPending, downloadPending, ignorePending } from "../../api/pending";
 import { scanChannel } from "../../api/channels";
+import { pendingThumbnailUrl } from "../../api/videos";
+import { ThumbFill } from "../../components/ThumbFill";
 import { formatAgo, formatDuration } from "../../format";
 import { isScanQueued, scanNotice, scheduleLine } from "./schedule";
 import type { ChannelDetail, PendingItem } from "../../api/types";
@@ -147,12 +149,19 @@ export function NewTab({
           <div className="chan-plist">
             {items.map((item) => (
               <div key={item.video_id} className="chan-prow">
-                <img
-                  className="chan-pthumb"
-                  src={item.thumbnail_url}
-                  alt=""
-                  loading="lazy"
-                />
+                {/* Same poster source as the Inbox: peeq's cached copy, never
+                    a YouTube URL in the browser. The backend falls back to the
+                    hqdefault variant, and a true 404 degrades to the gradient. */}
+                <div className="thumb chan-pthumb">
+                  <ThumbFill
+                    id={item.video_id}
+                    hasThumbnail={true}
+                    src={pendingThumbnailUrl(
+                      item.video_id,
+                      item.thumbnail_version,
+                    )}
+                  />
+                </div>
                 <div className="chan-pt">
                   {/* Same rows as the Inbox, so the same rule: a pending
                       video has no local copy yet, and its title links to the

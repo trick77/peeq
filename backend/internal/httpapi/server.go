@@ -479,13 +479,15 @@ func New(d Deps) http.Handler {
 		// More specific than the SPA catch-all, so the share page (and only it)
 		// is served with link-preview meta injected; /s/ and /s/a/b still fall
 		// through to the SPA unchanged.
-		mux.HandleFunc("GET /s/{token}", s.handleShareShell)
+		mux.Handle("GET /s/{token}", http.HandlerFunc(s.handleShareShell))
 		mux.Handle("/", s.static)
 	}
 
 	// recovery innermost so its 500 is written into the statusRecorder and the
 	// request still gets an access-log line; logging's own body cannot panic.
-	return logging(recovery(mux))
+	// The image policy goes on every response, not per HTML route: a page
+	// served by a handler added later is covered without remembering to wrap it.
+	return logging(recovery(withImagePolicy(mux)))
 }
 
 // requireAuth wraps next with session authentication. If no middleware is

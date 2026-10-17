@@ -789,11 +789,17 @@ FROM subscriptions WHERE channel_id = ?`, channelID)
 	return &sub, nil
 }
 
-// Stats are the channel page's four header numbers. They count only
-// downloaded videos: a queued, errored, or tombstoned row is not on disk, so
-// counting it would overstate what the user actually has.
+// Stats are the channel page's header numbers. All but IndexedCount count
+// only downloaded videos: a queued, errored, or tombstoned row is not on disk,
+// so counting it would overstate what the user actually has.
+//
+// IndexedCount is the exception, deliberately: it is how many of the channel's
+// videos are in the search index, whatever their status. A tombstone takes the
+// media file only, and a kept inbox read (keep_reads) was never downloaded, yet
+// both stay searchable for good — this is the number that says so.
 type Stats struct {
 	ArchivedCount     int
+	IndexedCount      int
 	RuntimeSeconds    int64
 	DiskBytes         int64
 	NewestPublishedAt string
@@ -809,18 +815,40 @@ func (s *Store) Stats(channelID, channelName string) (Stats, error) {
 		where = "(channel_id = ? OR (channel_id = '' AND channel_name = ?))"
 		args = []any{channelID, channelName}
 	}
-	row := s.db.QueryRowContext(context.Background(), `
-SELECT count(*),
-       COALESCE(sum(duration_seconds), 0),
-       COALESCE(sum(filesize_bytes), 0),
-       COALESCE(max(published_at), '')
-FROM videos WHERE status = 'downloaded' AND `+where, args...)
+	// One statement, so both counts read the same snapshot: a sweep or an embed
+	// landing between two queries could show fewer searchable than archived.
+	row := s.db.QueryRowContext(context.Background(), statsQuery(where),
+		append(append([]any{}, args...), args...)...)
 
 	var st Stats
-	if err := row.Scan(&st.ArchivedCount, &st.RuntimeSeconds, &st.DiskBytes, &st.NewestPublishedAt); err != nil {
+	if err := row.Scan(&st.ArchivedCount, &st.RuntimeSeconds, &st.DiskBytes, &st.NewestPublishedAt, &st.IndexedCount); err != nil {
 		return Stats{}, fmt.Errorf("channel stats %s: %w", channelID, err)
 	}
 	return st, nil
+}
+
+// statsQuery is the header's single statement: the downloaded-only sums, plus
+// indexedCountQuery as a scalar subquery. where appears twice, so its args are
+// passed twice.
+func statsQuery(where string) string {
+	return `
+SELECT count(*),
+       COALESCE(sum(duration_seconds), 0),
+       COALESCE(sum(filesize_bytes), 0),
+       COALESCE(max(published_at), ''),
+       (` + indexedCountQuery(where) + `)
+FROM videos WHERE status = 'downloaded' AND ` + where
+}
+
+// indexedCountQuery counts the channel's videos that have a search index,
+// whatever their status. It visits every video the channel ever had,
+// tombstones included, and needs each one's id to probe transcript_chunks, so
+// it must stay on idx_videos_channel_search (0036): a video row keeps its id
+// behind description and analysis text, and reading it from the table walks
+// overflow pages per row. channels/queryplan_test.go pins both where shapes.
+func indexedCountQuery(where string) string {
+	return `SELECT count(*) FROM videos v WHERE ` + where + `
+  AND EXISTS (SELECT 1 FROM transcript_chunks c WHERE c.video_id = v.id)`
 }
 
 // NameFromVideos returns the channel name recorded on this channel's videos

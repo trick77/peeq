@@ -20,6 +20,7 @@ vi.mock("../api/channels", () => ({
 vi.mock("../api/videos", () => ({
   listVideos: vi.fn(),
   thumbnailUrl: (id: string) => `/t/${id}`,
+  pendingThumbnailUrl: (id: string) => `/p/${id}`,
   setFavorite: vi.fn(),
   setWatched: vi.fn(),
 }));
@@ -125,6 +126,7 @@ function detail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     added: true,
     added_at: "2026-03-14 09:00:00",
     archived_count: 142,
+    indexed_count: 0,
     runtime_seconds: 219600,
     disk_bytes: 40802189312,
     newest_published_at: "2026-07-18T00:00:00Z",
@@ -174,7 +176,7 @@ describe("Channel", () => {
     vi.mocked(getSettings).mockResolvedValue(settings());
   });
 
-  it("shows the channel name and its four stats", async () => {
+  it("shows the channel name and its header stats", async () => {
     const { container } = render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
     );
@@ -235,7 +237,6 @@ describe("Channel", () => {
         title: "Pending upload",
         duration_seconds: 60,
         url: "https://youtube.com/watch?v=p1",
-        thumbnail_url: "",
         published_at: "",
         discovered_at: "2026-07-24 08:00:00",
         summary_status: "",
@@ -773,7 +774,6 @@ describe("Channel", () => {
         title: "A new upload",
         duration_seconds: 300,
         url: "https://youtu.be/p1",
-        thumbnail_url: "https://img.example/p1.jpg",
         discovered_at: "2026-07-21 09:00:00",
         summary_status: "",
         auto_summary: false,
@@ -806,7 +806,6 @@ describe("Channel", () => {
         title: "A new upload",
         duration_seconds: 300,
         url: "https://youtu.be/p1",
-        thumbnail_url: "https://img.example/p1.jpg",
         discovered_at: "2026-07-21 09:00:00",
         summary_status: "",
         auto_summary: false,
@@ -840,7 +839,6 @@ describe("Channel", () => {
         title: "A new upload",
         duration_seconds: 300,
         url: "https://youtu.be/p1",
-        thumbnail_url: "https://img.example/p1.jpg",
         discovered_at: "2026-07-21 09:00:00",
         summary_status: "",
         auto_summary: false,
@@ -873,7 +871,6 @@ describe("Channel", () => {
         title: "A new upload",
         duration_seconds: 300,
         url: "https://youtu.be/p1",
-        thumbnail_url: "https://img.example/p1.jpg",
         discovered_at: "2026-07-21 09:00:00",
         summary_status: "",
         auto_summary: false,
@@ -1447,6 +1444,18 @@ describe("Channel YouTube metadata", () => {
     );
     await screen.findByText("Uncanny Expeditions");
     expect(screen.getByText("0 B")).toBeInTheDocument();
+  });
+
+  it("shows how many of the channel's videos are searchable", async () => {
+    vi.mocked(getChannel).mockResolvedValue(detail({ indexed_count: 311 }));
+    const { container } = render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    const stat = within(
+      container.querySelector(".chan-stats") as HTMLElement,
+    ).getByText("searchable").parentElement as HTMLElement;
+    expect(within(stat).getByText("311")).toBeInTheDocument();
   });
 
   it("publishes the subscriber count, the verified mark and the refresh date", async () => {
