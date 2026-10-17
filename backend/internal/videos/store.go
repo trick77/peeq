@@ -129,7 +129,8 @@ type Video struct {
 	// the readers would otherwise have to hold — the same way ChannelName
 	// arrives. It belongs to the channel, not the video: no write path on this
 	// struct touches it, and COALESCE makes a video whose channel row was never
-	// created read as off.
+	// created read as on: off purges on delete, and purging a video no switch
+	// was ever shown for is the wrong default.
 	ChannelKeepReads bool
 }
 
@@ -275,7 +276,7 @@ const videoColumns = `v.id, v.url, v.title, v.channel_id,
 	v.chat_prompt_tokens, v.chat_cached_tokens, v.chat_completion_tokens,
 	v.media_container, v.video_codec, v.video_height, v.audio_codec, v.probed_at,
 	v.media_type, v.live_status, v.yt_tags, v.yt_categories,
-	COALESCE(ch.keep_reads, 0) AS channel_keep_reads`
+	COALESCE(ch.keep_reads, 1) AS channel_keep_reads`
 
 // videoFrom is the FROM clause every whole-Video read shares: videos aliased
 // "v", LEFT JOINed to the channels metadata cache so videoColumns can resolve

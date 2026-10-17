@@ -418,3 +418,48 @@ func TestSweepOnce_removalFailureIsNotReclaimed(t *testing.T) {
 		t.Fatalf("nothing was reclaimed, but %d activity events were recorded", len(h.rec.events))
 	}
 }
+
+// onChannel moves a seeded video onto a channel with the given keep_reads.
+func (h *harness) onChannel(t *testing.T, id, channelID string, keep bool) {
+	t.Helper()
+	if _, err := h.db.Exec(`INSERT OR IGNORE INTO channels (id, name, keep_reads) VALUES (?, 'c', ?)`, channelID, keep); err != nil {
+		t.Fatalf("seed channel: %v", err)
+	}
+	if _, err := h.db.Exec(`UPDATE videos SET channel_id = ? WHERE id = ?`, channelID, id); err != nil {
+		t.Fatalf("set channel: %v", err)
+	}
+}
+
+// keep_reads off: the sweep purges instead of tombstoning — the file and the
+// row both go.
+func TestSweepOnce_keepReadsOffPurges(t *testing.T) {
+	h := newHarness(t, 30)
+	mediaPath := seedSweepable(t, h, "gone")
+	h.onChannel(t, "gone", "UCoff", false)
+	if err := h.sw.SweepOnce(); err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if _, err := os.Stat(mediaPath); !os.IsNotExist(err) {
+		t.Fatalf("media still on disk (stat err = %v), want removed", err)
+	}
+	if v, err := h.vs.Get("gone"); err != nil || v != nil {
+		t.Fatalf("row = %+v err=%v after sweep, want purged", v, err)
+	}
+	if len(h.rec.events) != 1 {
+		t.Fatalf("activity events = %d, want 1", len(h.rec.events))
+	}
+}
+
+// keep_reads on: today's tombstone.
+func TestSweepOnce_keepReadsOnTombstones(t *testing.T) {
+	h := newHarness(t, 30)
+	seedSweepable(t, h, "kept")
+	h.onChannel(t, "kept", "UCon", true)
+	if err := h.sw.SweepOnce(); err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	v, err := h.vs.Get("kept")
+	if err != nil || v == nil || v.Status != videos.StatusTombstoned {
+		t.Fatalf("row = %+v err=%v, want tombstoned", v, err)
+	}
+}

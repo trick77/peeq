@@ -156,6 +156,18 @@ func (s *Store) Discard(id string) error {
 	return nil
 }
 
+// Remove is the one place a delete decides what survives the file: the
+// channel's keep_reads (read through v.ChannelKeepReads) on → Tombstone, off →
+// Purge. Both the manual DELETE endpoint and the retention sweeper call it, so
+// the two cannot diverge. purged reports which one ran. The caller still
+// removes the media file afterwards, with the path it read from v.
+func (s *Store) Remove(v Video) (purged bool, err error) {
+	if v.ChannelKeepReads {
+		return false, s.Tombstone(v.ID)
+	}
+	return true, s.Purge(v.ID)
+}
+
 // Tombstone marks a video deleted-but-remembered: media_path is cleared and
 // status becomes 'tombstoned', but the row (and its watched history) is kept —
 // a future badge can offer re-download. Tombstone only updates the database;

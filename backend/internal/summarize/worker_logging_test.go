@@ -499,6 +499,7 @@ func TestWorkerLogsAnInboxReadAsTerminal(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "inbox-log", URL: "https://youtu.be/inbox-log"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
+	seedChannel(t, h, "UCoff", "inbox-log", false)
 	seedTranscript(t, h, "inbox-log", rel)
 	if err := h.videos.SetStatus("inbox-log", videos.StatusNew, ""); err != nil {
 		t.Fatalf("set status: %v", err)

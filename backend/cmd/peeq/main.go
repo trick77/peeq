@@ -486,6 +486,7 @@ func run() error {
 		Images:          runner.FetchImage,
 		QueueThumbnail:  scheduler.QueueThumbnail,
 		Background:      ctx,
+		StartWorker:     startWorker,
 		Ledger:          ledgerStore,
 
 		Rag:               ragStore,

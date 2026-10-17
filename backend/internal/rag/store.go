@@ -110,9 +110,11 @@ func DeleteChunksTx(ctx context.Context, tx *sql.Tx, ids []int64) error {
 	return nil
 }
 
-// deleteVideoTx removes a video's rows from all three chunk tables within tx
-// and reports how many chunks went.
-func deleteVideoTx(ctx context.Context, tx *sql.Tx, videoID string) (int, error) {
+// DeleteVideoTx removes a video's rows from all three chunk tables within tx
+// and reports how many chunks went. A caller deleting the videos row in the
+// same tx (videos.Store.Purge) calls it first: the cascade would take
+// transcript_chunks and strand the vec/fts rows.
+func DeleteVideoTx(ctx context.Context, tx *sql.Tx, videoID string) (int, error) {
 	ids, _, err := chunkIDsTx(ctx, tx, videoID)
 	if err != nil {
 		return 0, err
@@ -275,7 +277,7 @@ func (s *Store) DeleteVideoChunks(ctx context.Context, videoID string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	deleted, err := deleteVideoTx(ctx, tx, videoID)
+	deleted, err := DeleteVideoTx(ctx, tx, videoID)
 	if err != nil {
 		return err
 	}

@@ -25,7 +25,7 @@ func runListYouTubeChannels(ctx context.Context, h *handler, raw json.RawMessage
 		return toolResult{Text: "peeq has no channels yet."}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d channels. Every downloaded or summarized video stays searchable; "+
+	fmt.Fprintf(&b, "%d channels. Every downloaded or summarized video stays searchable, after its file is deleted too unless its channel is set to forget deleted videos; "+
 		"\"caption-only reads kept\" means videos peeq only read (never downloaded) stay searchable too.\n", len(chans))
 	for _, c := range chans {
 		b.WriteString("\n- " + c.Name)

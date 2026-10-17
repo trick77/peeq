@@ -281,7 +281,12 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		// open. Best-effort, as on the full path below.
 		w.inDepthStep(video, run, forSummary.Cues)
 		outcome := "done_inbox"
-		if video.ChannelKeepReads {
+		// keep_reads is read again here, not taken from `video`: that row was
+		// read before the summary call, and a switch-off in between has
+		// already purged the channel's kept reads — embedding now would put
+		// this one back. Asked once more after the store for the same reason,
+		// since the embed call itself takes a while.
+		if w.channelKeepsReads(video.ID) {
 			// No chapters: an inbox read never runs the key-points step that
 			// produces them, so this index is transcript, summary and the
 			// in-depth sections written just above.
@@ -292,6 +297,16 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 			}
 			edone()
 			outcome = "done_inbox_indexed"
+			// A failed drop is logged, not a failed job: the summary the
+			// card shows is done, and the switch-off purge that runs again
+			// at the next boot (or the next off) takes the index.
+			if !w.channelKeepsReads(video.ID) {
+				if err := w.d.Videos.DropIndex(video.ID); err != nil {
+					w.d.Logger.Warn("summarize worker: drop index after switch-off failed", "video_id", video.ID, "err", err)
+				} else {
+					outcome = "done_inbox"
+				}
+			}
 		}
 		w.emit(video.ID, videos.SummaryDone, "")
 		run.finished(outcome)
@@ -529,6 +544,18 @@ func (w *Worker) discardStaleAnalysis(ctx context.Context, video *videos.Video) 
 			w.d.Logger.Error("summarize worker: clear stale chunks", "video_id", video.ID, "err", err)
 		}
 	}
+}
+
+// channelKeepsReads reads the video's channel keep_reads as it is NOW. A failed
+// read answers false: an inbox read left unindexed is re-read harmlessly on
+// download, one indexed against the switch survives a purge already run.
+func (w *Worker) channelKeepsReads(videoID string) bool {
+	keep, err := w.d.Videos.ChannelKeepReads(videoID)
+	if err != nil {
+		w.d.Logger.Warn("summarize worker: read keep_reads failed", "video_id", videoID, "err", err)
+		return false
+	}
+	return keep
 }
 
 // emit calls OnPhase when set, so an SSE hub can push live summarize

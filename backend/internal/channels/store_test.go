@@ -38,7 +38,8 @@ func TestList_reportsKeepReads(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := s.SetKeepReads("UCkeep", true); err != nil {
+	// On is the default (0037); the plain one is turned off.
+	if _, _, err := s.SetKeepReads("UCplain", false); err != nil {
 		t.Fatal(err)
 	}
 	items, err := s.List("all")
@@ -80,21 +81,57 @@ func TestSearchable_isSubscribedOrKeepReads(t *testing.T) {
 	if err := s.Subscribe("UCsub", "2099-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.SetKeepReads("UCkeep", true); err != nil {
+	// keep_reads is on by default (0037); the two that are not "reads kept"
+	// get there each their own way: Sub has it off, Added only has nothing
+	// read in the first place (auto_summary off).
+	if _, _, err := s.SetKeepReads("UCsub", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.SetAutoSummary("UCadded", false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Searchable(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].ID != "UCkeep" || got[1].ID != "UCsub" {
-		t.Fatalf("searchable = %+v, want Keep then Sub", got)
+	// Added only is listed (keep_reads on: its deleted videos stay searchable)
+	// but not labelled as keeping reads, since it reads nothing.
+	if len(got) != 3 || got[0].ID != "UCadded" || got[1].ID != "UCkeep" || got[2].ID != "UCsub" {
+		t.Fatalf("searchable = %+v, want Added only, Keep, Sub", got)
 	}
-	if !got[1].Subscribed || got[1].KeepReads || got[1].Handle != "@sub" || got[1].Description != "subscribed" {
-		t.Errorf("Sub = %+v", got[1])
+	if got[0].Subscribed || got[0].KeepReads {
+		t.Errorf("Added only = %+v", got[0])
 	}
-	if got[0].Subscribed || !got[0].KeepReads {
-		t.Errorf("Keep = %+v", got[0])
+	if got[1].Subscribed || !got[1].KeepReads {
+		t.Errorf("Keep = %+v", got[1])
+	}
+	if !got[2].Subscribed || got[2].KeepReads || got[2].Handle != "@sub" || got[2].Description != "subscribed" {
+		t.Errorf("Sub = %+v", got[2])
+	}
+}
+
+func TestKeepReadsOff_listsOnlyChannelsSwitchedOff(t *testing.T) {
+	s := newTestStore(t)
+	for _, id := range []string{"UCon", "UCoff"} {
+		if err := s.Upsert(Channel{ID: id, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := s.SetKeepReads("UCoff", false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.KeepReadsOff()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "UCoff" {
+		t.Fatalf("KeepReadsOff = %v, want [UCoff]", got)
+	}
+	if _, err := s.DB().Exec(`ALTER TABLE channels RENAME COLUMN keep_reads TO keep_reads_x`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.KeepReadsOff(); err == nil {
+		t.Fatal("want an error once the column is gone")
 	}
 }
 

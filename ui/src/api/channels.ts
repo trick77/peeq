@@ -77,6 +77,22 @@ export async function updateChannel(
   );
 }
 
+// KeepReadsImpact is what turning keep_reads off would take: deleted and
+// ignored videos are removed outright, inbox videos only lose their search
+// entries (the New tab still shows their summary).
+export type KeepReadsImpact = {
+  deleted: number;
+  ignored: number;
+  inbox: number;
+};
+
+export async function getKeepReadsImpact(id: string): Promise<KeepReadsImpact> {
+  return api.get<KeepReadsImpact>(
+    `/api/channels/${encodeURIComponent(id)}/keep-reads/impact`,
+    "failed to count kept videos",
+  );
+}
+
 export async function subscribeChannel(
   id: string,
 ): Promise<{ status: string }> {

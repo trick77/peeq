@@ -30,6 +30,17 @@ func queryPlan(t *testing.T, db *sql.DB, query string, args ...any) string {
 	return strings.Join(details, " | ")
 }
 
+// A switch-off reads every tombstoned and inbox video of the channel; its videos
+// side must stay on idx_videos_channel_kept, never on the table (id sits behind
+// the big text columns).
+func TestKeptVideos_staysOnTheCoveringIndex(t *testing.T) {
+	db := openTestDB(t)
+	plan := queryPlan(t, db, keptVideosQuery, "UCa")
+	if !strings.Contains(plan, "USING COVERING INDEX idx_videos_channel_kept") {
+		t.Fatalf("kept videos not covered by idx_videos_channel_kept; plan = %s", plan)
+	}
+}
+
 // The image tables store the bytes ahead of updated_at, so reading the version
 // stamp from the table walks the whole image's overflow chain, once per listed
 // row. 0032's indexes carry the stamp, and these statements must stay on them.

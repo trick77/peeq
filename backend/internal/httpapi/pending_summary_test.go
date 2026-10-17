@@ -343,10 +343,10 @@ func TestChannelPut_autoSummary(t *testing.T) {
 }
 
 // TestChannelPut_keepReads covers the second channel-level switch. It defaults
-// OFF — the reading is paid for either way, but keeping it costs embeddings —
-// and, living on the channel like auto_summary, it is settable on a channel
-// that is merely added. The last assertion is the one worth having: a request
-// that sets only one of the two must not report the other as off.
+// ON (0037) — off purges a video on delete — and, living on the channel like
+// auto_summary, it is settable on a channel that is merely added. The last
+// assertion is the one worth having: a request that sets only one of the two
+// must not report the other as off.
 func TestChannelPut_keepReads(t *testing.T) {
 	h := newPendingTestServer(t)
 	h.seedChannel("UC1")
@@ -355,8 +355,11 @@ func TestChannelPut_keepReads(t *testing.T) {
 	if err != nil || c == nil {
 		t.Fatalf("get channel: %v", err)
 	}
-	if c.KeepReads {
-		t.Fatal("keep_reads must default to off")
+	if !c.KeepReads {
+		t.Fatal("keep_reads must default to on")
+	}
+	if rr := putJSON(t, h, "/api/channels/UC1", map[string]any{"keep_reads": false}); rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
 	}
 
 	rr := putJSON(t, h, "/api/channels/UC1", map[string]any{"keep_reads": true})
