@@ -379,11 +379,30 @@ func TestLoad_mcpToken(t *testing.T) {
 		t.Fatalf("MCPToken defaulted to %q; unset must leave /mcp unmounted", cfg.MCPToken)
 	}
 	t.Setenv("BACKEND_MCP_TOKEN", "  abc123  ")
+	t.Setenv("BACKEND_PUBLIC_URL", "http://localhost:8080")
 	cfg, err = Load()
 	if err != nil {
 		t.Fatalf("expected ok, got %v", err)
 	}
 	if cfg.MCPToken != "abc123" {
 		t.Fatalf("MCPToken = %q, want the trimmed value", cfg.MCPToken)
+	}
+}
+
+// MCP results link back into peeq; without a public URL every link would be
+// relative and useless to the client citing it.
+func TestLoad_mcpTokenNeedsAPublicURL(t *testing.T) {
+	t.Setenv("BACKEND_AUTH_MODE", "dev")
+	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
+	t.Setenv("BACKEND_PUBLIC_URL", "")
+	t.Setenv("BACKEND_MCP_TOKEN", "abc123")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("a token without a public URL must not boot")
+	}
+	for _, v := range []string{"BACKEND_MCP_TOKEN", "BACKEND_PUBLIC_URL"} {
+		if !strings.Contains(err.Error(), v) {
+			t.Errorf("error %q does not name %s", err, v)
+		}
 	}
 }
