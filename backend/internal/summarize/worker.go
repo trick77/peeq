@@ -10,10 +10,10 @@ import (
 
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/rag"
-	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/subtitles"
 	"github.com/trick77/peeq/internal/summaryjobs"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/run"
 )
 
 // Embedder is the subset of rag.EmbedClient the worker needs. Batched, because
@@ -102,7 +102,7 @@ func (w *Worker) Run(ctx context.Context) {
 		if did {
 			gap = w.d.VideoDelay
 		}
-		if !sched.Sleep(ctx, gap) {
+		if !run.Sleep(ctx, gap) {
 			return
 		}
 	}

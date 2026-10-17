@@ -31,6 +31,7 @@ import (
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 	"github.com/trick77/peeq/internal/ytgate"
+	"github.com/trick77/ship/kit/run"
 )
 
 const (
@@ -433,5 +434,5 @@ func (s *Scheduler) backoff(channelID string) {
 // sleep waits d unless ctx is cancelled first. It returns false if ctx was
 // cancelled (the caller should stop), true if the full wait elapsed.
 func (s *Scheduler) sleep(ctx context.Context, d time.Duration) bool {
-	return sched.Sleep(ctx, d)
+	return run.Sleep(ctx, d)
 }

@@ -1,9 +1,10 @@
 package auth
 
 import (
-	"crypto/sha256"
-	"crypto/subtle"
 	"net/http"
+
+	"github.com/trick77/ship/kit/httpx"
+	"github.com/trick77/ship/kit/secret"
 )
 
 // StaticTokenMiddleware gates a route on a bearer secret taken from the
@@ -11,29 +12,23 @@ import (
 // extension token. The two are deliberately separate credentials: the
 // extension token can only write a cookie, while this one reads the library.
 type StaticTokenMiddleware struct {
-	digest [sha256.Size]byte
-	set    bool
+	secret string
 }
 
 // NewStaticTokenMiddleware returns middleware accepting exactly secret. An
 // empty secret rejects every request.
 func NewStaticTokenMiddleware(secret string) *StaticTokenMiddleware {
-	return &StaticTokenMiddleware{digest: sha256.Sum256([]byte(secret)), set: secret != ""}
+	return &StaticTokenMiddleware{secret: secret}
 }
 
 // RequireToken rejects a request whose "Authorization: Bearer" value is not
-// the configured secret, answering 401 with a Bearer challenge. Both sides are
-// hashed before the constant-time compare so the secret's length does not
-// leak either. No user lands in the request context.
+// the configured secret, answering 401 with a Bearer challenge. secret.Match
+// leaks neither the differing byte nor the length, and matches nothing when
+// the secret is empty. No user lands in the request context.
 func (m *StaticTokenMiddleware) RequireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		presented, ok := bearerToken(r)
-		if !ok || !m.set {
-			unauthorizedBearer(w)
-			return
-		}
-		got := sha256.Sum256([]byte(presented))
-		if subtle.ConstantTimeCompare(got[:], m.digest[:]) != 1 {
+		presented, ok := httpx.Bearer(r)
+		if !ok || !secret.Match(presented, m.secret) {
 			unauthorizedBearer(w)
 			return
 		}

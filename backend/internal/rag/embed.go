@@ -14,7 +14,7 @@ import (
 	// the context, the heartbeat, and the token formatting, so an embed line
 	// reads like a chat line. llm depends on nothing in peeq, so no cycle.
 	"github.com/trick77/peeq/internal/llm"
-	"github.com/trick77/peeq/internal/sched"
+	"github.com/trick77/ship/kit/run"
 )
 
 // The embedding model is configuration (BACKEND_EMBED_MODEL); its vector width
@@ -223,7 +223,7 @@ func (c *EmbedClient) EmbedBatched(ctx context.Context, inputs []string, gap tim
 	for start := 0; start < len(inputs); start += maxEmbedInputs {
 		// Context-aware: a shutdown mid-backfill stops here rather than sleep
 		// out the remaining batches. A non-positive gap is no wait at all.
-		if start > 0 && !sched.Sleep(ctx, gap) {
+		if start > 0 && !run.Sleep(ctx, gap) {
 			return nil, ctx.Err()
 		}
 		end := min(start+maxEmbedInputs, len(inputs))

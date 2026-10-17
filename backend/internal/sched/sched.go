@@ -1,49 +1,22 @@
 // Package sched holds the pieces every peeq background loop needs and each had
-// grown its own copy of: a cancellable sleep, a jittered repeat interval, the
-// pseudo-random source that feeds the jitter, and the slot arithmetic that
-// spreads a fleet of channels evenly across its cycle. Standard library only,
-// on purpose: any package can take Sleep without pulling in the store. The
-// cookie and kill-switch gate lives in ytgate for that reason.
+// grown its own copy of: a jittered repeat interval, the pseudo-random source
+// that feeds the jitter, and the slot arithmetic that spreads a fleet of
+// channels evenly across its cycle. The cancellable sleep is kit's run.Sleep.
+// Standard library only, on purpose: any package can import sched without pulling
+// in the store. The cookie and kill-switch gate lives in ytgate for that reason.
 //
 // The download worker, the scan scheduler and the channel-metadata refresher
 // are deliberately separate loops with unrelated cadences, but they space
 // themselves out the same way — and three identical implementations means a
-// fix to the jitter maths (or to the cancellation semantics of sleep) has to be
-// found three times. The differences that matter between those loops are their
-// intervals, which stay where they belong: as constants in each package.
+// fix to the jitter maths has to be found three times. The differences that
+// matter between those loops are their intervals, which stay where they
+// belong: as constants in each package.
 package sched
 
 import (
-	"context"
 	"math/rand"
 	"time"
 )
-
-// Sleep waits d unless ctx is cancelled first. It returns false if ctx was
-// cancelled (the caller should stop), true if the full wait elapsed.
-//
-// A non-positive d is not a wait at all, but it still reports cancellation
-// honestly: a loop that computed a zero delay must not keep going round after
-// its context is done.
-func Sleep(ctx context.Context, d time.Duration) bool {
-	// Checked before arming a timer: select over an already-fired timer AND an
-	// already-cancelled ctx picks a ready case at random, so a cancelled caller
-	// with a tiny d would proceed half the time.
-	if ctx.Err() != nil {
-		return false
-	}
-	if d <= 0 {
-		return true
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
-}
 
 // JitteredInterval returns base plus a symmetric random jitter in
 // [-jitter, +jitter), never less than min.

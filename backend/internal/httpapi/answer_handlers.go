@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,8 +11,8 @@ import (
 
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/rag"
-	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/sse"
 )
 
 // StreamCompleter is the slice of llm.Client the answer endpoint uses:
@@ -149,9 +150,8 @@ const (
 // is what makes a bad rewrite visible instead of silent.
 func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// The ONE case that must refuse rather than degrade, and therefore the one
-	// check that has to happen before the stream opens: sse.NewWriter writes
-	// headers, and after that the status is locked to 200 with no way back to a
-	// 503. Everything else — a blank query, a query nothing matched, a chat
+	// check that has to happen before the stream opens: sse.Open sends the
+	// 200, and after that there is no way back to a 503. Everything else — a blank query, a query nothing matched, a chat
 	// endpoint that is down — is a legitimate 200 whose content says so, and is
 	// answered through the stream so the browser has a single code path.
 	if s.rag == nil {
@@ -159,13 +159,19 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writer, err := sse.NewWriter(w)
+	writer, err := sse.Open(w)
 	if err != nil {
-		serverError(w, r, err, "streaming unsupported")
+		// Only ErrNoFlush comes before the 200; after a failed first flush
+		// the client is gone.
+		if errors.Is(err, sse.ErrNoFlush) {
+			serverError(w, r, err, "streaming unsupported")
+		}
 		return
 	}
-	stopHeartbeat := writer.Heartbeat(r.Context(), sseHeartbeatInterval)
-	defer stopHeartbeat()
+	// Registered first, so it runs last: the done and trace defers below
+	// still write before the stream closes.
+	defer writer.Close()
+	writer.Heartbeat(sseHeartbeatInterval)
 	send := func(event string, payload any) bool {
 		b, merr := json.Marshal(payload)
 		if merr != nil {

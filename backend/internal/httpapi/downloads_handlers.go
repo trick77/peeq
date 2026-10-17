@@ -2,15 +2,17 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/trick77/peeq/internal/jobs"
-	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
+	"github.com/trick77/ship/kit/httpx"
+	"github.com/trick77/ship/kit/sse"
 )
 
 // downloadPriority is the priority every manually-added download is
@@ -344,6 +346,10 @@ func (s *server) handleDownloadsCancel(w http.ResponseWriter, r *http.Request) {
 // sseHeartbeatInterval keeps the stream alive through idle reverse proxies.
 const sseHeartbeatInterval = 15 * time.Second
 
+// sseRetryAfter is the Retry-After on a refused subscription: the hub only
+// refuses once it is closed for shutdown, so a client retries after restart.
+const sseRetryAfter = 5 * time.Second
+
 // handleDownloadsStream is an SSE feed of download progress/queue events,
 // fanned out from the worker's progress callback via the shared Hub (see
 // main.go's wiring). Each connection gets its own subscription; it sees
@@ -353,20 +359,32 @@ func (s *server) handleDownloadsStream(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "downloads stream is not configured")
 		return
 	}
-	writer, err := sse.NewWriter(w)
-	if err != nil {
-		serverError(w, r, err, "streaming not supported")
+	// Subscribed before Open: a refusal (the hub closed for shutdown) can
+	// still be a status, never a 200 stream nothing feeds.
+	ch, unsubscribe, ok := s.sseHub.Subscribe("")
+	defer unsubscribe()
+	if !ok {
+		httpx.SetRetryAfter(w, sseRetryAfter)
+		writeJSONError(w, http.StatusServiceUnavailable, "downloads stream is unavailable")
 		return
 	}
-
-	ch, unsubscribe := s.sseHub.Subscribe()
-	defer unsubscribe()
-	stopHeartbeat := writer.Heartbeat(r.Context(), sseHeartbeatInterval)
-	defer stopHeartbeat()
+	writer, err := sse.Open(w)
+	if err != nil {
+		// Only ErrNoFlush comes before the 200; a failed first flush means
+		// the client is gone and there is nobody to answer.
+		if errors.Is(err, sse.ErrNoFlush) {
+			serverError(w, r, err, "streaming not supported")
+		}
+		return
+	}
+	defer writer.Close()
+	writer.Heartbeat(sseHeartbeatInterval)
 
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-writer.Done():
 			return
 		case ev, ok := <-ch:
 			if !ok {

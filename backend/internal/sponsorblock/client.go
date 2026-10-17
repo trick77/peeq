@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trick77/peeq/internal/version"
+	"github.com/trick77/ship/kit/version"
 
 	"github.com/trick77/peeq/internal/logx"
 )
@@ -45,7 +45,7 @@ func NewClient(baseURL string, hc *http.Client) *Client {
 	return &Client{
 		baseURL:   strings.TrimRight(baseURL, "/"),
 		hc:        hc,
-		userAgent: "peeq/" + version.Version,
+		userAgent: "peeq/" + version.String(),
 	}
 }
 

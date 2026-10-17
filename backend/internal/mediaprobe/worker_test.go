@@ -304,7 +304,7 @@ func TestRun_returnsWhenAPassIsCancelledMidBatch(t *testing.T) {
 	}
 }
 
-// With nothing to do, Run parks in sched.Sleep. Cancellation there must end
+// With nothing to do, Run parks in run.Sleep. Cancellation there must end
 // the loop rather than wait out a poll interval that may be minutes long.
 func TestRun_returnsFromTheIdleSleep(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

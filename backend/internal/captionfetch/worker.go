@@ -25,9 +25,9 @@ import (
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/logx"
 	"github.com/trick77/peeq/internal/media"
-	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
+	"github.com/trick77/ship/kit/run"
 )
 
 // pollInterval is how often the worker looks for a video to read.
@@ -143,7 +143,7 @@ func (w *Worker) Run(ctx context.Context) {
 			return
 		}
 		w.pass(ctx)
-		if !sched.Sleep(ctx, w.d.PollInterval) {
+		if !run.Sleep(ctx, w.d.PollInterval) {
 			return
 		}
 	}

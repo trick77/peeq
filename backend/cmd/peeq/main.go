@@ -12,11 +12,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/trick77/peeq/internal/activity"
@@ -41,14 +39,15 @@ import (
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/sharelink"
 	"github.com/trick77/peeq/internal/sponsorblock"
-	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/summarize"
 	"github.com/trick77/peeq/internal/summaryjobs"
-	"github.com/trick77/peeq/internal/version"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 	"github.com/trick77/peeq/web"
+	kitrun "github.com/trick77/ship/kit/run"
+	"github.com/trick77/ship/kit/sse"
+	"github.com/trick77/ship/kit/version"
 )
 
 func main() {
@@ -62,7 +61,7 @@ func main() {
 	logLevel := parseLogLevel(envDefault("BACKEND_LOG_LEVEL", "info"))
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel, ReplaceAttr: logx.RedactAttr})))
 
-	slog.Info("starting peeq", "version", version.Version)
+	slog.Info("starting peeq", "version", version.String())
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
@@ -200,7 +199,7 @@ func run() error {
 	}
 	summarizer := summarize.New(chatClient, summarize.WithSummaryChunkTokens(cfg.SummaryChunkTokens))
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := kitrun.Context(context.Background())
 	defer stop()
 
 	// Boot width check: vec_chunks is built at one width (a literal in its
@@ -265,7 +264,7 @@ func run() error {
 		AllowAnonymous: cfg.AllowAnonymousYoutube,
 	})
 
-	sseHub := sse.NewHub()
+	sseHub := sse.NewHub[httpapi.Event](sse.HubOptions{})
 	// Fan every recorded activity event out over the same SSE hub the download
 	// progress and summary phases already ride (the frontend filters by event
 	// name), so the Activity page's live row appears without a reload.
@@ -274,7 +273,7 @@ func run() error {
 		if err != nil {
 			return
 		}
-		sseHub.Publish("activity", string(data))
+		sseHub.Publish(httpapi.Event{Name: "activity", Data: string(data)})
 	}
 	// prober reads what a downloaded file actually is (container, codecs,
 	// resolution) with ffprobe, which ships in the image alongside the ffmpeg
@@ -306,7 +305,7 @@ func run() error {
 			if err != nil {
 				return
 			}
-			sseHub.Publish("progress", string(data))
+			sseHub.Publish(httpapi.Event{Name: "progress", Data: string(data)})
 		},
 	})
 	// streamTracker is the retention sweeper's now-playing guard: the videos
@@ -352,7 +351,7 @@ func run() error {
 			if err != nil {
 				return
 			}
-			sseHub.Publish("summary", string(data))
+			sseHub.Publish(httpapi.Event{Name: "summary", Data: string(data)})
 		},
 	})
 
@@ -457,7 +456,7 @@ func run() error {
 	}
 
 	deps := httpapi.Deps{
-		Version:         version.Version,
+		Version:         version.String(),
 		Static:          web.Handler(),
 		Shell:           shell,
 		AuthService:     authSvc,
@@ -739,8 +738,9 @@ func logJSRuntime(ctx context.Context, bin string) {
 // limit" and leave a stalled client holding a goroutine and a descriptor).
 //
 // ReadHeaderTimeout alone is what closes slow loris. ReadTimeout and
-// WriteTimeout stay unset on purpose: internal/sse streams text/event-stream
-// responses that a write deadline would truncate, and ReadTimeout bounds the
+// WriteTimeout stay unset on purpose: kit/sse streams text/event-stream
+// responses that a write deadline would truncate (it bounds each write on its
+// own instead), and ReadTimeout bounds the
 // whole request including the body, cancelling r.Context() once the body is
 // read.
 func newServer(addr string, handler http.Handler) *http.Server {
@@ -761,18 +761,20 @@ func newServer(addr string, handler http.Handler) *http.Server {
 // (in which case that error is returned immediately, without waiting for
 // ctx) or ctx is cancelled (in which case srv is shut down gracefully).
 //
-// hub.Close() is called before srv.Shutdown: http.Server.Shutdown does NOT
-// cancel in-flight request contexts, it only waits for handlers to return —
-// so an open SSE stream (which otherwise blocks on r.Context().Done(), which
-// never fires during a graceful shutdown while the client stays connected)
-// would make Shutdown block for the full 10s timeout and return
-// context.DeadlineExceeded, one connected client at a time. Closing the hub
-// first closes every subscriber channel, so the stream handler's select sees
-// its channel close and returns immediately, and Shutdown completes fast.
-func serve(ctx context.Context, srv *http.Server, hub *sse.Hub) error {
+// hub.Close runs on Shutdown (RegisterOnShutdown): http.Server.Shutdown does
+// NOT cancel in-flight request contexts, it only waits for handlers to
+// return — so an open SSE stream (which otherwise blocks on
+// r.Context().Done(), which never fires during a graceful shutdown while the
+// client stays connected) would make Shutdown block for the full 10s timeout
+// and return context.DeadlineExceeded, one connected client at a time.
+// Closing the hub closes every subscriber channel, so the stream handler's
+// select sees its channel close and returns immediately, and Shutdown
+// completes fast.
+func serve(ctx context.Context, srv *http.Server, hub *sse.Hub[httpapi.Event]) error {
+	srv.RegisterOnShutdown(hub.Close)
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("listening", "addr", srv.Addr, "version", version.Version)
+		slog.Info("listening", "addr", srv.Addr, "version", version.String())
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
@@ -786,7 +788,6 @@ func serve(ctx context.Context, srv *http.Server, hub *sse.Hub) error {
 	case <-ctx.Done():
 	}
 
-	hub.Close()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)

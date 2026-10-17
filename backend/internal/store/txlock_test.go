@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ncruces/go-sqlite3"
 )
@@ -75,11 +74,17 @@ func TestOpen_deferredTxlockDiesOnSnapshotConflict(t *testing.T) {
 }
 
 func TestOpen_immediateTxlockPreventsSnapshotConflict(t *testing.T) {
-	db, err := open(filepath.Join(t.TempDir(), "i.db"), 200*time.Millisecond)
+	db, err := open(filepath.Join(t.TempDir(), "i.db"), "_pragma=busy_timeout(200)")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	// The override must land after kit's 10 s, or the BUSY below still comes,
+	// only fifty times later.
+	var busy int
+	if err := db.QueryRow(`PRAGMA busy_timeout`).Scan(&busy); err != nil || busy != 200 {
+		t.Fatalf("busy_timeout = %d err=%v, want 200", busy, err)
+	}
 	seedCounter(t, db)
 	txErr, otherErr := readThenWrite(t, db)
 	if txErr != nil {
@@ -97,7 +102,7 @@ func TestOpen_immediateTxlockPreventsSnapshotConflict(t *testing.T) {
 // TestOpen_usesImmediateTxlock pins the production DSN to the immediate
 // variant, so the property above holds for every BeginTx in the tree.
 func TestOpen_usesImmediateTxlock(t *testing.T) {
-	got := dsn("/tmp/x.db", 10*time.Second)
+	got := dsn("/tmp/x.db")
 	for _, want := range []string{"_txlock=immediate", "_pragma=busy_timeout(10000)", "_pragma=journal_mode(wal)", "_pragma=foreign_keys(on)"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dsn %q lacks %q", got, want)

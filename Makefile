@@ -27,7 +27,7 @@ fe-build:
 	cd ui && npm ci && npm run build
 
 build: fe-build
-	cd backend && CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/trick77/peeq/internal/version.Version=$$(git rev-parse --short HEAD 2>/dev/null || echo dev)" -o ../bin/peeq ./cmd/peeq
+	cd backend && CGO_ENABLED=0 go build -ldflags="-s -w -X github.com/trick77/ship/kit/version.Version=$$(git rev-parse --short HEAD 2>/dev/null || echo dev)" -o ../bin/peeq ./cmd/peeq
 
 run:
 	cd backend && go run ./cmd/peeq

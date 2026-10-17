@@ -15,9 +15,10 @@ import (
 
 	"github.com/trick77/llmwire"
 	"github.com/trick77/peeq/internal/config"
+	"github.com/trick77/peeq/internal/httpapi"
 	"github.com/trick77/peeq/internal/llm"
-	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/ytdlp"
+	"github.com/trick77/ship/kit/sse"
 )
 
 // The hosts are llmwire's profiles' and the keys are llmwire's to read from
@@ -171,11 +172,12 @@ func TestResolveYtdlpBin_ignoresLegacyZipapp(t *testing.T) {
 	}
 }
 
-// serveOnListener mirrors serve's shutdown behavior (hub.Close() before
-// srv.Shutdown; see serve's doc comment) but serves on a pre-bound listener
+// serveOnListener mirrors serve's shutdown behavior (hub.Close registered on
+// Shutdown; see serve's doc comment) but serves on a pre-bound listener
 // instead of letting srv.ListenAndServe bind its own, so a test can learn
 // the port before starting the server.
-func serveOnListener(ctx context.Context, srv *http.Server, ln net.Listener, hub *sse.Hub) error {
+func serveOnListener(ctx context.Context, srv *http.Server, ln net.Listener, hub *sse.Hub[httpapi.Event]) error {
+	srv.RegisterOnShutdown(hub.Close)
 	errCh := make(chan error, 1)
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -191,7 +193,6 @@ func serveOnListener(ctx context.Context, srv *http.Server, ln net.Listener, hub
 	case <-ctx.Done():
 	}
 
-	hub.Close()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
@@ -218,7 +219,7 @@ func TestServe_BindFailureReturnsError(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- serve(ctx, srv, sse.NewHub())
+		errCh <- serve(ctx, srv, sse.NewHub[httpapi.Event](sse.HubOptions{}))
 	}()
 
 	select {
@@ -241,7 +242,7 @@ func TestServe_BindFailureReturnsError(t *testing.T) {
 // serve avoids this by closing the Hub before calling Shutdown, which
 // unblocks the handler's channel receive.
 func TestServe_ShutdownReturnsPromptlyWithOpenSSEStream(t *testing.T) {
-	hub := sse.NewHub()
+	hub := sse.NewHub[httpapi.Event](sse.HubOptions{})
 	mux := http.NewServeMux()
 	handlerStarted := make(chan struct{})
 	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
@@ -253,7 +254,7 @@ func TestServe_ShutdownReturnsPromptlyWithOpenSSEStream(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		flusher.Flush()
 
-		ch, unsubscribe := hub.Subscribe()
+		ch, unsubscribe, _ := hub.Subscribe("")
 		defer unsubscribe()
 		close(handlerStarted)
 

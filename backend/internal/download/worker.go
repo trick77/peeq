@@ -19,10 +19,10 @@ import (
 	"github.com/trick77/peeq/internal/failmonitor"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/mediaprobe"
-	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/settings"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
+	"github.com/trick77/ship/kit/run"
 )
 
 // metadataPreflightTimeout bounds the worker's pre-download metadata fetch so a
@@ -472,5 +472,5 @@ func (w *Worker) waitWhilePaused(ctx context.Context) bool {
 // sleep waits d unless ctx is cancelled first. It returns false if ctx was
 // cancelled (the caller should stop), true if the full wait elapsed.
 func (w *Worker) sleep(ctx context.Context, d time.Duration) bool {
-	return sched.Sleep(ctx, d)
+	return run.Sleep(ctx, d)
 }

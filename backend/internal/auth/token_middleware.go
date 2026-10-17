@@ -3,9 +3,9 @@ package auth
 import (
 	"context"
 	"net/http"
-	"strings"
 
 	"github.com/trick77/peeq/internal/apitoken"
+	"github.com/trick77/ship/kit/httpx"
 )
 
 // TokenHashLookup returns the stored API token hash, or "" when no token has
@@ -32,7 +32,7 @@ func NewTokenMiddleware(tokens TokenHashLookup) *TokenMiddleware {
 // it must not call UserFromContext.
 func (m *TokenMiddleware) RequireToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		presented, ok := bearerToken(r)
+		presented, ok := httpx.Bearer(r)
 		if !ok {
 			writeJSONError(w, http.StatusUnauthorized, "unauthorized")
 			return
@@ -48,19 +48,4 @@ func (m *TokenMiddleware) RequireToken(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-// bearerToken extracts the credential from an Authorization header. The
-// scheme match is case-insensitive per RFC 7235; the token itself is not.
-func bearerToken(r *http.Request) (string, bool) {
-	header := r.Header.Get("Authorization")
-	scheme, value, found := strings.Cut(header, " ")
-	if !found || !strings.EqualFold(scheme, "Bearer") {
-		return "", false
-	}
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", false
-	}
-	return value, true
 }
