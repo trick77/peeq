@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -45,21 +46,24 @@ import (
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
 	"github.com/trick77/peeq/web"
+	"github.com/trick77/ship/kit/httpx"
+	"github.com/trick77/ship/kit/logging"
 	kitrun "github.com/trick77/ship/kit/run"
 	"github.com/trick77/ship/kit/sse"
 	"github.com/trick77/ship/kit/version"
 )
 
 func main() {
-	// Configure structured logging with an explicit handler so every line
-	// carries an RFC3339 timestamp (the package default does not guarantee
-	// one). Installed before anything else so the startup banner and any
-	// config-load failure are timestamped too. Level: BACKEND_LOG_LEVEL.
-	// ReplaceAttr scrubs query strings and userinfo from every error logged
-	// under "err" (logx.RedactAttr), so the "never log a URL" rule holds for
-	// every line rather than only where a call site remembered to wrap.
-	logLevel := parseLogLevel(envDefault("BACKEND_LOG_LEVEL", "info"))
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel, ReplaceAttr: logx.RedactAttr})))
+	// Installed before anything else, so the startup banner and a config-load
+	// failure go out in the configured shape. kit's Setup refuses an unknown
+	// BACKEND_LOG_LEVEL rather than fall back to info. logx.Handler scrubs
+	// query strings and userinfo from every error logged under "err", so the
+	// "never log a URL" rule holds for every line rather than only where a
+	// call site remembered to wrap.
+	if err := setupLogging(os.Stderr, os.Getenv("BACKEND_LOG_LEVEL")); err != nil {
+		slog.Error("fatal", "err", err)
+		os.Exit(1)
+	}
 
 	slog.Info("starting peeq", "version", version.String())
 	if err := run(); err != nil {
@@ -68,26 +72,14 @@ func main() {
 	}
 }
 
-func envDefault(key, def string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
+// setupLogging installs kit's logger at level, behind peeq's redactor.
+func setupLogging(w io.Writer, level string) error {
+	l, err := logging.Setup(logging.Options{Level: level, LevelVar: "BACKEND_LOG_LEVEL", Writer: w})
+	if err != nil {
+		return err
 	}
-	return def
-}
-
-// parseLogLevel maps a BACKEND_LOG_LEVEL string to a slog.Level, defaulting to
-// Info for empty or unrecognized values.
-func parseLogLevel(raw string) slog.Level {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "debug":
-		return slog.LevelDebug
-	case "warn", "warning":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
+	slog.SetDefault(slog.New(logx.Handler(l.Handler())))
+	return nil
 }
 
 func run() error {
@@ -457,6 +449,7 @@ func run() error {
 
 	deps := httpapi.Deps{
 		Version:         version.String(),
+		Ready:           []httpx.Check{{Name: "db", Run: db.PingContext}},
 		Static:          web.Handler(),
 		Shell:           shell,
 		AuthService:     authSvc,
@@ -507,10 +500,10 @@ func run() error {
 	}
 	handler := httpapi.New(deps)
 
-	srv := newServer(cfg.Addr, handler)
-
-	err = serve(ctx, srv, sseHub)
-	// serve can return either because ctx was cancelled (signal) or because
+	srv := newServer(cfg.Addr, handler, sseHub)
+	slog.Info("listening", "addr", srv.Addr, "version", version.String())
+	err = httpx.Serve(ctx, srv, 10*time.Second)
+	// Serve can return either because ctx was cancelled (signal) or because
 	// the listener itself failed to start/serve, in which case ctx is still
 	// live. Stop it explicitly (idempotent; the deferred stop() above is a
 	// no-op on top of this) so the worker's ctx.Done() check unblocks and
@@ -734,64 +727,16 @@ func logJSRuntime(ctx context.Context, bin string) {
 	slog.Info("yt-dlp JavaScript runtime detected", "runtime", v)
 }
 
-// newServer builds the API server with its timeouts set explicitly, so they are
-// assertable rather than left at http.Server's zero values (which mean "no
-// limit" and leave a stalled client holding a goroutine and a descriptor).
-//
-// ReadHeaderTimeout alone is what closes slow loris. ReadTimeout and
-// WriteTimeout stay unset on purpose: kit/sse streams text/event-stream
-// responses that a write deadline would truncate (it bounds each write on its
-// own instead), and ReadTimeout bounds the
-// whole request including the body, cancelling r.Context() once the body is
-// read.
-func newServer(addr string, handler http.Handler) *http.Server {
-	return &http.Server{
-		Addr:              addr,
-		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		// net/http writes its own failures (request-parse errors, superfluous
-		// WriteHeader, TLS handshake failures) here. Without this they bypass
-		// slog entirely: unstructured, untimestamped, unfiltered by
-		// BACKEND_LOG_LEVEL.
-		ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
-	}
-}
-
-// serve starts srv and blocks until either the server fails to start/serve
-// (in which case that error is returned immediately, without waiting for
-// ctx) or ctx is cancelled (in which case srv is shut down gracefully).
-//
-// hub.Close runs on Shutdown (RegisterOnShutdown): http.Server.Shutdown does
-// NOT cancel in-flight request contexts, it only waits for handlers to
-// return — so an open SSE stream (which otherwise blocks on
-// r.Context().Done(), which never fires during a graceful shutdown while the
-// client stays connected) would make Shutdown block for the full 10s timeout
-// and return context.DeadlineExceeded, one connected client at a time.
-// Closing the hub closes every subscriber channel, so the stream handler's
-// select sees its channel close and returns immediately, and Shutdown
-// completes fast.
-func serve(ctx context.Context, srv *http.Server, hub *sse.Hub[httpapi.Event]) error {
+// newServer is kit's server with hub.Close run on Shutdown:
+// http.Server.Shutdown does NOT cancel in-flight request contexts, it only
+// waits for handlers to return, so an open SSE stream (blocked on
+// r.Context().Done(), which never fires while the client stays connected)
+// would hold the drain for its full timeout. Closing the hub closes every
+// subscriber channel, so the stream handler returns at once.
+func newServer(addr string, h http.Handler, hub *sse.Hub[httpapi.Event]) *http.Server {
+	srv := httpx.NewServer(addr, h)
 	srv.RegisterOnShutdown(hub.Close)
-	errCh := make(chan error, 1)
-	go func() {
-		slog.Info("listening", "addr", srv.Addr, "version", version.String())
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-			return
-		}
-		errCh <- nil
-	}()
-
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	return srv.Shutdown(shutdownCtx)
+	return srv
 }
 
 // newModelClients builds the embedding client and the two chat clients on the

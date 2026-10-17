@@ -27,8 +27,10 @@ import (
 
 // Deps are the dependencies needed to build the server.
 type Deps struct {
-	// Version is the running build version, surfaced on /healthz.
+	// Version is the running build version, reported to MCP clients.
 	Version string
+	// Ready are /readyz's checks (httpx.Health); the database ping in main.
+	Ready []httpx.Check
 	// Static serves the embedded SPA; may be nil in tests.
 	Static http.Handler
 	// Shell is the SPA's index.html. /s/{token} is served from it with Open
@@ -409,7 +411,7 @@ func New(d Deps) http.Handler {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
+	httpx.Health(mux, nil, d.Ready...)
 	mux.HandleFunc("GET /api/auth/login", s.handleAuthLogin)
 	tokenRoutes := limiter(tokenRouteLimit)
 	mux.Handle("GET /api/auth/callback", limiter(callbackLimit)(http.HandlerFunc(s.handleAuthCallback)))

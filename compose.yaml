@@ -40,7 +40,9 @@ services:
       BACKEND_YTDLP_DIR: /data/bin
 
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      # Readiness, not liveness: /readyz pings the database. Both probes answer
+      # only a loopback caller with no forwarding header (kit's httpx.Health).
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
       interval: 60s
       timeout: 5s
       start_period: 30s
