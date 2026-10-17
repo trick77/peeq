@@ -64,6 +64,64 @@ func TestPurge_removesRowTranscriptAndIndexKeepsLedger(t *testing.T) {
 	}
 }
 
+// A video added by URL has no ledger row, and one parked as 'unavailable' is
+// revived by a scan once its videos row is gone. Purge leaves both settled at
+// 'queued', which no scan revisits.
+func TestPurge_settlesTheLedgerSoAScanNeverBringsItBack(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	if _, err := db.Exec(`INSERT INTO channels (id, name) VALUES ('UC1','c')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO channel_videos (video_id, channel_id, title, state) VALUES ('parked','UC1','t','unavailable')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"byurl", "parked"} {
+		if err := s.Upsert(Video{ID: id, URL: "https://youtu.be/" + id, Title: "T " + id, ChannelID: "UC1"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Purge(id); err != nil {
+			t.Fatalf("purge %s: %v", id, err)
+		}
+		var state string
+		if err := db.QueryRow(`SELECT state FROM channel_videos WHERE video_id = ?`, id).Scan(&state); err != nil {
+			t.Fatalf("%s ledger row: %v", id, err)
+		}
+		if state != "queued" {
+			t.Fatalf("%s ledger state = %q, want queued", id, state)
+		}
+	}
+}
+
+// The inbox poster hangs off the ledger row, not the videos row, so the cascade
+// misses it; Purge removes it itself.
+func TestPurge_removesTheInboxPoster(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	if _, err := db.Exec(`INSERT INTO channels (id, name) VALUES ('UC1','c')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO channel_videos (video_id, channel_id, title, state) VALUES ('v','UC1','t','ignored')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO pending_thumbnails (video_id, mime, bytes) VALUES ('v','image/jpeg',x'00')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Upsert(Video{ID: "v", URL: "u", ChannelID: "UC1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Purge("v"); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pending_thumbnails`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("pending_thumbnails = %d after purge, want 0", n)
+	}
+}
+
 // keptFixture seeds one channel with a video in every state PurgeKept has to
 // tell apart, and indexes the ones that would be indexed in production.
 func keptFixture(t *testing.T) (*Store, *rag.Store) {

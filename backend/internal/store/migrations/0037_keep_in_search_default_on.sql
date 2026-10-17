@@ -20,9 +20,11 @@ ALTER TABLE channels ADD COLUMN keep_reads INTEGER NOT NULL DEFAULT 1;
 -- idx_videos_channel_status (0032) lacks id; videos/queryplan_test.go pins it
 -- as the plan the Library must NOT take, so it stays as it is.
 --
--- status leads, not channel_id: with channel_id first this is the narrowest
--- index for any channel_id-only lookup, and the planner took it away from
--- idx_videos_channel_search for the channel page's searchable count
--- (channels/queryplan_test.go). Leading with status, only a query that names
--- status can seek it.
-CREATE INDEX idx_videos_channel_kept ON videos (status, channel_id, id);
+-- Partial, on exactly the two statuses the query reads. A full index here is
+-- the narrowest one for other queries too: with channel_id first the planner
+-- took it away from idx_videos_channel_search for the channel page's
+-- searchable count (channels/queryplan_test.go); with status first, any
+-- status-only query could pick it. A partial index is only usable by a query
+-- whose WHERE implies its own, so neither can.
+CREATE INDEX idx_videos_channel_kept ON videos (channel_id, status, id)
+    WHERE status IN ('tombstoned', 'new');

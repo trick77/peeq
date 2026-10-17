@@ -297,11 +297,15 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 			}
 			edone()
 			outcome = "done_inbox_indexed"
+			// A failed drop is logged, not a failed job: the summary the
+			// card shows is done, and the switch-off purge that runs again
+			// at the next boot (or the next off) takes the index.
 			if !w.channelKeepsReads(video.ID) {
 				if err := w.d.Videos.DropIndex(video.ID); err != nil {
-					return true, w.failJob(ctx, job, video, run, err.Error())
+					w.d.Logger.Warn("summarize worker: drop index after switch-off failed", "video_id", video.ID, "err", err)
+				} else {
+					outcome = "done_inbox"
 				}
-				outcome = "done_inbox"
 			}
 		}
 		w.emit(video.ID, videos.SummaryDone, "")
@@ -546,12 +550,12 @@ func (w *Worker) discardStaleAnalysis(ctx context.Context, video *videos.Video) 
 // read answers false: an inbox read left unindexed is re-read harmlessly on
 // download, one indexed against the switch survives a purge already run.
 func (w *Worker) channelKeepsReads(videoID string) bool {
-	v, err := w.d.Videos.Get(videoID)
+	keep, err := w.d.Videos.ChannelKeepReads(videoID)
 	if err != nil {
 		w.d.Logger.Warn("summarize worker: read keep_reads failed", "video_id", videoID, "err", err)
 		return false
 	}
-	return v != nil && v.ChannelKeepReads
+	return keep
 }
 
 // emit calls OnPhase when set, so an SSE hub can push live summarize

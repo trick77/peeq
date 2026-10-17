@@ -437,6 +437,26 @@ func run() error {
 	}
 	startWorker("download worker", worker.Run)
 	startWorker("retention sweeper", sweeper.Run)
+	// A switch-off purge runs in the background of the request that turned
+	// keep_reads off, so a shutdown can cut it short. Running it again for
+	// every channel that is off finishes it; on a channel with nothing kept it
+	// is one query.
+	startWorker("keep reads purge", func(ctx context.Context) {
+		ids, err := channelsStore.KeepReadsOff()
+		if err != nil {
+			slog.Error("keep reads purge: list channels failed", "err", err)
+			return
+		}
+		for _, id := range ids {
+			httpapi.PurgeKeptOnce(id, videosStore, func() bool {
+				if ctx.Err() != nil {
+					return false
+				}
+				c, err := channelsStore.Get(id)
+				return err == nil && c != nil && !c.KeepReads
+			})
+		}
+	})
 	startWorker("yt-dlp version check", func(ctx context.Context) {
 		runYtdlpVersionCheckTicker(ctx, cfg.YtdlpDir, ytdlpCheckInterval, ytdlp.LatestVersion, ytdlpStatus, activityStore)
 	})

@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+
+	"github.com/trick77/peeq/internal/videos"
 )
 
 // handleKeepReadsImpact answers what turning the channel's keep_reads off
@@ -42,9 +44,14 @@ func (s *server) handleKeepReadsImpact(w http.ResponseWriter, r *http.Request) {
 // It stops as soon as the switch reads on again, so turning it back on halfway
 // keeps whatever was not reached yet. A read that fails also stops it: when in
 // doubt, keep.
+//
+// A switch-off that arrives while one is running is not dropped: the running
+// one may already have seen an on in between and be stopping. It asks for one
+// more pass instead, which the goroutine runs before it exits.
 func (s *server) purgeKeptAsync(channelID string) {
 	s.purgeMu.Lock()
 	if s.purgeInFlight[channelID] {
+		s.purgeRerun[channelID] = true
 		s.purgeMu.Unlock()
 		return
 	}
@@ -61,6 +68,7 @@ func (s *server) purgeKeptAsync(channelID string) {
 			}
 			s.purgeMu.Lock()
 			delete(s.purgeInFlight, channelID)
+			delete(s.purgeRerun, channelID)
 			s.purgeMu.Unlock()
 			if s.onKeptPurged != nil {
 				s.onKeptPurged(channelID)
@@ -73,13 +81,31 @@ func (s *server) purgeKeptAsync(channelID string) {
 			c, err := s.channels.Get(channelID)
 			return err == nil && c != nil && !c.KeepReads
 		}
-		done, err := s.videos.PurgeKept(channelID, stillOff)
-		if err != nil {
-			slog.Error("keep reads purge failed", "channel_id", channelID,
-				"deleted", done.Deleted, "ignored", done.Ignored, "inbox", done.Inbox, "err", err)
-			return
+		for {
+			PurgeKeptOnce(channelID, s.videos, stillOff)
+			s.purgeMu.Lock()
+			again := s.purgeRerun[channelID]
+			delete(s.purgeRerun, channelID)
+			s.purgeMu.Unlock()
+			if !again || base.Err() != nil {
+				return
+			}
 		}
+	}()
+}
+
+// PurgeKeptOnce runs one switch-off purge for a channel and logs what it did.
+// main.go calls it at boot for every channel whose switch is off, which is
+// what finishes a purge a shutdown or a failed write cut short.
+func PurgeKeptOnce(channelID string, vs *videos.Store, stillOff func() bool) {
+	done, err := vs.PurgeKept(channelID, stillOff)
+	if err != nil {
+		slog.Error("keep reads purge failed", "channel_id", channelID,
+			"deleted", done.Deleted, "ignored", done.Ignored, "inbox", done.Inbox, "err", err)
+		return
+	}
+	if done != (videos.KeptCounts{}) {
 		slog.Info("keep reads purge", "channel_id", channelID,
 			"deleted", done.Deleted, "ignored", done.Ignored, "inbox", done.Inbox)
-	}()
+	}
 }

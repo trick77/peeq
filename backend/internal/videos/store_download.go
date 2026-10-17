@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 
-	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/store"
 )
 
@@ -154,42 +152,6 @@ func (s *Store) Discard(id string) error {
 	if _, err := s.db.ExecContext(context.Background(),
 		`DELETE FROM videos WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("discard video %s: %w", id, err)
-	}
-	return nil
-}
-
-// Purge is a delete on a channel whose keep_reads is off: the row and
-// everything hanging off it go — transcript, summary, poster, in-depth text,
-// share link, and the search index, which unlike the rest cannot ride the
-// cascade. Tombstone is the keep_reads-on counterpart.
-//
-// The channel_videos ledger row is not touched, and that is what keeps the
-// video gone: a scan skips any video the ledger knows, whatever its state, so
-// it is neither offered nor fetched again. Callers that have no ledger row
-// behind the video lose it outright, as Discard warns.
-//
-// The media file is the caller's, as for Tombstone: row first, then
-// media.RemoveTombstonedVideoFiles with the path read beforehand.
-func (s *Store) Purge(id string) error {
-	ctx := context.Background()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("purge video %s: begin: %w", id, err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	chunks, err := rag.DeleteVideoTx(ctx, tx, id)
-	if err != nil {
-		return fmt.Errorf("purge video %s: chunks: %w", id, err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM videos WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("purge video %s: %w", id, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("purge video %s: commit: %w", id, err)
-	}
-	if chunks > 0 {
-		// The purged vectors keep their storage (rag.CompactVectors).
-		rag.WarnVectorBloat(ctx, s.db, slog.Default(), "video_id", id)
 	}
 	return nil
 }

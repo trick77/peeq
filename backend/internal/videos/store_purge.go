@@ -2,11 +2,80 @@ package videos
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/trick77/peeq/internal/rag"
 )
+
+// Purge is a delete on a channel whose keep_reads is off: the row and
+// everything hanging off it go — transcript, summary, poster, in-depth text,
+// share link, and the search index, which unlike the rest cannot ride the
+// cascade. Tombstone is the keep_reads-on counterpart.
+//
+// What keeps the video gone is its channel_videos ledger row: a scan skips any
+// video the ledger knows, except one parked as 'unavailable', which it revives
+// when no downloaded videos row says otherwise — and after a purge there is no
+// row at all; a 'pending' one would sit in the New tab again. So the ledger
+// row is settled at 'queued' (approved, done with),
+// and written if the video never had one (added by URL or the extension). The
+// inbox poster hangs off that ledger row rather than the videos row, so the
+// cascade misses it and it is deleted here.
+//
+// The media file is the caller's, as for Tombstone: row first, then
+// media.RemoveTombstonedVideoFiles with the path read beforehand.
+func (s *Store) Purge(id string) error {
+	chunks, err := s.purge(id)
+	if err != nil {
+		return err
+	}
+	if chunks > 0 {
+		// The purged vectors keep their storage (rag.CompactVectors).
+		rag.WarnVectorBloat(context.Background(), s.db, slog.Default(), "video_id", id)
+	}
+	return nil
+}
+
+// purge is Purge without the bloat check, so a batch measures once at the end
+// rather than counting the vector shadow tables per video. It reports how many
+// chunks went.
+func (s *Store) purge(id string) (int, error) {
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("purge video %s: begin: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Before the delete: it reads the row's channel, title and url. The
+	// channels join is the ledger's foreign key; a video whose channel row
+	// does not exist is never purged in the first place (its keep_reads reads
+	// as on).
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO channel_videos (video_id, channel_id, title, url, state, decided_at)
+SELECT v.id, v.channel_id, v.title, v.url, 'queued', datetime('now')
+FROM videos v JOIN channels c ON c.id = v.channel_id
+WHERE v.id = ?
+ON CONFLICT(video_id) DO UPDATE SET state = 'queued'
+WHERE channel_videos.state IN ('unavailable', 'pending')`, id); err != nil {
+		return 0, fmt.Errorf("purge video %s: settle ledger: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM pending_thumbnails WHERE video_id = ?`, id); err != nil {
+		return 0, fmt.Errorf("purge video %s: poster: %w", id, err)
+	}
+	chunks, err := rag.DeleteVideoTx(ctx, tx, id)
+	if err != nil {
+		return 0, fmt.Errorf("purge video %s: chunks: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM videos WHERE id = ?`, id); err != nil {
+		return 0, fmt.Errorf("purge video %s: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("purge video %s: commit: %w", id, err)
+	}
+	return chunks, nil
+}
 
 // KeptCounts is what turning a channel's keep_reads off takes away, and later
 // what it did take: Deleted tombstones and Ignored kept inbox reads are purged
@@ -121,15 +190,25 @@ func (s *Store) PurgeKept(channelID string, stillOff func() bool) (KeptCounts, e
 		return KeptCounts{}, err
 	}
 	var done KeptCounts
+	chunks := 0
+	// Measured once for the batch, not per video: the check counts the vector
+	// shadow tables.
+	defer func() {
+		if chunks > 0 {
+			rag.WarnVectorBloat(context.Background(), s.db, slog.Default(), "channel_id", channelID)
+		}
+	}()
 	for _, k := range kept {
 		if !stillOff() {
 			break
 		}
+		var n int
 		if k.kind == keptInbox {
-			err = s.DropIndex(k.id)
+			n, err = s.dropIndex(k.id)
 		} else {
-			err = s.Purge(k.id)
+			n, err = s.purge(k.id)
 		}
+		chunks += n
 		if err != nil {
 			return done, err
 		}
@@ -143,25 +222,53 @@ func (s *Store) PurgeKept(channelID string, stillOff func() bool) (KeptCounts, e
 // rag.ChunkRecipeRev, and a stale embed_rev would leave it unsearchable for
 // good. Everything else on the row stays.
 func (s *Store) DropIndex(id string) error {
+	chunks, err := s.dropIndex(id)
+	if err != nil {
+		return err
+	}
+	if chunks > 0 {
+		rag.WarnVectorBloat(context.Background(), s.db, slog.Default(), "video_id", id)
+	}
+	return nil
+}
+
+// dropIndex is DropIndex without the bloat check (see purge).
+func (s *Store) dropIndex(id string) (int, error) {
 	ctx := context.Background()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("drop index %s: begin: %w", id, err)
+		return 0, fmt.Errorf("drop index %s: begin: %w", id, err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	chunks, err := rag.DeleteVideoTx(ctx, tx, id)
 	if err != nil {
-		return fmt.Errorf("drop index %s: %w", id, err)
+		return 0, fmt.Errorf("drop index %s: %w", id, err)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE videos SET embed_model = '', embed_dim = 0, embed_rev = 0 WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("drop index %s: %w", id, err)
+		return 0, fmt.Errorf("drop index %s: %w", id, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("drop index %s: commit: %w", id, err)
+		return 0, fmt.Errorf("drop index %s: commit: %w", id, err)
 	}
-	if chunks > 0 {
-		rag.WarnVectorBloat(ctx, s.db, slog.Default(), "video_id", id)
+	return chunks, nil
+}
+
+// ChannelKeepReads reads only the video's channel keep_reads, as it is now —
+// for a caller that holds a stale row and must not pay for re-reading all of
+// it (videoColumns walks the big text columns). A video with no channel row
+// reads as on, as in videoColumns; a missing video reads as off.
+func (s *Store) ChannelKeepReads(id string) (bool, error) {
+	var keep bool
+	err := s.db.QueryRowContext(context.Background(), `
+SELECT COALESCE(ch.keep_reads, 1) FROM videos v
+LEFT JOIN channels ch ON ch.id = v.channel_id
+WHERE v.id = ?`, id).Scan(&keep)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
 	}
-	return nil
+	if err != nil {
+		return false, fmt.Errorf("channel keep_reads %s: %w", id, err)
+	}
+	return keep, nil
 }

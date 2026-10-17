@@ -274,10 +274,12 @@ type server struct {
 	images     media.ImageFetcher
 	background context.Context
 	onArt      func(channelID string)
-	// purgeMu guards purgeInFlight: channels whose switch-off purge is running,
-	// so a second toggle does not start a second one over the same rows.
+	// purgeMu guards purgeInFlight (channels whose switch-off purge is
+	// running, so a second toggle does not start a second one over the same
+	// rows) and purgeRerun (a switch-off that arrived meanwhile).
 	purgeMu       sync.Mutex
 	purgeInFlight map[string]bool
+	purgeRerun    map[string]bool
 	onKeptPurged  func(channelID string)
 	// artMu guards artInFlight: channels whose art is being fetched, so a
 	// repeated Refresh does not queue the same two turns again.
@@ -350,6 +352,7 @@ func New(d Deps) http.Handler {
 		background:      d.Background,
 		onArt:           d.OnChannelArt,
 		purgeInFlight:   map[string]bool{},
+		purgeRerun:      map[string]bool{},
 		onKeptPurged:    d.OnKeptPurged,
 		artInFlight:     map[string]bool{},
 		resolveInFlight: map[string]bool{},

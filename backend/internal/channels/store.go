@@ -642,6 +642,25 @@ UPDATE channels SET auto_summary = ? WHERE id = ? RETURNING auto_summary`, on, c
 	return result, true, nil
 }
 
+// KeepReadsOff lists the channels whose keep_reads is off, for the boot pass
+// that finishes a switch-off purge a shutdown cut short.
+func (s *Store) KeepReadsOff() ([]string, error) {
+	rows, err := s.db.QueryContext(context.Background(), `SELECT id FROM channels WHERE keep_reads = 0`)
+	if err != nil {
+		return nil, fmt.Errorf("keep_reads off channels: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("keep_reads off channels: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // SetKeepReads turns "keep in Search after the file is gone" on or off for a
 // channel, returning the stored value. ok is false (with a nil error) when no
 // such channel exists. Only the flag: the purge an off starts is the handler's.
