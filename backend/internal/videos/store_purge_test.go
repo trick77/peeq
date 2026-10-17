@@ -2,6 +2,7 @@ package videos
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/trick77/peeq/internal/rag"
@@ -80,6 +81,9 @@ func TestPurge_settlesTheLedgerSoAScanNeverBringsItBack(t *testing.T) {
 		if err := s.Upsert(Video{ID: id, URL: "https://youtu.be/" + id, Title: "T " + id, ChannelID: "UC1"}); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := db.Exec(`UPDATE videos SET created_at = '2020-01-01 00:00:00' WHERE id = ?`, id); err != nil {
+			t.Fatal(err)
+		}
 		if err := s.Purge(id); err != nil {
 			t.Fatalf("purge %s: %v", id, err)
 		}
@@ -90,6 +94,24 @@ func TestPurge_settlesTheLedgerSoAScanNeverBringsItBack(t *testing.T) {
 		if state != "queued" {
 			t.Fatalf("%s ledger state = %q, want queued", id, state)
 		}
+	}
+	// The parked row no longer claims to be unavailable.
+	var reason string
+	var at sql.NullString
+	if err := db.QueryRow(`SELECT unavailable_reason, unavailable_at FROM channel_videos WHERE video_id = 'parked'`).Scan(&reason, &at); err != nil {
+		t.Fatal(err)
+	}
+	if reason != "" || at.Valid {
+		t.Fatalf("parked row kept unavailable_reason=%q unavailable_at=%v", reason, at)
+	}
+	// A delete is not a discovery: the written row is dated by when peeq
+	// first had the video.
+	var discovered string
+	if err := db.QueryRow(`SELECT discovered_at FROM channel_videos WHERE video_id = 'byurl'`).Scan(&discovered); err != nil {
+		t.Fatal(err)
+	}
+	if discovered != "2020-01-01 00:00:00" {
+		t.Fatalf("discovered_at = %q, want the video's created_at", discovered)
 	}
 }
 

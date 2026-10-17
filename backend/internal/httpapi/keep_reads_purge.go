@@ -40,65 +40,92 @@ func (s *server) handleKeepReadsImpact(w http.ResponseWriter, r *http.Request) {
 //
 // No Activity row: the log is for automatic work, and this is a click. The
 // channel page re-reads its counts instead.
-//
-// It stops as soon as the switch reads on again, so turning it back on halfway
-// keeps whatever was not reached yet. A read that fails also stops it: when in
-// doubt, keep.
-//
-// A switch-off that arrives while one is running is not dropped: the running
-// one may already have seen an on in between and be stopping. It asks for one
-// more pass instead, which the goroutine runs before it exits.
 func (s *server) purgeKeptAsync(channelID string) {
-	s.purgeMu.Lock()
-	if s.purgeInFlight[channelID] {
-		s.purgeRerun[channelID] = true
-		s.purgeMu.Unlock()
+	if s.claimPurge(channelID) {
+		go s.runPurge(channelID)
+	}
+}
+
+// resumeKeptPurges runs a switch-off purge for every channel whose keep_reads
+// is off, one channel after another. Started from New when Deps asks for it
+// (main.go does): a purge runs in the background of the request that turned
+// the switch off, so a shutdown can cut it short, and this finishes it. On a
+// channel with nothing kept it is one query.
+func (s *server) resumeKeptPurges() {
+	ids, err := s.channels.KeepReadsOff()
+	if err != nil {
+		slog.Error("keep reads purge: list channels failed", "err", err)
 		return
 	}
-	s.purgeInFlight[channelID] = true
-	s.purgeMu.Unlock()
-	base := s.background
-	if base == nil {
-		base = context.Background()
+	for _, id := range ids {
+		if s.purgeBase().Err() != nil {
+			return
+		}
+		if s.claimPurge(id) {
+			s.runPurge(id)
+		}
 	}
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("keep reads purge: recovered from panic", "channel_id", channelID, "panic", r)
-			}
+}
+
+// claimPurge marks a channel's purge as running and reports whether the caller
+// should run it. A switch-off that arrives while one is running is not
+// dropped: the running one may already have seen an on in between and be
+// stopping, so it is asked for one more pass instead.
+func (s *server) claimPurge(channelID string) bool {
+	s.purgeMu.Lock()
+	defer s.purgeMu.Unlock()
+	if s.purgeInFlight[channelID] {
+		s.purgeRerun[channelID] = true
+		return false
+	}
+	s.purgeInFlight[channelID] = true
+	return true
+}
+
+// runPurge purges until no further pass was asked for. Deciding "no rerun"
+// and releasing the claim happen under one lock: a claim arriving between the
+// two would otherwise set a rerun nobody reads.
+func (s *server) runPurge(channelID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("keep reads purge: recovered from panic", "channel_id", channelID, "panic", r)
 			s.purgeMu.Lock()
 			delete(s.purgeInFlight, channelID)
 			delete(s.purgeRerun, channelID)
 			s.purgeMu.Unlock()
-			if s.onKeptPurged != nil {
-				s.onKeptPurged(channelID)
-			}
-		}()
-		stillOff := func() bool {
-			if base.Err() != nil {
-				return false
-			}
-			c, err := s.channels.Get(channelID)
-			return err == nil && c != nil && !c.KeepReads
 		}
-		for {
-			PurgeKeptOnce(channelID, s.videos, stillOff)
-			s.purgeMu.Lock()
-			again := s.purgeRerun[channelID]
-			delete(s.purgeRerun, channelID)
-			s.purgeMu.Unlock()
-			if !again || base.Err() != nil {
-				return
-			}
+		if s.onKeptPurged != nil {
+			s.onKeptPurged(channelID)
 		}
 	}()
+	for {
+		s.purgeOnce(channelID)
+		s.purgeMu.Lock()
+		if s.purgeRerun[channelID] && s.purgeBase().Err() == nil {
+			delete(s.purgeRerun, channelID)
+			s.purgeMu.Unlock()
+			continue
+		}
+		delete(s.purgeInFlight, channelID)
+		delete(s.purgeRerun, channelID)
+		s.purgeMu.Unlock()
+		return
+	}
 }
 
-// PurgeKeptOnce runs one switch-off purge for a channel and logs what it did.
-// main.go calls it at boot for every channel whose switch is off, which is
-// what finishes a purge a shutdown or a failed write cut short.
-func PurgeKeptOnce(channelID string, vs *videos.Store, stillOff func() bool) {
-	done, err := vs.PurgeKept(channelID, stillOff)
+// purgeOnce runs one PurgeKept pass and logs what it did. It stops as soon as
+// the switch reads on again, so turning it back on halfway keeps whatever was
+// not reached yet; a read that fails also stops it: when in doubt, keep.
+func (s *server) purgeOnce(channelID string) {
+	base := s.purgeBase()
+	stillOff := func() bool {
+		if base.Err() != nil {
+			return false
+		}
+		c, err := s.channels.Get(channelID)
+		return err == nil && c != nil && !c.KeepReads
+	}
+	done, err := s.videos.PurgeKept(channelID, stillOff)
 	if err != nil {
 		slog.Error("keep reads purge failed", "channel_id", channelID,
 			"deleted", done.Deleted, "ignored", done.Ignored, "inbox", done.Inbox, "err", err)
@@ -108,4 +135,11 @@ func PurgeKeptOnce(channelID string, vs *videos.Store, stillOff func() bool) {
 		slog.Info("keep reads purge", "channel_id", channelID,
 			"deleted", done.Deleted, "ignored", done.Ignored, "inbox", done.Inbox)
 	}
+}
+
+func (s *server) purgeBase() context.Context {
+	if s.background == nil {
+		return context.Background()
+	}
+	return s.background
 }

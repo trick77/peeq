@@ -20,7 +20,10 @@ import (
 // when no downloaded videos row says otherwise — and after a purge there is no
 // row at all; a 'pending' one would sit in the New tab again. So the ledger
 // row is settled at 'queued' (approved, done with),
-// and written if the video never had one (added by URL or the extension). The
+// and written if the video never had one (added by URL or the extension),
+// dated by when peeq first had the video rather than now: discovered_at feeds
+// the channel's latest-video date and the dormancy check, and a delete is not
+// a discovery. The
 // inbox poster hangs off that ledger row rather than the videos row, so the
 // cascade misses it and it is deleted here.
 //
@@ -53,11 +56,13 @@ func (s *Store) purge(id string) (int, error) {
 	// does not exist is never purged in the first place (its keep_reads reads
 	// as on).
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO channel_videos (video_id, channel_id, title, url, state, decided_at)
-SELECT v.id, v.channel_id, v.title, v.url, 'queued', datetime('now')
+INSERT INTO channel_videos (video_id, channel_id, title, url, state, discovered_at, decided_at)
+SELECT v.id, v.channel_id, v.title, v.url, 'queued', v.created_at, datetime('now')
 FROM videos v JOIN channels c ON c.id = v.channel_id
 WHERE v.id = ?
-ON CONFLICT(video_id) DO UPDATE SET state = 'queued'
+ON CONFLICT(video_id) DO UPDATE SET
+    state = 'queued', decided_at = datetime('now'),
+    unavailable_reason = '', unavailable_at = NULL
 WHERE channel_videos.state IN ('unavailable', 'pending')`, id); err != nil {
 		return 0, fmt.Errorf("purge video %s: settle ledger: %w", id, err)
 	}
@@ -104,12 +109,15 @@ type keptVideo struct {
 // keptVideosQuery lists the channel's tombstoned and never-downloaded videos
 // with what the decision needs: the ledger state, the transcript source and
 // whether the video is indexed. It stays on idx_videos_channel_kept (0037);
-// see queryplan_test.go.
+// see queryplan_test.go. Not forced with INDEXED BY: that index is partial,
+// usable only while the status term here matches its WHERE exactly, and a
+// forced index that stops matching fails the query at runtime instead of
+// just planning worse — the plan test is the guard.
 const keptVideosQuery = `
 SELECT v.id, v.status, COALESCE(cv.state, ''),
        COALESCE((SELECT t.source FROM video_transcripts t WHERE t.video_id = v.id), ''),
        EXISTS (SELECT 1 FROM transcript_chunks c WHERE c.video_id = v.id)
-FROM videos v INDEXED BY idx_videos_channel_kept
+FROM videos v
 LEFT JOIN channel_videos cv ON cv.video_id = v.id
 WHERE v.channel_id = ? AND v.status IN ('tombstoned', 'new')`
 

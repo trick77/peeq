@@ -123,6 +123,10 @@ type Deps struct {
 	// OnKeptPurged fires when a keep_reads switch-off purge for a channel
 	// settles. Test-only, like OnChannelArt. nil in production.
 	OnKeptPurged func(channelID string)
+	// ResumeKeptPurges runs the switch-off purge again for every channel whose
+	// keep_reads is off, in the background, from New: it finishes a purge a
+	// shutdown cut short. main.go sets it; tests leave it off.
+	ResumeKeptPurges bool
 	// QueueThumbnail asks for an inbox poster to be fetched in the background
 	// (scan.Scheduler.QueueThumbnail) and reports whether it is on its way.
 	// Optional: when nil, a missing poster just stays the placeholder.
@@ -392,6 +396,10 @@ func New(d Deps) http.Handler {
 			Images:   s.images,
 			MediaDir: s.mediaDir,
 		}
+	}
+
+	if d.ResumeKeptPurges && s.channels != nil && s.videos != nil {
+		go s.resumeKeptPurges()
 	}
 
 	mux := http.NewServeMux()

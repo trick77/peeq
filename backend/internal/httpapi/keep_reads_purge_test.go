@@ -78,6 +78,76 @@ func TestKeepReadsOn_purgesNothing(t *testing.T) {
 	}
 }
 
+// seedOffChannelTomb writes a keep_reads-off channel holding one tombstone, the
+// state a purge cut short by a shutdown leaves behind.
+func seedOffChannelTomb(t *testing.T, deps Deps) {
+	t.Helper()
+	db := deps.Channels.DB()
+	if _, err := db.Exec(`INSERT INTO channels (id, name, added_at, keep_reads) VALUES ('UCk', 'k', '2026-01-01', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "tomb", URL: "u", ChannelID: "UCk"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Videos.Tombstone("tomb"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Boot finishes what a shutdown cut short: every channel that is off is
+// purged again.
+func TestResumeKeptPurges_finishesAPurgeAtBoot(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	seedOffChannelTomb(t, deps)
+	purged := make(chan string, 1)
+	deps.OnKeptPurged = func(id string) { purged <- id }
+	deps.ResumeKeptPurges = true
+	New(deps)
+	select {
+	case id := <-purged:
+		if id != "UCk" {
+			t.Fatalf("purged %q, want UCk", id)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("boot purge did not run")
+	}
+	if v, err := deps.Videos.Get("tomb"); err != nil || v != nil {
+		t.Fatalf("tomb = %+v err=%v after boot, want purged", v, err)
+	}
+}
+
+// A switch-off that arrives while a purge runs is not dropped: the claim says
+// rerun, and the running purge takes the extra pass before it lets go.
+func TestClaimPurge_overlappingOffAsksForARerun(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	seedOffChannelTomb(t, deps)
+	s := &server{
+		channels:      deps.Channels,
+		videos:        deps.Videos,
+		purgeInFlight: map[string]bool{},
+		purgeRerun:    map[string]bool{},
+	}
+	if !s.claimPurge("UCk") {
+		t.Fatal("first claim refused")
+	}
+	if s.claimPurge("UCk") {
+		t.Fatal("second claim granted while the first runs")
+	}
+	if !s.purgeRerun["UCk"] {
+		t.Fatal("overlapping off did not ask for a rerun")
+	}
+	s.runPurge("UCk")
+	if s.purgeInFlight["UCk"] || s.purgeRerun["UCk"] {
+		t.Fatalf("claim not released: inflight=%v rerun=%v", s.purgeInFlight["UCk"], s.purgeRerun["UCk"])
+	}
+	if v, err := deps.Videos.Get("tomb"); err != nil || v != nil {
+		t.Fatalf("tomb = %+v err=%v, want purged", v, err)
+	}
+	if !s.claimPurge("UCk") {
+		t.Fatal("claim refused after the purge let go")
+	}
+}
+
 func TestKeepReadsImpact_unknownChannel_404(t *testing.T) {
 	h := newChannelsTestServer(t, &testResolver{})
 	cookie := loginAndGetCookie(t, h)
