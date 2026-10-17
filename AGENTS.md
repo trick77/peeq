@@ -138,6 +138,5 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   CDN images (posters, channel art) too: `Runner.FetchImage`, never `media.FetchImageBytes`
   (guard test). A request handler never waits on image work: posters `scan.QueueThumbnail`,
   channel art a background goroutine (`storeChannelArtAsync`).
-- **Browser never loads a YouTube host** (`i.ytimg.com` etc.): images only via peeq endpoints; no
-  API response carries a remote image URL. Enforced by CSP `img-src 'self'` (`httpapi/csp.go`) and
-  `ui/src/noyoutubehosts.test.ts`. Signed ytimg URLs also expire → broken posters.
+- **Browser never loads a YouTube host**: images only via peeq endpoints, no remote image URL in
+  any API response. CSP `httpapi/csp.go` + `ui/src/noyoutubehosts.test.ts`.

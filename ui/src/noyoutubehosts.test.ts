@@ -17,27 +17,39 @@ function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name);
     if (statSync(path).isDirectory()) return sourceFiles(path);
-    if (!/\.(ts|tsx|css)$/.test(name) || /\.test\.tsx?$/.test(name)) return [];
+    if (!/\.(ts|tsx|css|html|webmanifest)$/.test(name)) return [];
+    if (/\.test\.tsx?$/.test(name)) return [];
     return [path];
   });
 }
 
-// withoutComments drops block comments (JSX `{/* */}` included) and line
-// comments, so a comment explaining the rule is not a hit. A `//` only starts a
-// comment at line start or after whitespace: the one in "https://" does not.
+// Everything the browser is handed: the app source, the HTML shell and the
+// static files copied verbatim into the build.
+const uiDir = resolve(srcDir, "..");
+const shipped = [
+  ...sourceFiles(srcDir),
+  join(uiDir, "index.html"),
+  ...sourceFiles(join(uiDir, "public")),
+];
+
+// withoutComments drops comments that stand on their own, so a comment
+// explaining the rule is not a hit: block comments starting a line (JSX
+// `{/* */}` included) and whole-line `//` comments. Deliberately nothing
+// after code on the same line — a `//` or `/*` there may sit inside a string
+// or template literal that really does build a YouTube URL.
 function withoutComments(source: string): string {
   return source
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/(^|\s)\/\/.*$/gm, "$1");
+    .replace(/^\s*\{?\/\*[\s\S]*?\*\/\}?/gm, "")
+    .replace(/^\s*\/\/.*$/gm, "");
 }
 
 describe("no YouTube image hosts", () => {
-  it("no shipped source file names one", () => {
-    const hits = sourceFiles(srcDir)
+  it("no shipped file names one", () => {
+    const hits = shipped
       .filter((file) =>
         FORBIDDEN.test(withoutComments(readFileSync(file, "utf8"))),
       )
-      .map((file) => relative(srcDir, file));
+      .map((file) => relative(uiDir, file));
     expect(hits).toEqual([]);
   });
 
@@ -54,19 +66,28 @@ describe("no YouTube image hosts", () => {
         ),
       ),
     ).toBe(true);
+    // A `//` inside a literal after code is not a comment.
+    expect(
+      FORBIDDEN.test(
+        withoutComments("const u = `${base} //i.ytimg.com/vi/${id}/0.jpg`;"),
+      ),
+    ).toBe(true);
   });
 
-  it("the dev server sends the same image policy as the Go server", () => {
+  it("the Vite servers send the same image policy as the Go server", () => {
     const goPolicy = /const imgSrcPolicy = "([^"]+)"/.exec(
       readFileSync(
         resolve(srcDir, "../../backend/internal/httpapi/csp.go"),
         "utf8",
       ),
     )?.[1];
-    const vitePolicy = /"Content-Security-Policy":\s*"([^"]+)"/.exec(
-      readFileSync(resolve(srcDir, "../vite.config.ts"), "utf8"),
-    )?.[1];
+    const vitePolicies = [
+      ...readFileSync(resolve(srcDir, "../vite.config.ts"), "utf8").matchAll(
+        /"Content-Security-Policy":\s*"([^"]+)"/g,
+      ),
+    ].map((m) => m[1]);
     expect(goPolicy).toBeTruthy();
-    expect(vitePolicy).toBe(goPolicy);
+    // server (make dev) and preview (vite preview of the build).
+    expect(vitePolicies).toEqual([goPolicy, goPolicy]);
   });
 });

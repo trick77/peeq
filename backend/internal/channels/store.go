@@ -815,22 +815,29 @@ func (s *Store) Stats(channelID, channelName string) (Stats, error) {
 		where = "(channel_id = ? OR (channel_id = '' AND channel_name = ?))"
 		args = []any{channelID, channelName}
 	}
-	ctx := context.Background()
-	row := s.db.QueryRowContext(ctx, `
+	// One statement, so both counts read the same snapshot: a sweep or an embed
+	// landing between two queries could show fewer searchable than archived.
+	row := s.db.QueryRowContext(context.Background(), statsQuery(where),
+		append(append([]any{}, args...), args...)...)
+
+	var st Stats
+	if err := row.Scan(&st.ArchivedCount, &st.RuntimeSeconds, &st.DiskBytes, &st.NewestPublishedAt, &st.IndexedCount); err != nil {
+		return Stats{}, fmt.Errorf("channel stats %s: %w", channelID, err)
+	}
+	return st, nil
+}
+
+// statsQuery is the header's single statement: the downloaded-only sums, plus
+// indexedCountQuery as a scalar subquery. where appears twice, so its args are
+// passed twice.
+func statsQuery(where string) string {
+	return `
 SELECT count(*),
        COALESCE(sum(duration_seconds), 0),
        COALESCE(sum(filesize_bytes), 0),
-       COALESCE(max(published_at), '')
-FROM videos WHERE status = 'downloaded' AND `+where, args...)
-
-	var st Stats
-	if err := row.Scan(&st.ArchivedCount, &st.RuntimeSeconds, &st.DiskBytes, &st.NewestPublishedAt); err != nil {
-		return Stats{}, fmt.Errorf("channel stats %s: %w", channelID, err)
-	}
-	if err := s.db.QueryRowContext(ctx, indexedCountQuery(where), args...).Scan(&st.IndexedCount); err != nil {
-		return Stats{}, fmt.Errorf("channel stats %s: indexed: %w", channelID, err)
-	}
-	return st, nil
+       COALESCE(max(published_at), ''),
+       (` + indexedCountQuery(where) + `)
+FROM videos WHERE status = 'downloaded' AND ` + where
 }
 
 // indexedCountQuery counts the channel's videos that have a search index,

@@ -13,9 +13,9 @@ import "net/http"
 // nothing else the SPA does (inline styles, same-origin media) is affected.
 const imgSrcPolicy = "img-src 'self' data: blob:"
 
-// withImagePolicy sets imgSrcPolicy on every response from next. It wraps the
-// handlers that serve HTML documents; CSP applies per document, so that is
-// where it has to be.
+// withImagePolicy sets imgSrcPolicy on every response from next. CSP only
+// takes effect on documents, but setting it everywhere means an HTML page from
+// a handler added later is covered without anyone remembering to wrap it.
 func withImagePolicy(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", imgSrcPolicy)

@@ -2,11 +2,11 @@
 -- index, whatever its status (channels.Store.Stats, indexedCountQuery).
 --
 -- It probes transcript_chunks by videos.id for each of the channel's rows,
--- tombstones included. Neither idx_videos_channel_id nor
--- idx_videos_channel_status carries id (videos is a rowid table; its TEXT
--- primary key is a separate autoindex), so without this the count reads every
--- row from the table, and a row keeps its small columns behind description and
--- analysis text: overflow pages per row on cold disks.
+-- tombstones included. idx_videos_channel_status (0032) does not carry id
+-- (videos is a rowid table; its TEXT primary key is a separate autoindex), so
+-- without this the count reads every row from the table, and a row keeps its
+-- small columns behind description and analysis text: overflow pages per row
+-- on cold disks.
 --
 -- channel_name sits between the two so the legacy fallback
 -- (channel_id = '' AND channel_name = ?) is a lookup on the same index rather

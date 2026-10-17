@@ -28,7 +28,10 @@ export default defineConfig({
     proxy: { "/api": "http://127.0.0.1:8080" },
     // Same image policy the Go server sends (backend/internal/httpapi/csp.go),
     // so a hotlinked YouTube image breaks under `make dev` too, not first in
-    // production. noyoutubehosts.test.ts keeps the two strings identical.
+    // production. noyoutubehosts.test.ts keeps these strings identical.
+    headers: { "Content-Security-Policy": "img-src 'self' data: blob:" },
+  },
+  preview: {
     headers: { "Content-Security-Policy": "img-src 'self' data: blob:" },
   },
   // Task 14: view tests (Library/Player/Settings) render components and

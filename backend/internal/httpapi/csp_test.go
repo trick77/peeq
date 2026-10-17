@@ -13,7 +13,7 @@ func TestSPA_imagesAreSameOriginOnly(t *testing.T) {
 	deps, _ := shareMetaDeps(t)
 	h := New(deps)
 
-	for _, path := range []string{"/", "/library", "/channels/UCa", "/s/no-such-token"} {
+	for _, path := range []string{"/", "/library", "/channels/UCa", "/s/no-such-token", "/api/pending"} {
 		rec := getPublic(t, h, path)
 		if got := rec.Header().Get("Content-Security-Policy"); got != imgSrcPolicy {
 			t.Fatalf("%s: Content-Security-Policy = %q, want %q", path, got, imgSrcPolicy)
