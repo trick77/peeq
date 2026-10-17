@@ -861,6 +861,21 @@ func TestThrottle_idleRunnerDoesNotSleepAtAll(t *testing.T) {
 	}
 }
 
+// An already-cancelled caller must lose to an already-due slot every time,
+// not half the time: a select over a fired timer and a done ctx picks at
+// random, so the ctx has to be checked first (kit run.Sleep from v0.17.2).
+// Pinned here because a kit bump that reorders it would only show up as a
+// flaky extra yt-dlp start after cancel.
+func TestDefaultSleep_cancelledContextAlwaysWins(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for i := 0; i < 200; i++ {
+		if err := defaultSleep(ctx, time.Nanosecond); !errors.Is(err, context.Canceled) {
+			t.Fatalf("defaultSleep(cancelled, 1ns) = %v on call %d, want context.Canceled", err, i)
+		}
+	}
+}
+
 // --- Start hook -------------------------------------------------------------
 
 // The hook exists so a caller can time out a RUNNING yt-dlp rather than a
