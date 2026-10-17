@@ -168,6 +168,8 @@ func keptFixture(t *testing.T) (*Store, *rag.Store) {
 		{"inboxbare", "UC1", StatusNew, "pending", TranscriptSourceCaption, false},
 		{"ondisk", "UC1", StatusDownloaded, "queued", TranscriptSourceDownload, true},
 		{"cancelled", "UC1", StatusNew, "queued", TranscriptSourceCaption, true},
+		// Back at 'new' with a downloaded transcript: never a kept read.
+		{"wasdownloaded", "UC1", StatusNew, "pending", TranscriptSourceDownload, true},
 		{"elsewhere", "UC2", StatusTombstoned, "queued", TranscriptSourceDownload, true},
 	} {
 		if _, err := db.Exec(`INSERT INTO channel_videos (video_id, channel_id, title, state) VALUES (?,?,'t',?)`, sd.id, sd.channel, sd.ledger); err != nil {
@@ -237,7 +239,7 @@ func TestPurgeKept_purgesKeptAndDropsInboxIndexOnly(t *testing.T) {
 	if has, err := rs.HasChunks(ctx, "inbox"); err != nil || has {
 		t.Fatalf("inbox HasChunks = %v err=%v, want false", has, err)
 	}
-	for _, id := range []string{"ondisk", "cancelled", "elsewhere", "inboxbare"} {
+	for _, id := range []string{"ondisk", "cancelled", "elsewhere", "inboxbare", "wasdownloaded"} {
 		if v, err := s.Get(id); err != nil || v == nil {
 			t.Fatalf("%s = %+v err=%v, want untouched", id, v, err)
 		}
@@ -277,5 +279,75 @@ func TestChannelKeepReads_missingChannelReadsAsOn(t *testing.T) {
 	}
 	if !got.ChannelKeepReads {
 		t.Fatal("ChannelKeepReads = false for a video with no channel row, want true")
+	}
+}
+
+func TestDropIndex_removesChunksAndClearsEmbedFields(t *testing.T) {
+	s, rs := keptFixture(t)
+	if err := s.DropIndex("ondisk"); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := rs.HasChunks(context.Background(), "ondisk"); err != nil || has {
+		t.Fatalf("HasChunks = %v err=%v, want false", has, err)
+	}
+	v, err := s.Get("ondisk")
+	if err != nil || v == nil || v.EmbedRev != 0 || v.EmbedModel != "" {
+		t.Fatalf("row = %+v err=%v, want embed fields cleared", v, err)
+	}
+	// A write that fails rolls the whole drop back.
+	if _, err := s.db.Exec(`CREATE TRIGGER no_embed BEFORE UPDATE OF embed_rev ON videos BEGIN SELECT RAISE(ABORT, 'forced'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DropIndex("cancelled"); err == nil {
+		t.Fatal("DropIndex succeeded through a failing write")
+	}
+	if has, _ := rs.HasChunks(context.Background(), "cancelled"); !has {
+		t.Fatal("a failed DropIndex still removed the chunks")
+	}
+}
+
+func TestChannelKeepReads_readsTheChannelAndMissingVideoIsOff(t *testing.T) {
+	s, _ := keptFixture(t)
+	if keep, err := s.ChannelKeepReads("tomb"); err != nil || keep {
+		t.Fatalf("UC1 video = %v err=%v, want off", keep, err)
+	}
+	if keep, err := s.ChannelKeepReads("nope"); err != nil || keep {
+		t.Fatalf("missing video = %v err=%v, want off", keep, err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE channels RENAME COLUMN keep_reads TO keep_reads_x`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ChannelKeepReads("tomb"); err == nil {
+		t.Fatal("want an error once the column is gone")
+	}
+}
+
+// A purge that cannot delete stops and reports it; what it did not reach stays.
+func TestPurgeKept_stopsOnAFailedPurge(t *testing.T) {
+	s, _ := keptFixture(t)
+	if _, err := s.db.Exec(`CREATE TRIGGER no_delete BEFORE DELETE ON videos BEGIN SELECT RAISE(ABORT, 'forced'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PurgeKept("UC1", func() bool { return true }); err == nil {
+		t.Fatal("PurgeKept succeeded through a failing delete")
+	}
+	if err := s.Purge("tomb"); err == nil {
+		t.Fatal("Purge succeeded through a failing delete")
+	}
+	if v, err := s.Get("tomb"); err != nil || v == nil {
+		t.Fatalf("tomb = %+v err=%v, want kept after a failed purge", v, err)
+	}
+}
+
+func TestKeptImpact_queryErrorIsReturned(t *testing.T) {
+	s, _ := keptFixture(t)
+	if _, err := s.db.Exec(`ALTER TABLE channel_videos RENAME COLUMN state TO state_x`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.KeptImpact("UC1"); err == nil {
+		t.Fatal("KeptImpact: want an error")
+	}
+	if _, err := s.PurgeKept("UC1", func() bool { return true }); err == nil {
+		t.Fatal("PurgeKept: want an error")
 	}
 }

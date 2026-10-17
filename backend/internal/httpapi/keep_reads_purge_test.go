@@ -168,3 +168,74 @@ func TestKeepReadsImpact_unknownChannel_404(t *testing.T) {
 		t.Fatalf("status = %d, want 404", rr.Code)
 	}
 }
+
+func TestKeepReadsImpact_errors(t *testing.T) {
+	t.Run("not configured", func(t *testing.T) {
+		deps := channelsTestDeps(t, &testResolver{})
+		deps.Channels = nil
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		if rr := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCk/keep-reads/impact", nil); rr.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503", rr.Code)
+		}
+	})
+	t.Run("channel read fails", func(t *testing.T) {
+		deps := channelsTestDeps(t, &testResolver{})
+		if _, err := deps.Channels.DB().Exec(`ALTER TABLE channels RENAME COLUMN subscriber_count TO subscriber_count_x`); err != nil {
+			t.Fatal(err)
+		}
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		if rr := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCk/keep-reads/impact", nil); rr.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500", rr.Code)
+		}
+	})
+	t.Run("count fails", func(t *testing.T) {
+		deps := channelsTestDeps(t, &testResolver{})
+		seedOffChannelTomb(t, deps)
+		if _, err := deps.Channels.DB().Exec(`ALTER TABLE channel_videos RENAME COLUMN state TO state_x`); err != nil {
+			t.Fatal(err)
+		}
+		h := New(deps)
+		cookie := loginAndGetCookie(t, h)
+		if rr := doReq(t, h, cookie, http.MethodGet, "/api/channels/UCk/keep-reads/impact", nil); rr.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500", rr.Code)
+		}
+	})
+}
+
+// A pass that fails is logged and lets go of the claim; one after shutdown
+// takes nothing.
+func TestPurgeOnce_failureAndShutdown(t *testing.T) {
+	deps := channelsTestDeps(t, &testResolver{})
+	seedOffChannelTomb(t, deps)
+	process, shutdown := context.WithCancel(context.Background())
+	s := &server{
+		channels:      deps.Channels,
+		videos:        deps.Videos,
+		background:    process,
+		purgeInFlight: map[string]bool{},
+		purgeRerun:    map[string]bool{},
+	}
+	shutdown()
+	s.purgeOnce("UCk")
+	if v, err := deps.Videos.Get("tomb"); err != nil || v == nil {
+		t.Fatalf("tomb = %+v err=%v, want kept after shutdown", v, err)
+	}
+	s.resumeKeptPurges(process)
+
+	s.background = context.Background()
+	if _, err := deps.Channels.DB().Exec(`CREATE TRIGGER no_delete BEFORE DELETE ON videos BEGIN SELECT RAISE(ABORT, 'forced'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if !s.claimPurge("UCk") {
+		t.Fatal("claim refused")
+	}
+	s.runPurge("UCk")
+	if s.purgeInFlight["UCk"] {
+		t.Fatal("a failed pass kept the claim")
+	}
+	if v, err := deps.Videos.Get("tomb"); err != nil || v == nil {
+		t.Fatalf("tomb = %+v err=%v, want kept after a failed pass", v, err)
+	}
+}

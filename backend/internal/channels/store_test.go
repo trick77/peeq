@@ -127,6 +127,12 @@ func TestKeepReadsOff_listsOnlyChannelsSwitchedOff(t *testing.T) {
 	if len(got) != 1 || got[0] != "UCoff" {
 		t.Fatalf("KeepReadsOff = %v, want [UCoff]", got)
 	}
+	if _, err := s.DB().Exec(`ALTER TABLE channels RENAME COLUMN keep_reads TO keep_reads_x`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.KeepReadsOff(); err == nil {
+		t.Fatal("want an error once the column is gone")
+	}
 }
 
 // TestList_excludesCacheOnlyRows asserts a channel row that exists only as a
