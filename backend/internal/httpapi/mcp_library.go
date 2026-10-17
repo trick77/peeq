@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -15,9 +16,12 @@ import (
 )
 
 // mcpLibrary is the MCP server's view of the library. It runs the same lanes,
-// fusion, grouping and channel resolution as the Search page, minus the
-// query-understanding call: an MCP client's model passes filters as
-// arguments, so there is nothing to extract.
+// fusion, grouping (groupHits) and channel resolution (resolveChannelsIn) as
+// the Search page, minus the query-understanding call: an MCP client's model
+// passes filters as arguments, so there is nothing to extract.
+//
+// Every store read takes the tool call's context, so the tool deadline bounds
+// it. The search lanes' sqlite reads do too (askLanes threads ctx).
 type mcpLibrary struct{ s *server }
 
 // mcpSuggestions is how many close channel names a miss offers.
@@ -26,38 +30,33 @@ const mcpSuggestions = 5
 var errMCPNotConfigured = errors.New("mcp: library store not configured")
 
 func (l mcpLibrary) Channels(ctx context.Context) ([]mcpserver.Channel, error) {
-	if l.s.channels == nil {
+	if l.s.channels == nil || l.s.videos == nil {
 		return nil, errMCPNotConfigured
 	}
-	items, err := l.s.channels.List("all")
+	chans, err := l.s.channels.Searchable(ctx)
 	if err != nil {
 		return nil, err
 	}
-	stats := map[string]*videos.ChannelStats{}
-	if l.s.videos != nil {
-		if stats, err = l.s.videos.ChannelCategoryStats(ctx); err != nil {
-			return nil, err
-		}
+	stats, err := l.s.videos.ChannelCategoryStats(ctx)
+	if err != nil {
+		return nil, err
 	}
-	out := make([]mcpserver.Channel, 0, len(items))
-	for _, it := range items {
-		if !it.Subscribed && !it.KeepReads {
-			continue
+	out := make([]mcpserver.Channel, 0, len(chans))
+	for _, c := range chans {
+		mc := mcpserver.Channel{
+			ID:          c.ID,
+			Name:        cmp.Or(c.Name, c.Handle, c.ID),
+			Handle:      c.Handle,
+			Description: c.Description,
+			Subscribed:  c.Subscribed,
+			KeepReads:   c.KeepReads,
 		}
-		c := mcpserver.Channel{
-			ID:          it.ID,
-			Name:        cmp.Or(it.Name, it.Handle, it.ID),
-			Handle:      it.Handle,
-			Description: it.Description,
-			Subscribed:  it.Subscribed,
-			KeepReads:   it.KeepReads,
+		if st := stats[c.ID]; st != nil {
+			mc.Videos = st.Videos
+			mc.TopCategories = toMCPCounts(st.Categories)
+			mc.TopYouTubeCategories = toMCPCounts(st.YouTube)
 		}
-		if st := stats[it.ID]; st != nil {
-			c.Videos = st.Videos
-			c.TopCategories = toMCPCounts(st.Categories)
-			c.TopYouTubeCategories = toMCPCounts(st.YouTube)
-		}
-		out = append(out, c)
+		out = append(out, mc)
 	}
 	return out, nil
 }
@@ -70,37 +69,61 @@ func toMCPCounts(cs []videos.CategoryCount) []mcpserver.CategoryCount {
 	return out
 }
 
-// ResolveChannel accepts a channel id as is, else runs the Ask resolver's
-// name/handle/typo ladder over the channels that have videos here.
-func (l mcpLibrary) ResolveChannel(_ context.Context, name string) (mcpserver.ChannelScope, error) {
-	if l.s.videos == nil {
+// ResolveChannel resolves against what list_channels shows (subscribed and
+// keep_reads channels, videos or not) plus every channel that has videos
+// here. A channel id is taken as is; anything else runs the Ask resolver's
+// name/handle/typo ladder.
+func (l mcpLibrary) ResolveChannel(ctx context.Context, name string) (mcpserver.ChannelScope, error) {
+	if l.s.channels == nil || l.s.videos == nil {
 		return mcpserver.ChannelScope{}, errMCPNotConfigured
 	}
-	dir, err := l.s.videos.ChannelDirectory()
+	listed, err := l.Channels(ctx)
 	if err != nil {
 		return mcpserver.ChannelScope{}, err
 	}
+	withVideos, err := l.s.videos.ChannelDirectoryCtx(ctx)
+	if err != nil {
+		return mcpserver.ChannelScope{}, err
+	}
+	videoCount := map[string]int{}
+	dir := make([]videos.ChannelRef, 0, len(listed)+len(withVideos))
+	seen := map[string]bool{}
+	for _, c := range listed {
+		dir = append(dir, videos.ChannelRef{ID: c.ID, Name: c.Name, Handle: c.Handle})
+		seen[c.ID] = true
+		videoCount[c.ID] = c.Videos
+	}
+	for _, c := range withVideos {
+		if c.ID != "" && seen[c.ID] {
+			continue
+		}
+		dir = append(dir, c)
+		videoCount[c.ID] = -1 // has videos, count not needed
+	}
+
 	want := strings.TrimSpace(name)
+	var res channelResolution
 	for _, c := range dir {
 		if c.ID != "" && c.ID == want {
-			return mcpserver.ChannelScope{IDs: []string{c.ID}, Matched: []string{c.Name}}, nil
+			res = channelResolution{IDs: []string{c.ID}, Matched: []string{c.Name}}
+			break
 		}
 	}
-	var scope mcpserver.ChannelScope
-	seen := map[string]bool{}
-	for _, m := range matchChannels(dir, want) {
-		if m.ID != "" {
-			scope.IDs = append(scope.IDs, m.ID)
-		} else {
-			scope.Names = append(scope.Names, m.Name)
-		}
-		if !seen[m.Name] {
-			seen[m.Name] = true
-			scope.Matched = append(scope.Matched, m.Name)
-		}
+	if !res.any() {
+		res = resolveChannelsIn(dir, []string{want})
 	}
+	scope := mcpserver.ChannelScope{IDs: res.IDs, Names: res.Names, Matched: res.Matched}
 	if !scope.Resolved() {
 		scope.Suggestions = closestChannels(dir, want, mcpSuggestions)
+		return scope, nil
+	}
+	// Name-only matches are legacy rows, which exist only because they have
+	// videos; an id match may be a channel nothing has been scanned for yet.
+	scope.NoVideos = len(res.Names) == 0
+	for _, id := range res.IDs {
+		if videoCount[id] != 0 {
+			scope.NoVideos = false
+		}
 	}
 	return scope, nil
 }
@@ -153,6 +176,9 @@ func editDistance(a, b string) int {
 	return prev[len(rb)]
 }
 
+// errSearchLanesFailed is both lanes failing: not an empty result.
+var errSearchLanesFailed = errors.New("mcp: keyword and semantic lanes both failed")
+
 func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpserver.SearchResult, error) {
 	s := l.s
 	if s.rag == nil || s.videos == nil {
@@ -180,34 +206,26 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 		lanes, diag := s.askLanes(ctx, q.Text, "", filter, nil)
 		hits = rag.FuseWeighted(lanes, searchCandidates)
 		diag.log(q.Text, hits)
+		// The lanes fail soft for Ask. Here an empty list must mean "nothing
+		// matches", so a deadline or both lanes failing is an error; only a
+		// lost semantic lane over a working keyword lane is the documented
+		// keyword-only degrade.
+		if err := ctx.Err(); err != nil {
+			return res, fmt.Errorf("mcp search: %w", err)
+		}
+		if diag.ftsFailed && !diag.semRaw.ran {
+			return res, errSearchLanesFailed
+		}
 		res.SemanticDegraded = !diag.semRaw.ran
 	}
 
-	byID, err := s.videos.GetMany(idsOf(hits, func(h rag.Hit) string { return h.VideoID }))
+	byID, err := s.videos.GetManyCtx(ctx, idsOf(hits, func(h rag.Hit) string { return h.VideoID }))
 	if err != nil {
 		return res, err
 	}
-	// The Search page's grouping: per-video cap, one hit per moment.
-	order := []string{}
-	groups := map[string]*searchResult{}
-	for _, h := range hits {
-		g, ok := groups[h.VideoID]
-		if !ok {
-			if len(order) >= q.Videos || byID[h.VideoID] == nil {
-				continue
-			}
-			g = &searchResult{}
-			groups[h.VideoID] = g
-			order = append(order, h.VideoID)
-		}
-		if len(g.Matches) >= maxMatchesPerVideo || !g.admits(h) {
-			continue
-		}
-		g.Matches = append(g.Matches, searchMatch{StartSeconds: h.StartSeconds, Snippet: matchSnippet(h), Kind: h.Kind})
-	}
-	for _, id := range order {
-		vh := mcpserver.VideoHits{Video: toMCPVideo(byID[id])}
-		for _, m := range groups[id].Matches {
+	for _, g := range groupHits(hits, byID, q.Videos, 0) {
+		vh := mcpserver.VideoHits{Video: toMCPVideo(byID[g.Video.ID])}
+		for _, m := range g.Matches {
 			vh.Matches = append(vh.Matches, mcpserver.Match{StartSeconds: m.StartSeconds, Kind: m.Kind, Snippet: m.Snippet})
 		}
 		res.Videos = append(res.Videos, vh)
@@ -215,11 +233,11 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 	return res, nil
 }
 
-func (l mcpLibrary) Video(_ context.Context, id string) (*mcpserver.Video, error) {
+func (l mcpLibrary) Video(ctx context.Context, id string) (*mcpserver.Video, error) {
 	if l.s.videos == nil {
 		return nil, errMCPNotConfigured
 	}
-	v, err := l.s.videos.Get(id)
+	v, err := l.s.videos.GetCtx(ctx, id)
 	if err != nil || v == nil {
 		return nil, err
 	}
@@ -243,21 +261,21 @@ func (l mcpLibrary) Video(_ context.Context, id string) (*mcpserver.Video, error
 		}
 	}
 	_ = json.Unmarshal([]byte(v.YTTags), &out.Tags)
-	if out.InDepth, err = l.s.videos.InDepth(id); err != nil {
+	if out.InDepth, err = l.s.videos.InDepthCtx(ctx, id); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func (l mcpLibrary) Transcript(_ context.Context, id string) (*mcpserver.Transcript, error) {
+func (l mcpLibrary) Transcript(ctx context.Context, id string) (*mcpserver.Transcript, error) {
 	if l.s.videos == nil {
 		return nil, errMCPNotConfigured
 	}
-	v, err := l.s.videos.Get(id)
+	v, err := l.s.videos.GetCtx(ctx, id)
 	if err != nil || v == nil {
 		return nil, err
 	}
-	t, err := l.s.videos.GetTranscript(id)
+	t, err := l.s.videos.GetTranscriptCtx(ctx, id)
 	if err != nil || t == nil {
 		return nil, err
 	}

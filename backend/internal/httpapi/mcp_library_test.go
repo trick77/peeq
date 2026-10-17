@@ -22,7 +22,7 @@ const mcpTestToken = "mcp-integration-token"
 
 // mcpFixture stands up the real handler over a seeded library: two subscribed
 // channels, three analysed videos, one transcript.
-func mcpFixture(t *testing.T, embedder SearchEmbedder) http.Handler {
+func mcpFixture(t *testing.T, embedder SearchEmbedder, mutate ...func(*Deps)) http.Handler {
 	t.Helper()
 	deps, db, ragStore := searchTestDepsWithStores(t)
 	deps.Channels = channels.New(db)
@@ -34,6 +34,7 @@ func mcpFixture(t *testing.T, embedder SearchEmbedder) http.Handler {
 	for _, c := range []channels.Channel{
 		{ID: "UCbikes", Name: "Bike Physics", Handle: "@bikephysics", Description: "Why bicycles behave."},
 		{ID: "UCcook", Name: "Kitchen Lab", Description: "Cooking, measured."},
+		{ID: "UCfresh", Name: "Fresh Start", Description: "Subscribed, nothing scanned yet."},
 	} {
 		if err := deps.Channels.Upsert(c); err != nil {
 			t.Fatal(err)
@@ -92,6 +93,9 @@ func mcpFixture(t *testing.T, embedder SearchEmbedder) http.Handler {
 	vtt := "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nhello riders\n\n00:01:05.000 --> 00:01:08.000\ntrail matters\n"
 	if err := deps.Videos.SetTranscript("bikeVideo01", videos.TranscriptSourceDownload, vtt); err != nil {
 		t.Fatal(err)
+	}
+	for _, m := range mutate {
+		m(&deps)
 	}
 	return New(deps)
 }
@@ -313,5 +317,55 @@ func TestMCP_searchDegradesToKeywordWhenEmbeddingFails(t *testing.T) {
 	text := mcpToolText(t, callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail"}))
 	if !strings.Contains(text, "keyword-only") || !strings.Contains(text, "bike") {
 		t.Errorf("text:\n%s", text)
+	}
+}
+
+// A broken vector lane over a working keyword lane is still the documented
+// keyword-only degrade.
+func TestMCP_searchDegradesWhenTheVectorLaneFails(t *testing.T) {
+	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, func(d *Deps) {
+		d.Rag = &failingRag{real: d.Rag, retrieve: errors.New("vec0 down")}
+	})
+	text := mcpToolText(t, callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail"}))
+	if !strings.Contains(text, "keyword-only") || !strings.Contains(text, "bike") {
+		t.Errorf("text:\n%s", text)
+	}
+}
+
+// Both lanes failing is a failure, not "no videos match".
+func TestMCP_searchFailsWhenBothLanesFail(t *testing.T) {
+	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, func(d *Deps) {
+		d.Rag = &failingRag{real: d.Rag, searchFTS: errors.New("fts down"), retrieve: errors.New("vec0 down")}
+	})
+	r := callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail"})
+	text := mcpToolText(t, r)
+	if r.Result["isError"] != true || !strings.Contains(text, "search failed") || strings.Contains(text, "No videos") {
+		t.Errorf("isError=%v text=%q", r.Result["isError"], text)
+	}
+}
+
+func TestMCP_searchFailsWhenEmbeddingAndKeywordFail(t *testing.T) {
+	h := mcpFixture(t, &fakeEmbedder{err: errors.New("embeddings are down")}, func(d *Deps) {
+		d.Rag = &failingRag{real: d.Rag, searchFTS: errors.New("fts down")}
+	})
+	r := callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail"})
+	if r.Result["isError"] != true {
+		t.Errorf("want a tool error, got %q", mcpToolText(t, r))
+	}
+}
+
+// A listed channel with nothing scanned yet resolves, and says it is empty.
+func TestMCP_searchInAChannelWithoutVideos(t *testing.T) {
+	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)})
+	list := mcpToolText(t, callMCPTool(t, h, "list_channels", map[string]any{}))
+	if !strings.Contains(list, "Fresh Start") {
+		t.Fatalf("list_channels lacks the empty channel:\n%s", list)
+	}
+	for _, name := range []string{"Fresh Start", "UCfresh", "fresh start"} {
+		r := callMCPTool(t, h, "search", map[string]any{"query": "bicycle", "channel": name})
+		text := mcpToolText(t, r)
+		if r.Result["isError"] == true || !strings.Contains(text, "No videos yet in Fresh Start") {
+			t.Errorf("%s: isError=%v text=%q", name, r.Result["isError"], text)
+		}
 	}
 }
