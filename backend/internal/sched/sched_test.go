@@ -1,43 +1,9 @@
 package sched
 
 import (
-	"context"
 	"testing"
 	"time"
 )
-
-func TestSleep_returnsFalseOnCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	start := time.Now()
-	if Sleep(ctx, time.Hour) {
-		t.Fatal("Sleep reported a completed wait on a cancelled context")
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("Sleep took %v; a cancelled context must return promptly", elapsed)
-	}
-}
-
-// TestSleep_zeroDurationStillReportsCancellation: a loop that computed a zero
-// delay must not keep going round after its context is done, which is why the
-// d <= 0 shortcut checks ctx rather than returning true outright.
-func TestSleep_zeroDurationStillReportsCancellation(t *testing.T) {
-	if !Sleep(context.Background(), 0) {
-		t.Fatal("Sleep(live ctx, 0) = false, want true")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if Sleep(ctx, 0) {
-		t.Fatal("Sleep(cancelled ctx, 0) = true; the loop would spin forever")
-	}
-}
-
-func TestSleep_completesTheWait(t *testing.T) {
-	if !Sleep(context.Background(), time.Millisecond) {
-		t.Fatal("Sleep reported cancellation on a live context")
-	}
-}
 
 func TestJitteredInterval_staysWithinItsWindow(t *testing.T) {
 	const base, jitter = 24 * time.Hour, 3 * time.Hour
@@ -152,17 +118,5 @@ func TestNextSlotAfter_degeneratePeriod(t *testing.T) {
 	anchor := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
 	if got := NextSlotAfter(anchor, 0, time.Hour); !got.Equal(anchor) {
 		t.Fatalf("got %v, want the anchor back", got)
-	}
-}
-
-// A cancelled context must lose to a timer that is already due: otherwise a
-// caller with a tiny wait proceeds after shutdown half the time.
-func TestSleep_cancelledContextAlwaysWins(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	for i := 0; i < 200; i++ {
-		if Sleep(ctx, time.Nanosecond) {
-			t.Fatal("Sleep reported a completed wait on a cancelled context")
-		}
 	}
 }

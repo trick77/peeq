@@ -15,21 +15,24 @@ jobs:
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      # Uncached: a go.sum-keyed cache would race the backend job's identical
+      # key, and miss golangci-lint (not in go.sum) anyway.
       - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache: false
-      # Pinned so CI runs the same version developers run locally. The family
-      # moved off v2.11 because its G706 log-injection check went red here on
-      # findings that did not reproduce locally; the linter version is a
-      # free-form input, so Dependabot cannot keep this honest.
-      - uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.13
-          working-directory: backend
+      # As ship check lints, until ship check is the gate: ship's config
+      # (peeq keeps no copy) at the kit tag go.mod requires, and ship's pinned
+      # golangci-lint built by go run, so it is built with go.mod's Go.
+      - name: golangci-lint
+        working-directory: backend
+        run: |
+          kit=$(go list -m -f '{{.Version}}' github.com/trick77/ship/kit)
+          curl -fsSL "https://raw.githubusercontent.com/trick77/ship/kit/$kit/internal/check/golangci.yaml" -o "$RUNNER_TEMP/golangci.yaml"
+          go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run -c "$RUNNER_TEMP/golangci.yaml" ./...
 
   backend:
     name: Backend (build + test)

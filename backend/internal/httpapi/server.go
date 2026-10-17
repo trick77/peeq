@@ -19,8 +19,8 @@ import (
 	"github.com/trick77/peeq/internal/media"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/settings"
-	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/sse"
 )
 
 // Deps are the dependencies needed to build the server.
@@ -85,7 +85,7 @@ type Deps struct {
 	Worker DownloadsWorker
 	// SSEHub fans out download progress/queue events to /api/downloads/stream
 	// subscribers. Optional: when nil, the stream endpoint returns 503.
-	SSEHub *sse.Hub
+	SSEHub *sse.Hub[Event]
 	// StreamAccess is notified on every /api/videos/{id}/stream request, so
 	// the retention sweeper's now-playing guard (Task 12) can tell a
 	// currently-playing video apart from a merely-eligible one. Optional:
@@ -272,7 +272,7 @@ type server struct {
 	mediaDir       string
 	runner         DownloadsRunner
 	worker         DownloadsWorker
-	sseHub         *sse.Hub
+	sseHub         *sse.Hub[Event]
 
 	streamAccess StreamAccessRecorder
 	ytdlp        YTDLPVersioner

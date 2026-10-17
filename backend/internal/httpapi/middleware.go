@@ -41,16 +41,11 @@ func (rec *statusRecorder) Write(b []byte) (int, error) {
 	return rec.ResponseWriter.Write(b)
 }
 
-// Flush forwards flushes so the SSE handlers (/api/downloads/stream) keep
-// working through the wrapper.
-func (rec *statusRecorder) Flush() {
-	if f, ok := rec.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
 // Unwrap exposes the underlying writer for http.ResponseController, which the
-// video range-streaming handler relies on.
+// video range-streaming handler and kit/sse rely on. statusRecorder has no
+// Flush of its own on purpose: kit/sse checks flushing through Unwrap, so a
+// base writer that cannot flush is refused before the 200 (ErrNoFlush), and a
+// failed flush reaches it as an error and ends the stream.
 func (rec *statusRecorder) Unwrap() http.ResponseWriter {
 	return rec.ResponseWriter
 }

@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/trick77/peeq/internal/sched"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/ship/kit/run"
 )
 
 const (
@@ -89,7 +89,7 @@ func (w *Worker) Run(ctx context.Context) {
 		if !w.pass(ctx) {
 			return
 		}
-		if !sched.Sleep(ctx, w.d.PollInterval) {
+		if !run.Sleep(ctx, w.d.PollInterval) {
 			return
 		}
 	}

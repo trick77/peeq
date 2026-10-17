@@ -5,7 +5,6 @@ package store
 import (
 	"database/sql"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +14,7 @@ import (
 	_ "github.com/asg017/sqlite-vec-go-bindings/ncruces"
 	// registers the "sqlite3" database/sql driver.
 	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/trick77/ship/kit/sqlitex"
 )
 
 // Pool bounds. maxConns is above anything one page load plus the background
@@ -28,12 +28,14 @@ const (
 // Open opens (creating if needed) the SQLite database at path and applies
 // PRAGMAs for safe concurrent use. Callers must run Migrate separately.
 func Open(path string) (*sql.DB, error) {
-	return open(path, 10*time.Second)
+	return open(path)
 }
 
-// open is Open with the busy timeout the tests shorten.
-func open(path string, busyTimeout time.Duration) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", dsn(path, busyTimeout))
+// open is Open with extra DSN parameters after kit's, e.g. the shorter
+// busy_timeout the tests set (ncruces applies pragmas in order, so a later
+// one wins).
+func open(path string, extra ...string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite3", dsn(path, extra...))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
@@ -52,7 +54,8 @@ func open(path string, busyTimeout time.Duration) (*sql.DB, error) {
 	return db, nil
 }
 
-// dsn builds the connection string. Every transaction is BEGIN IMMEDIATE
+// dsn builds the connection string: kit's sqlitex.DSN (busy timeout, WAL,
+// foreign keys) plus _txlock=immediate. Every transaction is BEGIN IMMEDIATE
 // (_txlock=immediate): every BeginTx in this tree is a write transaction,
 // and several read before they write (SetResume, the share-link store).
 // Under WAL a deferred BEGIN takes a read snapshot on the first SELECT and
@@ -64,11 +67,8 @@ func open(path string, busyTimeout time.Duration) (*sql.DB, error) {
 // outside a transaction are untouched, and a transaction that only reads
 // must say so — sql.TxOptions{ReadOnly: true} is the one case the driver
 // still opens deferred — or it will queue behind every writer for nothing.
-func dsn(path string, busyTimeout time.Duration) string {
-	return fmt.Sprintf(
-		"file:%s?_pragma=journal_mode(wal)&_pragma=busy_timeout(%d)&_pragma=foreign_keys(on)&_txlock=immediate",
-		url.PathEscape(path), busyTimeout.Milliseconds(),
-	)
+func dsn(path string, extra ...string) string {
+	return sqlitex.DSN(path, append([]string{"_txlock=immediate"}, extra...)...)
 }
 
 // VecLiteral encodes a float32 vector as the JSON-array text sqlite-vec

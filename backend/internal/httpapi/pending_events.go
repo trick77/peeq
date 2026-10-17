@@ -3,7 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 
-	"github.com/trick77/peeq/internal/sse"
+	"github.com/trick77/ship/kit/sse"
 )
 
 // PublishInboxChanged tells every open Inbox that a card changed or left, so
@@ -11,7 +11,7 @@ import (
 // is empty when the change spans many cards (a deleted channel). The one
 // definition of the "inbox" event: the handlers and the caption fetcher
 // (wired in main) both publish through it. A nil hub is a no-op.
-func PublishInboxChanged(hub *sse.Hub, videoID string) {
+func PublishInboxChanged(hub *sse.Hub[Event], videoID string) {
 	if hub == nil {
 		return
 	}
@@ -21,7 +21,7 @@ func PublishInboxChanged(hub *sse.Hub, videoID string) {
 	if err != nil {
 		return
 	}
-	hub.Publish("inbox", string(data))
+	hub.Publish(Event{Name: "inbox", Data: string(data)})
 }
 
 // publishInboxChanged is PublishInboxChanged on this server's hub. The tab

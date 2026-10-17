@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -95,9 +96,14 @@ func TestStatusRecorder_flushReachesTheUnderlyingWriter(t *testing.T) {
 	underlying := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
 	rec := &statusRecorder{ResponseWriter: underlying}
 
-	// When: the handler flushes, as sseHub does after every event.
-	rec.Flush()
-	rec.Flush()
+	// When: the handler flushes the way kit/sse does, through
+	// http.ResponseController, which follows Unwrap.
+	rc := http.NewResponseController(rec)
+	for range 2 {
+		if err := rc.Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+	}
 
 	// Then: the flush reached the underlying writer, not just statusRecorder.
 	if underlying.flushes != 2 {
@@ -108,11 +114,9 @@ func TestStatusRecorder_flushReachesTheUnderlyingWriter(t *testing.T) {
 func TestStatusRecorder_unwrapReturnsTheUnderlyingWriter(t *testing.T) {
 	// Given: a statusRecorder wrapping an httptest recorder, simulating how
 	// logging() wraps the mux in front of the range-streaming video handler.
-	// Note: statusRecorder itself implements http.Flusher, so
-	// http.ResponseController.Flush() would short-circuit there and never
-	// exercise Unwrap — asserting on Unwrap() directly is the only way to
-	// prove it returns the writer http.ResponseController actually needs for
-	// capabilities statusRecorder doesn't forward itself (e.g. http.Hijacker).
+	// Asserting on Unwrap() directly proves it returns the writer
+	// http.ResponseController needs for every capability statusRecorder does
+	// not implement itself (Flush, http.Hijacker, write deadlines).
 	underlying := httptest.NewRecorder()
 	rec := &statusRecorder{ResponseWriter: underlying}
 
@@ -256,5 +260,19 @@ func TestRecovery_turnsPanicsInto500AndLogsThem(t *testing.T) {
 	}
 	if !strings.Contains(out, "stack=") {
 		t.Fatalf("no stack trace captured: %s", out)
+	}
+}
+
+// failingFlusher is a writer whose flush fails, as one to a client that left.
+type failingFlusher struct{ *httptest.ResponseRecorder }
+
+func (failingFlusher) FlushError() error { return io.ErrClosedPipe }
+
+// kit/sse learns a reader left from a failed flush; the wrapper must not
+// swallow the error.
+func TestStatusRecorder_flushErrorReachesResponseController(t *testing.T) {
+	rec := &statusRecorder{ResponseWriter: failingFlusher{httptest.NewRecorder()}}
+	if err := http.NewResponseController(rec).Flush(); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("Flush err = %v, want %v", err, io.ErrClosedPipe)
 	}
 }

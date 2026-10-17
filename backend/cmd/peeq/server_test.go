@@ -37,7 +37,7 @@ func TestNewServerSetsHeaderAndIdleTimeouts(t *testing.T) {
 func TestNewServerLeavesStreamingTimeoutsUnset(t *testing.T) {
 	srv := newServer(":9999", http.NewServeMux())
 
-	// WriteTimeout would truncate the text/event-stream responses internal/sse
+	// WriteTimeout would truncate the text/event-stream responses kit/sse
 	// writes.
 	if srv.WriteTimeout != 0 {
 		t.Errorf("WriteTimeout = %v, want 0: it would cut off the SSE stream", srv.WriteTimeout)

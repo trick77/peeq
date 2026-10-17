@@ -6,14 +6,14 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/channelvideos"
-	"github.com/trick77/peeq/internal/sse"
+	"github.com/trick77/ship/kit/sse"
 )
 
 // TestPending_publishesInboxEvent asserts every Inbox decision tells the other
 // open tabs: download, ignore and retry-captions each publish one "inbox" event
 // naming the video, so a second browser drops or refreshes the card live.
 func TestPending_publishesInboxEvent(t *testing.T) {
-	hub := sse.NewHub()
+	hub := sse.NewHub[Event](sse.HubOptions{})
 	h := newPendingTestServerWith(t, func(d *Deps) { d.SSEHub = hub })
 	h.seedChannel("UC1")
 	for _, id := range []string{"p1", "p2"} {
@@ -23,7 +23,7 @@ func TestPending_publishesInboxEvent(t *testing.T) {
 	}
 	seedGaveUp(t, h, "p3")
 
-	ch, unsubscribe := hub.Subscribe()
+	ch, unsubscribe, _ := hub.Subscribe("")
 	defer unsubscribe()
 
 	for _, c := range []struct{ path, id string }{
@@ -48,13 +48,13 @@ func TestPending_publishesInboxEvent(t *testing.T) {
 // TestChannelDelete_publishesInboxEvent: deleting a channel cascades its
 // pending cards away, so every open Inbox has to drop them.
 func TestChannelDelete_publishesInboxEvent(t *testing.T) {
-	hub := sse.NewHub()
+	hub := sse.NewHub[Event](sse.HubOptions{})
 	h := newPendingTestServerWith(t, func(d *Deps) { d.SSEHub = hub })
 	h.seedChannel("UC1")
 	if err := h.channels.MarkAdded("UC1", "2026-01-01 00:00:00"); err != nil {
 		t.Fatalf("mark added: %v", err)
 	}
-	ch, unsubscribe := hub.Subscribe()
+	ch, unsubscribe, _ := hub.Subscribe("")
 	defer unsubscribe()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/channels/UC1", nil)
@@ -77,9 +77,9 @@ func TestChannelDelete_publishesInboxEvent(t *testing.T) {
 // TestPending_failedDecisionPublishesNothing: a 404 changed nothing, so it must
 // not send every open Inbox off to refetch.
 func TestPending_failedDecisionPublishesNothing(t *testing.T) {
-	hub := sse.NewHub()
+	hub := sse.NewHub[Event](sse.HubOptions{})
 	h := newPendingTestServerWith(t, func(d *Deps) { d.SSEHub = hub })
-	ch, unsubscribe := hub.Subscribe()
+	ch, unsubscribe, _ := hub.Subscribe("")
 	defer unsubscribe()
 
 	if rr := postJSON(t, h, "/api/pending/nope/ignore", nil); rr.Code != http.StatusNotFound {

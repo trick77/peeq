@@ -18,9 +18,9 @@ import (
 	"github.com/trick77/peeq/internal/channelvideos"
 	"github.com/trick77/peeq/internal/jobs"
 	"github.com/trick77/peeq/internal/settings"
-	"github.com/trick77/peeq/internal/sse"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/peeq/internal/ytdlp"
+	"github.com/trick77/ship/kit/sse"
 )
 
 // fakeWorker is a DownloadsWorker whose Resume calls are counted and whose
@@ -391,7 +391,7 @@ func TestDownloads_cancelUnknownJob_404(t *testing.T) {
 // connection actually being torn down when the handler returns.
 func TestDownloadsStream_hubCloseReturnsPromptly(t *testing.T) {
 	deps := downloadsTestDeps(t, &fakeDownloadsRunner{})
-	hub := sse.NewHub()
+	hub := sse.NewHub[Event](sse.HubOptions{})
 	deps.SSEHub = hub
 	h := New(deps)
 	sessionCookie := loginAndGetCookie(t, h)
@@ -413,6 +413,9 @@ func TestDownloadsStream_hubCloseReturnsPromptly(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("stream status = %d, want 200", resp.StatusCode)
 	}
+	if ct, cc := resp.Header.Get("Content-Type"), resp.Header.Get("Cache-Control"); ct != "text/event-stream" || cc != "no-store" {
+		t.Fatalf("Content-Type = %q, Cache-Control = %q; want text/event-stream, no-store", ct, cc)
+	}
 
 	streamDone := make(chan struct{})
 	go func() {
@@ -433,6 +436,31 @@ func TestDownloadsStream_hubCloseReturnsPromptly(t *testing.T) {
 		// client for its full 10s timeout.
 	case <-time.After(2 * time.Second):
 		t.Fatal("stream handler did not return within 2s of hub.Close(); would block graceful shutdown")
+	}
+}
+
+// A closed hub (shutdown under way) refuses the subscription, and the refusal
+// is a 503 with a Retry-After, never a 200 stream that nothing will feed.
+func TestDownloadsStream_closedHubRefusesWith503(t *testing.T) {
+	deps := downloadsTestDeps(t, &fakeDownloadsRunner{})
+	hub := sse.NewHub[Event](sse.HubOptions{})
+	hub.Close()
+	deps.SSEHub = hub
+	h := New(deps)
+	sessionCookie := loginAndGetCookie(t, h)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/downloads/stream", nil)
+	req.AddCookie(sessionCookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatal("503 without Retry-After")
+	}
+	if ct := rec.Header().Get("Content-Type"); ct == "text/event-stream" {
+		t.Fatal("refusal was sent as an event stream")
 	}
 }
 
@@ -923,7 +951,7 @@ func TestDownloadsStream_noHubConfigured_503(t *testing.T) {
 // This exercises the r.Context().Done() case of the handler's select loop.
 func TestDownloadsStream_clientDisconnectReturnsPromptly(t *testing.T) {
 	deps := downloadsTestDeps(t, &fakeDownloadsRunner{})
-	hub := sse.NewHub()
+	hub := sse.NewHub[Event](sse.HubOptions{})
 	deps.SSEHub = hub
 	h := New(deps)
 	sessionCookie := loginAndGetCookie(t, h)
@@ -975,7 +1003,7 @@ func TestDownloadsStream_clientDisconnectReturnsPromptly(t *testing.T) {
 	// panic — a leaked, never-unsubscribed channel would still be safe here
 	// since Publish is non-blocking, so this is a smoke check that the
 	// handler path completed rather than a strict leak assertion.
-	hub.Publish("noop", "{}")
+	hub.Publish(Event{Name: "noop", Data: "{}"})
 }
 
 // TestDownloads_requireAuth asserts every downloads route is behind

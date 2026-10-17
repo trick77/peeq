@@ -11,6 +11,7 @@ import (
 	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/ytdlp"
 	"github.com/trick77/peeq/internal/ytgate"
+	"github.com/trick77/ship/kit/run"
 )
 
 const (
@@ -339,5 +340,5 @@ func scanSlotOffset(count int) time.Duration {
 
 // sleep waits d, returning false if ctx was cancelled first.
 func (w *Worker) sleep(ctx context.Context, d time.Duration) bool {
-	return sched.Sleep(ctx, d)
+	return run.Sleep(ctx, d)
 }
