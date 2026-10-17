@@ -486,7 +486,7 @@ func TestListChannels(t *testing.T) {
 			TopYouTubeCategories: []CategoryCount{{"Education", 40}}},
 		{ID: "UCX", Name: "Other", Subscribed: true, Videos: 3},
 	}}
-	text := toolText(t, callTool(t, lib, "list_channels", map[string]any{}))
+	text := toolText(t, callTool(t, lib, "list_youtube_channels", map[string]any{}))
 	for _, want := range []string{
 		"Veritasium (@veritasium)", "id UCV", "videos: 42", "science (30), engineering (8)",
 		"youtube: Education (40)", "An element of truth.", "Other", "caption-only reads kept",

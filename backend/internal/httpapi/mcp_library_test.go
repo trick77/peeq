@@ -312,11 +312,11 @@ func TestMCP_endToEnd(t *testing.T) {
 		t.Errorf("get_transcript:\n%s", text)
 	}
 
-	text = mcpToolText(t, callMCPTool(t, h, "list_channels", map[string]any{}))
+	text = mcpToolText(t, callMCPTool(t, h, "list_youtube_channels", map[string]any{}))
 	for _, want := range []string{"Bike Physics (@bikephysics) · id UCbikes · videos: 2 · caption-only reads kept",
 		"categories: engineering (1), science (1)", "youtube: Education (1), Science & Technology (1)", "Kitchen Lab"} {
 		if !strings.Contains(text, want) {
-			t.Errorf("list_channels lacks %q\n---\n%s", want, text)
+			t.Errorf("list_youtube_channels lacks %q\n---\n%s", want, text)
 		}
 	}
 }
@@ -447,9 +447,9 @@ func TestMCP_channelResolvesByAnOldVideoName(t *testing.T) {
 // A listed channel with nothing scanned yet resolves, and says it is empty.
 func TestMCP_searchInAChannelWithoutVideos(t *testing.T) {
 	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)})
-	list := mcpToolText(t, callMCPTool(t, h, "list_channels", map[string]any{}))
+	list := mcpToolText(t, callMCPTool(t, h, "list_youtube_channels", map[string]any{}))
 	if !strings.Contains(list, "Fresh Start") {
-		t.Fatalf("list_channels lacks the empty channel:\n%s", list)
+		t.Fatalf("list_youtube_channels lacks the empty channel:\n%s", list)
 	}
 	for _, name := range []string{"Fresh Start", "UCfresh", "fresh start"} {
 		r := callMCPTool(t, h, "search", map[string]any{"query": "bicycle", "channel": name})

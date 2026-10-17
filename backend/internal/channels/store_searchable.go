@@ -6,7 +6,7 @@ import (
 )
 
 // SearchableChannel is a channel whose videos the MCP server offers: the
-// narrow projection the channel hint and list_channels read.
+// narrow projection the channel hint and list_youtube_channels read.
 type SearchableChannel struct {
 	ID          string
 	Handle      string

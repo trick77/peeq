@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// channelDescriptionRunes trims a description in list_channels.
+// channelDescriptionRunes trims a description in list_youtube_channels.
 const channelDescriptionRunes = 240
 
 func runListChannels(ctx context.Context, h *handler, raw json.RawMessage) toolResult {

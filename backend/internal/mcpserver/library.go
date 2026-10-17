@@ -31,7 +31,7 @@ type Library interface {
 	Transcript(ctx context.Context, id string) (*Transcript, error)
 }
 
-// Channel is one row of list_channels and of the auto-search hint.
+// Channel is one row of list_youtube_channels and of the auto-search hint.
 type Channel struct {
 	ID          string
 	Name        string

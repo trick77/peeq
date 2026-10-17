@@ -45,7 +45,7 @@ type tool struct {
 }
 
 // toolOrder is the deterministic tools/list order.
-var toolOrder = []string{"search", "get_video", "get_transcript", "list_channels"}
+var toolOrder = []string{"search", "get_video", "get_transcript", "list_youtube_channels"}
 
 // tools is the static registry. It reads nothing, so looking a tool up for a
 // call costs no query; only toolDefs adds the per-request channel hint.
@@ -83,8 +83,8 @@ var tools = map[string]tool{
 		}, "id"),
 		run: runGetTranscript,
 	},
-	"list_channels": {
-		name:  "list_channels",
+	"list_youtube_channels": {
+		name:  "list_youtube_channels",
 		title: "List peeq channels",
 		description: "List the channels in peeq: subscriptions plus channels whose caption-only reads are kept, " +
 			"with description, video count and top peeq and YouTube categories. Use it to find the right " +

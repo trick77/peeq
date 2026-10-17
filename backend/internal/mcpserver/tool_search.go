@@ -86,7 +86,7 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) toolResult 
 			if len(scope.Suggestions) > 0 {
 				msg += " Closest: " + strings.Join(scope.Suggestions, ", ") + "."
 			}
-			return errorResult(msg + " Call list_channels for every channel, or search without a channel.")
+			return errorResult(msg + " Call list_youtube_channels for every channel, or search without a channel.")
 		}
 		if scope.NoVideos {
 			return toolResult{

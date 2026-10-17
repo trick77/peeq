@@ -142,7 +142,7 @@ func TestLegacy_ping(t *testing.T) {
 func TestLegacy_toolsListHasNoModernFields(t *testing.T) {
 	h := newTestHandler(&fakeLibrary{})
 	r := legacyCall(t, h, "tools/list", nil)
-	if got := toolNames(r); strings.Join(got, ",") != "search,get_video,get_transcript,list_channels" {
+	if got := toolNames(r); strings.Join(got, ",") != "search,get_video,get_transcript,list_youtube_channels" {
 		t.Errorf("tools = %v", got)
 	}
 	for _, k := range []string{"resultType", "ttlMs", "cacheScope"} {
@@ -191,7 +191,7 @@ func TestModern_toolsListIsCacheable(t *testing.T) {
 		t.Errorf("result = %v", res)
 	}
 	assertServerInfo(t, res)
-	if got := toolNames(r); strings.Join(got, ",") != "search,get_video,get_transcript,list_channels" {
+	if got := toolNames(r); strings.Join(got, ",") != "search,get_video,get_transcript,list_youtube_channels" {
 		t.Errorf("tools = %v", got)
 	}
 }
@@ -233,12 +233,12 @@ func TestModern_versionHeaderWithoutMetaIsAMismatch(t *testing.T) {
 
 func TestModern_base64NameHeaderIsDecoded(t *testing.T) {
 	h := newTestHandler(&fakeLibrary{channels: []Channel{{ID: "UC1", Name: "A"}}})
-	params := map[string]any{"name": "list_channels", "arguments": map[string]any{}, "_meta": modernMeta()}
+	params := map[string]any{"name": "list_youtube_channels", "arguments": map[string]any{}, "_meta": modernMeta()}
 	raw, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params})
 	r := post(t, h, raw, map[string]string{
 		"MCP-Protocol-Version": ModernProtocolVersion,
 		"Mcp-Method":           "tools/call",
-		"Mcp-Name":             "=?base64?" + base64.StdEncoding.EncodeToString([]byte("list_channels")) + "?=",
+		"Mcp-Name":             "=?base64?" + base64.StdEncoding.EncodeToString([]byte("list_youtube_channels")) + "?=",
 	})
 	if r.status != http.StatusOK || r.body.Error != nil {
 		t.Fatalf("status %d body %s", r.status, r.raw)
@@ -285,7 +285,7 @@ func TestModern_unknownToolIsInvalidParamsOn200(t *testing.T) {
 
 func TestModern_toolCallResultShape(t *testing.T) {
 	h := newTestHandler(&fakeLibrary{channels: []Channel{{ID: "UC1", Name: "A", Subscribed: true}}})
-	r := modernCall(t, h, "tools/call", map[string]any{"name": "list_channels", "arguments": map[string]any{}})
+	r := modernCall(t, h, "tools/call", map[string]any{"name": "list_youtube_channels", "arguments": map[string]any{}})
 	if r.body.Result["resultType"] != "complete" {
 		t.Errorf("resultType = %v", r.body.Result["resultType"])
 	}
