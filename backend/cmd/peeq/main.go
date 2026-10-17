@@ -100,6 +100,18 @@ func run() error {
 		}
 	}
 
+	// Sign-in before the database: a provider that cannot be reached, or a
+	// config it refuses, stops the boot before any migration has run (0038
+	// drops tables, and a boot that dies after it cannot be rolled back
+	// without a restore). Discovery is bounded, so a blackholed provider
+	// fails the boot instead of hanging it before anything listens.
+	authCtx, cancelAuth := context.WithTimeout(context.Background(), 30*time.Second)
+	oidc, sessions, devClaims, err := newAuth(authCtx, cfg)
+	cancelAuth()
+	if err != nil {
+		return err
+	}
+
 	db, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return err
@@ -119,10 +131,6 @@ func run() error {
 		return fmt.Errorf("database schema is stale (missing Phase-2 tables): %w; recreate it with `rm ./data/peeq.db*` and restart", err)
 	}
 
-	oidc, sessions, devClaims, err := newAuth(context.Background(), cfg)
-	if err != nil {
-		return err
-	}
 	settingsStore := settings.New(db)
 	playbackStore := playback.New(db)
 	jobsStore := jobs.New(db)

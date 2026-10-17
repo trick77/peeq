@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"errors"
 	"log/slog"
 	"net/http"
 
@@ -42,11 +41,7 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		// (provider denied, bad state, bad nonce, code exchange rejected, token
 		// verification failed) are otherwise indistinguishable from the
 		// outside, which makes a misconfigured provider undebuggable.
-		attrs := []any{"err", logx.RedactErr(err)}
-		if errors.Is(err, auth.ErrNotInGroup) {
-			attrs = append(attrs, "user", claims.Username())
-		}
-		slog.Warn("oidc callback failed", attrs...)
+		slog.Warn("oidc callback failed", "err", logx.RedactErr(err))
 		http.Redirect(w, r, "/?auth_error=oidc_callback_failed", http.StatusFound)
 		return
 	}
@@ -69,6 +64,8 @@ func (s *server) issueSession(w http.ResponseWriter, r *http.Request, claims aut
 // handleAuthLogout clears the session cookie. That is all a logout can do: the
 // session lives in the cookie, so a copy taken before stays valid until it
 // expires (BACKEND_SESSION_TTL); rotating BACKEND_SESSION_SECRET ends them all.
+// Not behind requireAuth: clearing needs no valid session, and a dead one (a
+// pre-0038 token, a rotated key) must still be clearable.
 func (s *server) handleAuthLogout(w http.ResponseWriter, _ *http.Request) {
 	if s.sessions == nil {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "auth is not configured")

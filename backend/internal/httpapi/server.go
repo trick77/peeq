@@ -418,7 +418,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/auth/login", s.handleAuthLogin)
 	tokenRoutes, streamRoutes := limiter(tokenRouteLimit), limiter(streamRouteLimit)
 	mux.Handle("GET /api/auth/callback", limiter(callbackLimit)(http.HandlerFunc(s.handleAuthCallback)))
-	mux.Handle("GET /api/auth/logout", s.requireAuth(http.HandlerFunc(s.handleAuthLogout)))
+	mux.HandleFunc("GET /api/auth/logout", s.handleAuthLogout)
 	mux.Handle("GET /api/auth/me", s.requireAuth(http.HandlerFunc(s.handleAuthMe)))
 	mux.Handle("GET /api/videos", s.requireAuth(http.HandlerFunc(s.handleListVideos)))
 	mux.Handle("GET /api/videos/counts", s.requireAuth(http.HandlerFunc(s.handleVideoCounts)))
@@ -546,19 +546,16 @@ func New(d Deps) http.Handler {
 	))
 }
 
-// requireAuth wraps next with session authentication (kit/auth's Guard, no
-// group: peeq is single-user). The refusals answer peeq's JSON error, which
-// the SPA reads. If no sessions are configured at all (a wiring bug, not a
-// supported mode) requests are rejected rather than let through
-// unauthenticated — requireAuth must never fail open.
+// requireAuth wraps next with session authentication (kit/auth's Require, no
+// group: peeq is single-user, so the only refusal is a 401). It answers peeq's
+// JSON error, which the SPA reads. If no sessions are configured at all (a
+// wiring bug, not a supported mode) requests are rejected rather than let
+// through unauthenticated — requireAuth must never fail open.
 func (s *server) requireAuth(next http.Handler) http.Handler {
 	if s.sessions == nil {
 		return unauthorized
 	}
-	forbidden := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		httpx.WriteError(w, http.StatusForbidden, "forbidden")
-	})
-	return s.sessions.Guard("", unauthorized, forbidden)(next)
+	return s.sessions.Require("", unauthorized)(next)
 }
 
 var unauthorized = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

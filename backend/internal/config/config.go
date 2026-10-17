@@ -226,7 +226,7 @@ func load(lookup func(string) string) (Config, error) {
 				r.Fail("%s is required when BACKEND_AUTH_MODE=oidc", v.name)
 			}
 		}
-		if len(cfg.SessionSecret) < minSessionSecret {
+		if cfg.SessionSecret == "" {
 			r.Fail("BACKEND_SESSION_SECRET is required when BACKEND_AUTH_MODE=oidc, at least %d characters (openssl rand -base64 48)", minSessionSecret)
 		}
 	case AuthModeDev:

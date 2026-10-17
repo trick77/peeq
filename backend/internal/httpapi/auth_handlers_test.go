@@ -61,6 +61,13 @@ func TestAuthSession_meLogoutAndForgery(t *testing.T) {
 		t.Fatalf("logout = %d, cookie %+v; want the session cookie expired", rec.Code, cleared)
 	}
 
+	// A dead cookie (a pre-0038 opaque token) is no session, and logout still clears it.
+	stale := &http.Cookie{Name: SessionCookie, Value: "opaque-token-from-the-sessions-table"}
+	rec = doReq(t, h, stale, http.MethodGet, "/api/auth/logout", nil)
+	if c := rec.Result().Cookies(); rec.Code != http.StatusOK || len(c) != 1 || c[0].MaxAge >= 0 {
+		t.Fatalf("logout with a dead cookie = %d, cookies %v; want it cleared", rec.Code, c)
+	}
+
 	forged := &http.Cookie{Name: SessionCookie, Value: cookie.Value[:strings.LastIndex(cookie.Value, ".")] + ".forged"}
 	if rec := doReq(t, h, forged, http.MethodGet, "/api/auth/me", nil); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("/me with a forged signature = %d, want 401", rec.Code)
