@@ -71,8 +71,13 @@ ON CONFLICT(video_id) DO UPDATE SET
 // video has none — the only "missing" case there is: the text is either in the
 // row or it does not exist.
 func (s *Store) GetTranscript(id string) (*Transcript, error) {
+	return s.GetTranscriptCtx(context.Background(), id)
+}
+
+// GetTranscriptCtx is GetTranscript bounded by ctx.
+func (s *Store) GetTranscriptCtx(ctx context.Context, id string) (*Transcript, error) {
 	var t Transcript
-	err := s.db.QueryRowContext(context.Background(),
+	err := s.db.QueryRowContext(ctx,
 		`SELECT source, vtt, updated_at FROM video_transcripts WHERE video_id = ?`, id,
 	).Scan(&t.Source, &t.VTT, &t.UpdatedAt)
 	if err == sql.ErrNoRows {

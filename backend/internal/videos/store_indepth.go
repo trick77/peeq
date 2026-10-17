@@ -23,9 +23,12 @@ ON CONFLICT(video_id) DO UPDATE SET
 
 // InDepth returns a video's in-depth summary, or "" when it has none: a video
 // analysed before the step existed, or one whose step failed for good.
-func (s *Store) InDepth(id string) (string, error) {
+func (s *Store) InDepth(id string) (string, error) { return s.InDepthCtx(context.Background(), id) }
+
+// InDepthCtx is InDepth bounded by ctx.
+func (s *Store) InDepthCtx(ctx context.Context, id string) (string, error) {
 	var body string
-	err := s.db.QueryRowContext(context.Background(),
+	err := s.db.QueryRowContext(ctx,
 		`SELECT body FROM video_in_depth WHERE video_id = ?`, id).Scan(&body)
 	if err == sql.ErrNoRows {
 		return "", nil
