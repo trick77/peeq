@@ -227,9 +227,9 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	var hits []rag.Hit
 	if mode == searchModeAsk {
-		hits = s.retrieveAsk(r, q)
+		hits = s.retrieveAsk(r.Context(), q)
 	} else {
-		hits = s.retrieveFind(r, q)
+		hits = s.retrieveFind(r.Context(), q)
 	}
 
 	// One read for every video the hits name, instead of one per distinct video
@@ -283,12 +283,12 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 // retrieveFind runs the keyword lane alone, honouring FTS5 operators. It makes
 // no network call at all, so it cannot degrade — and when the words are not in
 // the library it correctly returns nothing.
-func (s *server) retrieveFind(r *http.Request, q string) []rag.Hit {
+func (s *server) retrieveFind(ctx context.Context, q string) []rag.Hit {
 	match := rag.ParseFTSQuery(q)
 	if match == "" {
 		return nil
 	}
-	hits, err := s.rag.SearchFTS(r.Context(), match, searchCandidates)
+	hits, err := s.rag.SearchFTS(ctx, match, searchCandidates)
 	if err != nil {
 		// A malformed expression should be impossible (ParseFTSQuery re-emits
 		// from recognized tokens), so this is a real fault worth logging rather
@@ -316,8 +316,8 @@ func (s *server) retrieveFind(r *http.Request, q string) []rag.Hit {
 // extracted by the same understanding step it skips, so there is nothing here to
 // resolve a channel name or a "unwatched" from. A JSON caller that wants a
 // narrowed search has /api/videos' own filters for that.
-func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
-	lanes, diag := s.askLanes(r, q, "", rag.Filter{}, nil)
+func (s *server) retrieveAsk(ctx context.Context, q string) []rag.Hit {
+	lanes, diag := s.askLanes(ctx, q, "", rag.Filter{}, nil)
 	fused := rag.FuseWeighted(lanes, searchCandidates)
 	diag.log(q, fused)
 	return fused
@@ -343,7 +343,7 @@ func (s *server) retrieveAsk(r *http.Request, q string) []rag.Hit {
 // round-trip to ask the same question of a wider set — the vectors do not depend
 // on the filter. nil means "embed and discard", which is what a caller that runs
 // once wants.
-func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter, qv *queryVectors) ([]rag.Lane, askDiag) {
+func (s *server) askLanes(ctx context.Context, q, topic string, filter rag.Filter, qv *queryVectors) ([]rag.Lane, askDiag) {
 	lanes := make([]rag.Lane, 0, 6)
 
 	// Keyword lane, relaxed in steps: a natural question ANDs its function words
@@ -394,7 +394,7 @@ func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter, q
 		}
 		embedding = make(chan queryVectors, 1) // buffered: the send never blocks
 		go func() {
-			vecs, err := s.embedder.Embed(r.Context(), inputs)
+			vecs, err := s.embedder.Embed(ctx, inputs)
 			embedding <- queryVectors{done: true, vecs: vecs, err: err}
 		}()
 	}
@@ -406,7 +406,7 @@ func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter, q
 		// still cost the reader the wait.
 		diag.ftsQueried = true
 		rungStart := time.Now()
-		hits, err := s.rag.SearchFTSFiltered(r.Context(), tier.Match, searchCandidates, filter)
+		hits, err := s.rag.SearchFTSFiltered(ctx, tier.Match, searchCandidates, filter)
 		rungMs := time.Since(rungStart).Milliseconds()
 		if err != nil {
 			slog.Warn("search: FTS degraded", "err", err, "rung", tier.Weight, "ms", rungMs)
@@ -482,11 +482,11 @@ func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter, q
 			var rawOK, topicOK bool
 			var wg sync.WaitGroup
 			wg.Go(func() {
-				rawLane, rawOK = s.semanticLane(r, got.vecs[0], rag.WeightSemantic, filter, &diag.semRaw)
+				rawLane, rawOK = s.semanticLane(ctx, got.vecs[0], rag.WeightSemantic, filter, &diag.semRaw)
 			})
 			if topic != "" && len(got.vecs) > 1 {
 				wg.Go(func() {
-					topicLane, topicOK = s.semanticLane(r, got.vecs[1], rag.WeightSemanticTopic, filter, &diag.semTopic)
+					topicLane, topicOK = s.semanticLane(ctx, got.vecs[1], rag.WeightSemanticTopic, filter, &diag.semTopic)
 				})
 			}
 			wg.Wait()
@@ -511,12 +511,12 @@ func (s *server) askLanes(r *http.Request, q, topic string, filter rag.Filter, q
 // distance ranges on the same question is the measurement that says whether
 // DefaultMaxDistance and SemanticSpread still hold once a rewritten query is in
 // play. They were calibrated against raw questions only.
-func (s *server) semanticLane(r *http.Request, vec []float32, weight float64, filter rag.Filter, d *semLaneDiag) (rag.Lane, bool) {
+func (s *server) semanticLane(ctx context.Context, vec []float32, weight float64, filter rag.Filter, d *semLaneDiag) (rag.Lane, bool) {
 	// The filter is applied INSIDE the KNN, not to its output — see
 	// RetrieveWithinFiltered. That is what keeps semanticCandidates meaningful
 	// under a filter: 40 nearest chunks among the ones the reader asked about,
 	// rather than 40 nearest overall of which a narrow channel owns none.
-	hits, err := s.rag.RetrieveWithinFiltered(r.Context(), vec, semanticCandidates, s.searchMaxDistance, filter)
+	hits, err := s.rag.RetrieveWithinFiltered(ctx, vec, semanticCandidates, s.searchMaxDistance, filter)
 	if err != nil {
 		slog.Warn("search: semantic retrieve degraded", "err", err)
 		d.failed = true
