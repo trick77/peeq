@@ -363,6 +363,87 @@ func TestMCP_searchFailsWhenEmbeddingAndKeywordFail(t *testing.T) {
 	}
 }
 
+// ftsFailsAfter lets the first n keyword rungs through and fails the rest,
+// so the ladder breaks after it already found matches.
+type ftsFailsAfter struct {
+	RagStore
+	n     int
+	calls int
+}
+
+func (f *ftsFailsAfter) SearchFTSFiltered(ctx context.Context, match string, n int, flt rag.Filter) ([]rag.Hit, error) {
+	f.calls++
+	if f.calls > f.n {
+		return nil, errors.New("fts rung down")
+	}
+	return f.RagStore.SearchFTSFiltered(ctx, match, n, flt)
+}
+
+// orthogonal is a query vector past the distance bound from every seeded
+// chunk: the vector lane runs and finds nothing.
+func orthogonal() []float32 {
+	v := make([]float32, 1536)
+	v[1] = 1
+	return v
+}
+
+// A later keyword rung failing after earlier ones found matches is not a
+// failure: the matches come back, with a note.
+func TestMCP_searchKeepsHitsWhenALaterRungFails(t *testing.T) {
+	h := mcpFixture(t, &fakeEmbedder{vec: orthogonal()}, func(d *Deps) {
+		d.Rag = &ftsFailsAfter{RagStore: d.Rag, n: 1}
+	})
+	r := callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail"})
+	text := mcpToolText(t, r)
+	if r.Result["isError"] == true || !strings.Contains(text, "Why bikes stay upright") ||
+		!strings.Contains(text, "part of the keyword search failed") {
+		t.Errorf("isError=%v text:\n%s", r.Result["isError"], text)
+	}
+}
+
+// The keyword lane failing outright over a vector lane that found nothing is
+// a failure, not "no videos match".
+func TestMCP_searchFailsWhenKeywordFailsAndVectorFindsNothing(t *testing.T) {
+	h := mcpFixture(t, &fakeEmbedder{vec: orthogonal()}, func(d *Deps) {
+		d.Rag = &failingRag{real: d.Rag, searchFTS: errors.New("fts down")}
+	})
+	r := callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail"})
+	text := mcpToolText(t, r)
+	if r.Result["isError"] != true || !strings.Contains(text, "search failed") {
+		t.Errorf("isError=%v text=%q", r.Result["isError"], text)
+	}
+}
+
+// The keyword lane failing outright over a working vector lane returns the
+// semantic matches and says that is all they are.
+func TestMCP_searchSaysSemanticOnlyWhenKeywordFails(t *testing.T) {
+	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, func(d *Deps) {
+		d.Rag = &failingRag{real: d.Rag, searchFTS: errors.New("fts down")}
+	})
+	r := callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail"})
+	text := mcpToolText(t, r)
+	if r.Result["isError"] == true || !strings.Contains(text, "these are semantic matches only") ||
+		!strings.Contains(text, "Bike Physics") {
+		t.Errorf("isError=%v text:\n%s", r.Result["isError"], text)
+	}
+}
+
+// A renamed channel still answers to the name its older videos carry, and is
+// shown under its current name.
+func TestMCP_channelResolvesByAnOldVideoName(t *testing.T) {
+	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, func(d *Deps) {
+		if err := d.Videos.Upsert(videos.Video{ID: "bikeVideo03", URL: "u4", Title: "Old upload about wheels",
+			ChannelID: "UCbikes", ChannelName: "Velo Lab Archive"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	r := callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail", "channel": "Velo Lab Archive", "mode": "keyword"})
+	text := mcpToolText(t, r)
+	if r.Result["isError"] == true || !strings.Contains(text, "Why bikes stay upright") {
+		t.Errorf("isError=%v text:\n%s", r.Result["isError"], text)
+	}
+}
+
 // A listed channel with nothing scanned yet resolves, and says it is empty.
 func TestMCP_searchInAChannelWithoutVideos(t *testing.T) {
 	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)})

@@ -93,12 +93,18 @@ func (l mcpLibrary) ResolveChannel(ctx context.Context, name string) (mcpserver.
 		seen[c.ID] = true
 		videoCount[c.ID] = c.Videos
 	}
+	// Directory rows are added even for a listed id: each carries the name
+	// its videos were recorded under, so a renamed channel still answers to
+	// its old name. The resolver dedups ids after matching.
+	listedName := map[string]string{}
+	for _, c := range listed {
+		listedName[c.ID] = c.Name
+	}
 	for _, c := range withVideos {
-		if c.ID != "" && seen[c.ID] {
-			continue
-		}
 		dir = append(dir, c)
-		videoCount[c.ID] = -1 // has videos, count not needed
+		if !seen[c.ID] {
+			videoCount[c.ID] = -1 // has videos, count not needed
+		}
 	}
 
 	want := strings.TrimSpace(name)
@@ -112,7 +118,20 @@ func (l mcpLibrary) ResolveChannel(ctx context.Context, name string) (mcpserver.
 	if !res.any() {
 		res = resolveChannelsIn(dir, []string{want})
 	}
-	scope := mcpserver.ChannelScope{IDs: res.IDs, Names: res.Names, Matched: res.Matched}
+	scope := mcpserver.ChannelScope{IDs: res.IDs, Names: res.Names}
+	// Shown under the name list_channels uses, once per channel, however
+	// many of its names matched.
+	shown := map[string]bool{}
+	for _, id := range res.IDs {
+		if n := listedName[id]; n != "" && !shown[n] {
+			shown[n] = true
+			scope.Matched = append(scope.Matched, n)
+		}
+	}
+	if len(scope.Matched) == 0 {
+		// Nothing listed matched: only channels known by their videos.
+		scope.Matched = res.Matched
+	}
 	if !scope.Resolved() {
 		scope.Suggestions = closestChannels(dir, want, mcpSuggestions)
 		return scope, nil
@@ -176,7 +195,8 @@ func editDistance(a, b string) int {
 	return prev[len(rb)]
 }
 
-// errSearchLanesFailed is both lanes failing: not an empty result.
+// errSearchLanesFailed is a search that found nothing because a lane failed,
+// which must not read as "no videos match".
 var errSearchLanesFailed = errors.New("mcp: keyword and semantic lanes both failed")
 
 func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpserver.SearchResult, error) {
@@ -207,16 +227,26 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 		hits = rag.FuseWeighted(lanes, searchCandidates)
 		diag.log(q.Text, hits)
 		// The lanes fail soft for Ask. Here an empty list must mean "nothing
-		// matches", so a deadline or both lanes failing is an error; only a
-		// lost semantic lane over a working keyword lane is the documented
-		// keyword-only degrade.
-		if err := ctx.Err(); err != nil {
-			return res, fmt.Errorf("mcp search: %w", err)
+		// matches": empty after a deadline or a failed keyword rung is an
+		// error. Anything a lane did find is returned, with a note saying
+		// which part of the search was missing.
+		if len(hits) == 0 {
+			if err := ctx.Err(); err != nil {
+				return res, fmt.Errorf("mcp search: %w", err)
+			}
+			if diag.ftsFailed || (diag.semRaw.failed && !diag.ftsQueried) {
+				return res, errSearchLanesFailed
+			}
 		}
-		if diag.ftsFailed && !diag.semRaw.ran {
-			return res, errSearchLanesFailed
+		keywordLanes := 0
+		for i := range lanes {
+			if i != diag.rawLane && i != diag.topicLane {
+				keywordLanes++
+			}
 		}
 		res.SemanticDegraded = !diag.semRaw.ran
+		res.KeywordFailed = diag.ftsFailed && keywordLanes == 0
+		res.KeywordPartial = diag.ftsFailed && keywordLanes > 0
 	}
 
 	byID, err := s.videos.GetManyCtx(ctx, idsOf(hits, func(h rag.Hit) string { return h.VideoID }))
