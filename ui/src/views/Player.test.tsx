@@ -1550,6 +1550,25 @@ describe("Player", () => {
       expect(deleteVideo).not.toHaveBeenCalled();
     });
 
+    it("on a keep-in-Search channel it says the transcript stays searchable", async () => {
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      fireEvent.click(await screen.findByRole("menuitem", { name: /delete/i }));
+      expect(await screen.findByText(/stay searchable/i)).toBeInTheDocument();
+    });
+
+    it("on a channel that forgets deleted videos it says everything goes", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ channel_keep_reads: false }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      fireEvent.click(await screen.findByRole("menuitem", { name: /delete/i }));
+      expect(
+        await screen.findByText(/everything peeq knows about/i),
+      ).toBeInTheDocument();
+    });
+
     it("deletes when the confirm dialog is confirmed", async () => {
       const onDeleted = vi.fn();
       render(<Player videoId="v1" onDeleted={onDeleted} />);

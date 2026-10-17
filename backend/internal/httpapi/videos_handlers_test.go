@@ -284,6 +284,41 @@ func TestVideosResume_versionEchoAccepted(t *testing.T) {
 // file and column both survive for each, so the remembered card still has a
 // poster instead of a broken image and the transcript stays readable and
 // re-embeddable.
+// On a channel whose keep_reads is off, Delete purges: the file and the row
+// both go, and the response says so.
+func TestVideosDelete_keepReadsOffPurges(t *testing.T) {
+	deps, mediaDir, db := videosTestDepsDB(t)
+	mediaPath := filepath.Join(mediaDir, "v1.mp4")
+	if err := os.WriteFile(mediaPath, []byte("bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO channels (id, name, keep_reads) VALUES ('UCoff', 'c', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "v1", URL: "u", ChannelID: "UCoff"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Videos.SetDownloaded("v1", videos.DownloadedResult{MediaPath: mediaPath}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(deps)
+	cookie := loginAndGetCookie(t, h)
+
+	rec := doReq(t, h, cookie, http.MethodDelete, "/api/videos/v1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"purged"`) {
+		t.Fatalf("body = %s, want status purged", rec.Body.String())
+	}
+	if _, err := os.Stat(mediaPath); !os.IsNotExist(err) {
+		t.Fatalf("media file still exists after delete: err = %v", err)
+	}
+	if v, err := deps.Videos.Get("v1"); err != nil || v != nil {
+		t.Fatalf("row = %+v err=%v after delete, want purged", v, err)
+	}
+}
+
 func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	deps, mediaDir := videosTestDeps(t)
 	videoDir := filepath.Join(mediaDir, "chan1", "v1")

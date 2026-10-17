@@ -3579,9 +3579,9 @@ func TestChannelsPut_notSubscribed_writesNothing(t *testing.T) {
 	if rr := postJSONWithCookie(t, h, cookie, "/api/channels", map[string]any{"url": "https://www.youtube.com/@half"}); rr.Code != http.StatusCreated {
 		t.Fatalf("add status = %d body=%s", rr.Code, rr.Body.String())
 	}
-	// Both switches are flipped away from their column defaults (auto_summary
-	// defaults to on, keep_reads to off), so a half-save is visible either way.
-	rr := putJSONWithCookie(t, h, cookie, "/api/channels/UChalf", map[string]any{"auto_summary": false, "keep_reads": true, "autodownload": true})
+	// Both switches are flipped away from their column defaults (both default
+	// to on), so a half-save is visible either way.
+	rr := putJSONWithCookie(t, h, cookie, "/api/channels/UChalf", map[string]any{"auto_summary": false, "keep_reads": false, "autodownload": true})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("PUT status = %d, want 400, body=%s", rr.Code, rr.Body.String())
 	}
@@ -3589,7 +3589,7 @@ func TestChannelsPut_notSubscribed_writesNothing(t *testing.T) {
 	if err != nil || c == nil {
 		t.Fatalf("get channel: %v %v", c, err)
 	}
-	if !c.AutoSummary || c.KeepReads {
+	if !c.AutoSummary || !c.KeepReads {
 		t.Fatalf("refused request was half-saved: auto_summary=%v keep_reads=%v", c.AutoSummary, c.KeepReads)
 	}
 	// The channel-level switches alone are still accepted on an unsubscribed

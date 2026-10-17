@@ -10,6 +10,8 @@ import {
   deleteChannel,
   subscribeChannel,
   unsubscribeChannel,
+  getKeepReadsImpact,
+  type KeepReadsImpact,
 } from "../../api/channels";
 import { useSettings } from "../../settingsStore";
 import { presetLabel } from "../../formatPresets";
@@ -30,6 +32,9 @@ export function SettingsTab({
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmKeepOff, setConfirmKeepOff] = useState<KeepReadsImpact | null>(
+    null,
+  );
   // The global format preset, so the override list can mark which one
   // "use the global setting" actually resolves to. A failed fetch leaves it
   // "", which badges no row — better than badging the wrong one.
@@ -62,6 +67,35 @@ export function SettingsTab({
     } finally {
       setScanning(false);
     }
+  }
+
+  // On saves at once. Off takes away what the switch kept so far, so it asks
+  // first with the real counts, unless there is nothing to take.
+  async function toggleKeepReads() {
+    if (!detail.keep_reads) {
+      await run(() => updateChannel(detail.id, { keep_reads: true }));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const impact = await getKeepReadsImpact(detail.id);
+      if (impact.deleted + impact.ignored + impact.inbox === 0) {
+        await updateChannel(detail.id, { keep_reads: false });
+        onChanged();
+      } else {
+        setConfirmKeepOff(impact);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmKeepReadsOff() {
+    await run(() => updateChannel(detail.id, { keep_reads: false }));
+    setConfirmKeepOff(null);
   }
 
   async function handleDelete() {
@@ -136,38 +170,6 @@ export function SettingsTab({
               />
             </div>
 
-            {/* What this keeps is already paid for: peeq fetches captions and
-                summarizes them for the New tab regardless. Off, that reading is
-                thrown away when the video is ignored; on, it is indexed and
-                stays searchable. Either way the video never joins the library,
-                which is why the row sits with the other "what happens to new
-                videos" switches rather than near the archive. */}
-            <div className="chan-srow">
-              <div>
-                <label className="lab" htmlFor="chan-keepreads">
-                  Keep readings for search
-                </label>
-                <div className="hint">
-                  {detail.auto_summary
-                    ? "Videos you never download stay findable in Search by what was said in them. They do not appear in your library."
-                    : "Summaries are off for this channel, so there is nothing to keep."}
-                </div>
-              </div>
-              <input
-                id="chan-keepreads"
-                type="checkbox"
-                disabled={busy || !detail.auto_summary}
-                checked={detail.keep_reads}
-                onChange={() =>
-                  run(() =>
-                    updateChannel(detail.id, {
-                      keep_reads: !detail.keep_reads,
-                    }),
-                  )
-                }
-              />
-            </div>
-
             <div className="chan-srow">
               <div>
                 <span className="lab">Format override</span>
@@ -217,6 +219,30 @@ export function SettingsTab({
             </div>
           </>
         ) : null}
+
+        {/* What survives a video's file, for every video of the channel —
+            downloaded ones as much as the inbox reads peeq only summarized.
+            That is why it is outside the subscribed block and never disabled:
+            a channel that is not subscribed, or reads nothing, still has
+            deleted videos to keep or forget. */}
+        <div className="chan-srow">
+          <div>
+            <label className="lab" htmlFor="chan-keepreads">
+              Keep in Search after the file is gone
+            </label>
+            <div className="hint">
+              Off: deleting or ignoring a video removes everything peeq knows
+              about it. On: only the file goes; it stays searchable.
+            </div>
+          </div>
+          <input
+            id="chan-keepreads"
+            type="checkbox"
+            disabled={busy}
+            checked={detail.keep_reads}
+            onChange={toggleKeepReads}
+          />
+        </div>
       </div>
 
       <div className="chan-danger">
@@ -230,6 +256,17 @@ export function SettingsTab({
           {detail.archived_count} videos
         </Button>
       </div>
+
+      <ConfirmDialog
+        open={confirmKeepOff !== null}
+        title="Remove kept videos from Search?"
+        confirmLabel={keepOffLabel(confirmKeepOff)}
+        busy={busy}
+        onConfirm={confirmKeepReadsOff}
+        onCancel={() => setConfirmKeepOff(null)}
+      >
+        {confirmKeepOff ? <KeepOffWarning impact={confirmKeepOff} /> : null}
+      </ConfirmDialog>
 
       {/* Same modal + wording as the Channels list delete: it is the same
           irreversible action, so it must not warn differently. */}
@@ -246,6 +283,49 @@ export function SettingsTab({
           count={detail.archived_count}
         />
       </ConfirmDialog>
+    </>
+  );
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+// The removed count is deleted + ignored: inbox videos are not removed, they
+// only leave Search.
+function keepOffLabel(impact: KeepReadsImpact | null): string {
+  if (!impact) return "Remove";
+  const removed = impact.deleted + impact.ignored;
+  return removed > 0
+    ? `Remove ${plural(removed, "video", "videos")}`
+    : "Remove from Search";
+}
+
+function KeepOffWarning({ impact }: { impact: KeepReadsImpact }) {
+  const parts: string[] = [];
+  if (impact.deleted > 0) parts.push(`${impact.deleted} deleted`);
+  if (impact.ignored > 0) parts.push(`${impact.ignored} ignored`);
+  const removed = impact.deleted + impact.ignored;
+  return (
+    <>
+      {removed > 0 ? (
+        <p>
+          {parts.join(" and ")} {removed === 1 ? "video" : "videos"} from this
+          channel will be permanently removed: transcripts, summaries and their
+          search entries. They will no longer appear in Search or as Ask
+          sources.
+        </p>
+      ) : null}
+      {impact.inbox > 0 ? (
+        <p>
+          {plural(impact.inbox, "video", "videos")} in the New tab keep their
+          summary but leave Search.
+        </p>
+      ) : null}
+      <p>
+        This can't be undone. Turning the switch back on only applies to videos
+        from now on.
+      </p>
     </>
   );
 }

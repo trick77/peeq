@@ -87,8 +87,8 @@ func seedTranscript(t *testing.T, h *workerHarness, id, rel string) {
 
 // seedChannel writes a bare channels row with keep_reads set as given, and
 // points the video at it. The flag reaches the worker through the join
-// videoColumns already makes, so a video with no channels row at all reads as
-// off — which is what every other test here relies on.
+// videoColumns already makes. A video with no channels row at all reads as on
+// (0037), so a test about the off path seeds an off channel explicitly.
 func seedChannel(t *testing.T, h *workerHarness, channelID, videoID string, keepReads bool) {
 	t.Helper()
 	if _, err := h.db.Exec(
@@ -107,7 +107,7 @@ func seedChannel(t *testing.T, h *workerHarness, channelID, videoID string, keep
 // classify call, no embeddings, no key points. Every one of those is an
 // investment in a video the library keeps, and this one may still be ignored.
 //
-// This is the default: the channel has not asked for its readings to be kept.
+// This is a channel that has turned keep_reads off.
 func TestInboxVideoStopsAfterTheSummary(t *testing.T) {
 	h := newWorkerHarness(t)
 	rel := writeInboxCaption(t, h, "inbox1")
@@ -115,6 +115,7 @@ func TestInboxVideoStopsAfterTheSummary(t *testing.T) {
 	if err := h.videos.Upsert(videos.Video{ID: "inbox1", URL: "https://youtu.be/inbox1"}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
+	seedChannel(t, h, "UCoff", "inbox1", false)
 	seedTranscript(t, h, "inbox1", rel)
 	if err := h.videos.SetStatus("inbox1", videos.StatusNew, ""); err != nil {
 		t.Fatalf("set status: %v", err)
@@ -163,6 +164,55 @@ func TestInboxVideoStopsAfterTheSummary(t *testing.T) {
 	// Anything more means a deferred step ran anyway.
 	if completer.calls != 2 {
 		t.Fatalf("completer called %d times, want exactly 2 (summary + in-depth)", completer.calls)
+	}
+}
+
+// flippingCompleter turns the channel's keep_reads off during the summary
+// call: the switch-off purge has already run by the time the embed step comes.
+type flippingCompleter struct {
+	countingCompleter
+	flip func()
+}
+
+func (c *flippingCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	if c.flip != nil {
+		c.flip()
+		c.flip = nil
+	}
+	return c.countingCompleter.Complete(ctx, m)
+}
+
+// A switch-off while an inbox read is being summarized must not be undone by
+// the embed step that follows: the worker read keep_reads before the purge.
+func TestInboxVideo_switchOffMidJobIsNotIndexed(t *testing.T) {
+	h := newWorkerHarness(t)
+	rel := writeInboxCaption(t, h, "inbox-flip")
+	if err := h.videos.Upsert(videos.Video{ID: "inbox-flip", URL: "https://youtu.be/inbox-flip"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	seedTranscript(t, h, "inbox-flip", rel)
+	if err := h.videos.SetStatus("inbox-flip", videos.StatusNew, ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	seedChannel(t, h, "UCflip", "inbox-flip", true)
+	if _, err := h.jobs.Enqueue("inbox-flip"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	completer := &flippingCompleter{countingCompleter: countingCompleter{reply: "A summary of the video."}, flip: func() {
+		if _, err := h.db.Exec(`UPDATE channels SET keep_reads = 0 WHERE id = 'UCflip'`); err != nil {
+			t.Errorf("flip: %v", err)
+		}
+	}}
+	embedder := &countingEmbedder{dim: 1536}
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(completer), Embedder: embedder,
+		EmbedModel: "test-model", EmbedDim: 1536})
+	if _, err := w.processOne(t.Context()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if indexed, err := h.rag.HasChunks(t.Context(), "inbox-flip"); err != nil || indexed {
+		t.Fatalf("indexed = %v (err %v), want no chunks after a mid-job switch-off", indexed, err)
 	}
 }
 

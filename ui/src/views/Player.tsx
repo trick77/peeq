@@ -1674,8 +1674,18 @@ function PlayerImpl({
           onConfirm={handleDelete}
           onCancel={() => setConfirmDelete(false)}
         >
-          This removes the stored media and its analysis for “{video.title}”.
-          This can’t be undone.
+          {video.channel_keep_reads === false ? (
+            <>
+              This removes the file and everything peeq knows about “
+              {video.title}”: transcript, summary and search entries. This can’t
+              be undone.
+            </>
+          ) : (
+            <>
+              This removes the stored file for “{video.title}”. Its transcript
+              and summary stay searchable. This can’t be undone.
+            </>
+          )}
         </ConfirmDialog>
       ) : null}
     </div>

@@ -14,6 +14,7 @@ vi.mock("../api/channels", () => ({
   getChannel: vi.fn(),
   scanChannel: vi.fn(),
   refreshChannel: vi.fn(),
+  getKeepReadsImpact: vi.fn(),
   channelAvatarUrl: (id: string) => `/api/channels/${id}/avatar`,
   channelBannerUrl: (id: string) => `/api/channels/${id}/banner`,
 }));
@@ -42,6 +43,7 @@ import {
   updateChannel,
   deleteChannel,
   refreshChannel,
+  getKeepReadsImpact,
 } from "../api/channels";
 import { listVideos, setFavorite, setWatched } from "../api/videos";
 import { listPending, downloadPending, ignorePending } from "../api/pending";
@@ -160,6 +162,7 @@ describe("Channel", () => {
       state_version: 2,
     });
     vi.mocked(updateChannel).mockReset();
+    vi.mocked(getKeepReadsImpact).mockReset();
     vi.mocked(updateChannel).mockResolvedValue({
       id: "UCa",
       autodownload: false,
@@ -1120,7 +1123,7 @@ describe("Channel", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeping readings for search is a per-channel switch", async () => {
+  it("turning keep in Search on saves at once, without a dialog", async () => {
     const user = userEvent.setup();
     render(
       <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
@@ -1128,16 +1131,19 @@ describe("Channel", () => {
     await screen.findByText("Uncanny Expeditions");
     await user.click(screen.getByRole("tab", { name: /settings/i }));
 
-    const box = await screen.findByLabelText(/keep readings for search/i);
+    const box = await screen.findByLabelText(
+      /keep in search after the file is gone/i,
+    );
     expect(box).not.toBeChecked();
     await user.click(box);
 
     expect(updateChannel).toHaveBeenCalledWith("UCa", { keep_reads: true });
+    expect(getKeepReadsImpact).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("keeping readings is disabled while summaries are off, and says why", async () => {
-    // Nothing is read on such a channel, so there is nothing to keep — a live
-    // toggle here would be a switch that silently does nothing.
+  it("keep in Search stays live while summaries are off", async () => {
+    // It governs downloaded videos too, so it is never greyed out.
     vi.mocked(getChannel).mockResolvedValue(detail({ auto_summary: false }));
     const user = userEvent.setup();
     render(
@@ -1147,11 +1153,84 @@ describe("Channel", () => {
     await user.click(screen.getByRole("tab", { name: /settings/i }));
 
     expect(
-      await screen.findByLabelText(/keep readings for search/i),
-    ).toBeDisabled();
+      await screen.findByLabelText(/keep in search after the file is gone/i),
+    ).toBeEnabled();
+  });
+
+  it("turning keep in Search off asks first, with the counts", async () => {
+    vi.mocked(getChannel).mockResolvedValue(detail({ keep_reads: true }));
+    vi.mocked(getKeepReadsImpact).mockResolvedValue({
+      deleted: 37,
+      ignored: 112,
+      inbox: 4,
+    });
+    const user = userEvent.setup();
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("tab", { name: /settings/i }));
+    await user.click(
+      await screen.findByLabelText(/keep in search after the file is gone/i),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/37 deleted and 112 ignored videos/i);
+    expect(dialog).toHaveTextContent(/can't be undone/i);
+    expect(updateChannel).not.toHaveBeenCalled();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: /remove 149 videos/i }),
+    );
+    expect(updateChannel).toHaveBeenCalledWith("UCa", { keep_reads: false });
+  });
+
+  it("cancelling the dialog leaves keep in Search on", async () => {
+    vi.mocked(getChannel).mockResolvedValue(detail({ keep_reads: true }));
+    vi.mocked(getKeepReadsImpact).mockResolvedValue({
+      deleted: 2,
+      ignored: 0,
+      inbox: 0,
+    });
+    const user = userEvent.setup();
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("tab", { name: /settings/i }));
+    await user.click(
+      await screen.findByLabelText(/keep in search after the file is gone/i),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /cancel/i }));
+
+    expect(updateChannel).not.toHaveBeenCalled();
     expect(
-      screen.getByText(/summaries are off for this channel/i),
-    ).toBeInTheDocument();
+      screen.getByLabelText(/keep in search after the file is gone/i),
+    ).toBeChecked();
+  });
+
+  it("nothing kept: turning keep in Search off needs no dialog", async () => {
+    vi.mocked(getChannel).mockResolvedValue(detail({ keep_reads: true }));
+    vi.mocked(getKeepReadsImpact).mockResolvedValue({
+      deleted: 0,
+      ignored: 0,
+      inbox: 0,
+    });
+    const user = userEvent.setup();
+    render(
+      <Channel channelId="UCa" onOpenVideo={() => {}} onBack={() => {}} />,
+    );
+    await screen.findByText("Uncanny Expeditions");
+    await user.click(screen.getByRole("tab", { name: /settings/i }));
+    await user.click(
+      await screen.findByLabelText(/keep in search after the file is gone/i),
+    );
+
+    await waitFor(() =>
+      expect(updateChannel).toHaveBeenCalledWith("UCa", { keep_reads: false }),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("a failed autodownload toggle reverts and shows the error", async () => {

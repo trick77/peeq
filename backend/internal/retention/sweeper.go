@@ -29,7 +29,7 @@ type NowPlayingGuard interface {
 // VideoStore is the subset of *videos.Store the sweeper needs.
 type VideoStore interface {
 	SweepCandidates(cutoffUTC string) ([]videos.Video, error)
-	Tombstone(id string) error
+	Remove(v videos.Video) (purged bool, err error)
 }
 
 // SettingsStore is the subset of *settings.Store the sweeper needs.
@@ -121,10 +121,10 @@ func (s *Sweeper) sweepAndLog() {
 // SweepOnce runs one sweep pass: it loads the current retention_days,
 // queries every watched/non-favorite/non-tombstoned video whose watched_at
 // is older than the cutoff, skips any the NowPlayingGuard reports active,
-// and tombstones the rest — calling videos.Store.Tombstone to clear media_path
-// and mark the row deleted while keeping it for watched history, then removing
-// the media from disk via the same media.RemoveTombstonedVideoFiles path the
-// manual DELETE endpoint uses.
+// and removes the rest through videos.Store.Remove — a tombstone (row kept for
+// watched history and search) or, on a channel whose keep_reads is off, a purge
+// — then removes the media from disk via the same
+// media.RemoveTombstonedVideoFiles path the manual DELETE endpoint uses.
 func (s *Sweeper) SweepOnce() error {
 	ctx := context.Background()
 	cfg, err := s.deps.Settings.Get(ctx)
@@ -157,11 +157,13 @@ func (s *Sweeper) SweepOnce() error {
 			continue
 		}
 		// Row first, file second, for the same reason as the manual DELETE
-		// endpoint: a failed tombstone must leave the file where the row says
-		// it is, and a file that will not go is an orphan to log, not a reason
-		// to keep the row 'downloaded'.
-		if err := s.deps.Videos.Tombstone(v.ID); err != nil {
-			s.deps.Logger.Error("retention sweep: tombstone failed", "video_id", v.ID, "err", err)
+		// endpoint: a failed tombstone or purge must leave the file where the
+		// row says it is, and a file that will not go is an orphan to log, not
+		// a reason to keep the row 'downloaded'. Remove tombstones or purges by
+		// the channel's keep_reads.
+		purged, err := s.deps.Videos.Remove(v)
+		if err != nil {
+			s.deps.Logger.Error("retention sweep: remove failed", "video_id", v.ID, "purged", purged, "err", err)
 			continue
 		}
 		// The path goes in the log because the row no longer holds it: this
@@ -170,7 +172,7 @@ func (s *Sweeper) SweepOnce() error {
 			s.deps.Logger.Warn("retention sweep: media removal failed", "video_id", v.ID, "path", v.MediaPath, "err", err)
 			continue
 		}
-		s.deps.Logger.Info("retention sweep: tombstoned video", "video_id", v.ID, "watched_at", v.WatchedAt)
+		s.deps.Logger.Info("retention sweep: removed video", "video_id", v.ID, "purged", purged, "watched_at", v.WatchedAt)
 		tombstoned++
 	}
 	// Silence rule: only a sweep that actually reclaimed at least one video is

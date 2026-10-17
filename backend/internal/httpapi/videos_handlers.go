@@ -59,8 +59,11 @@ type videoDTO struct {
 	// echoes it back on every resume POST so a watched toggle made elsewhere
 	// can't be undone by a client that never saw it — see videos.SetResume
 	// and issue #97.
-	StateVersion         int64                    `json:"state_version"`
-	Favorite             bool                     `json:"favorite"`
+	StateVersion int64 `json:"state_version"`
+	Favorite     bool  `json:"favorite"`
+	// ChannelKeepReads is the channel's keep_reads: what a Delete keeps (the
+	// confirm dialog says which).
+	ChannelKeepReads     bool                     `json:"channel_keep_reads"`
 	DownloadedAt         string                   `json:"downloaded_at,omitempty"`
 	SponsorblockSegments []sponsorblockSegmentDTO `json:"sponsorblock_segments,omitempty"`
 	Summary              string                   `json:"summary"`
@@ -172,6 +175,7 @@ func toVideoDTO(v *videos.Video) videoDTO {
 		ResumePositionSeconds: v.ResumePositionSeconds,
 		StateVersion:          v.StateVersion,
 		Favorite:              v.Favorite,
+		ChannelKeepReads:      v.ChannelKeepReads,
 		DownloadedAt:          v.DownloadedAt,
 		SponsorblockSegments:  parseSponsorblockSegments(v.SponsorblockSegments),
 		Summary:               v.Summary,
@@ -414,12 +418,11 @@ func (s *server) handleVideoEmbeddings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out)
 }
 
-// handleDeleteVideo is the manual DELETE endpoint: unconditionally
-// tombstones the video (removing the media file from disk to reclaim space,
-// keeping the thumbnail so the remembered card still has a poster and the
-// subtitle so the transcript survives) while keeping the row for watched
-// history and a future re-download badge. Never-delete-a-playing-video is a
-// Task 12 sweeper concern, not this endpoint's.
+// handleDeleteVideo is the manual DELETE endpoint. It always removes the media
+// file; what else goes is the channel's keep_reads: on, the video is tombstoned
+// (row, poster, transcript and search index kept, for watched history and a
+// re-download); off, it is purged and only the ledger row remembers it.
+// Never-delete-a-playing-video is a sweeper concern, not this endpoint's.
 func (s *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.lookupVideo(w, r)
 	if !ok {
@@ -431,7 +434,11 @@ func (s *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request) {
 	// other order left a downloaded row pointing at a file that was gone. A
 	// file that then cannot be removed is an orphan for the operator, not a
 	// failure for the user — the library state is already right.
-	if err := s.videos.Tombstone(v.ID); err != nil {
+	//
+	// Remove tombstones or purges by the channel's keep_reads; the sweeper
+	// goes through the same call.
+	purged, err := s.videos.Remove(*v)
+	if err != nil {
 		serverError(w, r, err, "delete video failed")
 		return
 	}
@@ -443,7 +450,11 @@ func (s *server) handleDeleteVideo(w http.ResponseWriter, r *http.Request) {
 	// to reopen it. Belt and braces with playback.Store.Get's own status filter,
 	// which the tombstone (row kept, status flipped) is why we need at all.
 	s.clearPlaybackIfPointing(r, v.ID)
-	writeJSON(w, map[string]string{"status": "tombstoned"})
+	status := "tombstoned"
+	if purged {
+		status = "purged"
+	}
+	writeJSON(w, map[string]string{"status": status})
 }
 
 // favoriteRequest is the optional body of POST .../favorite. When absent or

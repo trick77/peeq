@@ -125,6 +125,10 @@ export type Video = {
   // setResume in api/videos.ts and issue #97.
   state_version: number;
   favorite: boolean;
+  // channel_keep_reads is the channel's keep_reads: on, a Delete only takes
+  // the file; off, it removes everything peeq knows about the video. Optional
+  // so older fixtures read as on, the default.
+  channel_keep_reads?: boolean;
   downloaded_at?: string;
   // sponsorblock_segments mirrors httpapi.sponsorblockSegmentDTO, parsed
   // server-side from the stored JSON column. Segments arrive either from the
@@ -533,8 +537,8 @@ export type ChannelDetail = {
 
   // auto_summary and keep_reads live on the channel rather than on the
   // subscription, so they arrive for an added-but-unsubscribed channel too.
-  // keep_reads only means anything while auto_summary is on: nothing is kept
-  // for a channel whose videos are never read.
+  // keep_reads decides what survives a video's file: on, a deleted or ignored
+  // video stays searchable; off, it is removed entirely.
   auto_summary: boolean;
   keep_reads: boolean;
 

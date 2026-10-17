@@ -56,12 +56,12 @@ type Channel struct {
 	// channel subscribed to for one video in ten, where the other nine are
 	// summaries nobody asked for.
 	AutoSummary bool
-	// KeepReads is whether that reading is kept and indexed for search rather
-	// than thrown away when the video is ignored. Default false (migration
-	// 0026): the reading is paid for either way, but keeping it costs an
-	// embedding call per chunk and a few dozen KB of vectors for a video that
-	// will never reach the Library. A kept video is searchable and nothing
-	// else — it stays status 'new', which every Library query excludes.
+	// KeepReads decides what of a video survives its file, for every video of
+	// the channel. On (the default since 0037): a delete tombstones, keeping
+	// transcript, summary and search index; an inbox read is indexed and kept
+	// when ignored — searchable and nothing else, it stays status 'new', which
+	// every Library query excludes. Off: a delete or an ignore purges the row,
+	// and turning it off purges what it kept so far (videos.Store.PurgeKept).
 	KeepReads bool
 }
 
@@ -642,13 +642,12 @@ UPDATE channels SET auto_summary = ? WHERE id = ? RETURNING auto_summary`, on, c
 	return result, true, nil
 }
 
-// SetKeepReads turns "keep what was read, and index it for search" on or off
-// for a channel, returning the stored value. ok is false (with a nil error)
-// when no such channel exists.
+// SetKeepReads turns "keep in Search after the file is gone" on or off for a
+// channel, returning the stored value. ok is false (with a nil error) when no
+// such channel exists. Only the flag: the purge an off starts is the handler's.
 //
-// Same table and same reasoning as SetAutoSummary above, of which this is the
-// downstream half: auto_summary decides whether a video is read at all, and
-// this decides whether that reading is kept once it has served the Inbox.
+// Same table and same reasoning as SetAutoSummary above: a judgement about
+// the channel that has to outlive an unsubscribe.
 func (s *Store) SetKeepReads(channelID string, on bool) (result bool, ok bool, err error) {
 	row := s.db.QueryRowContext(context.Background(), `
 UPDATE channels SET keep_reads = ? WHERE id = ? RETURNING keep_reads`, on, channelID)

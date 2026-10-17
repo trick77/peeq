@@ -46,8 +46,11 @@ func mcpFixture(t *testing.T, embedder SearchEmbedder, mutate ...func(*Deps)) ht
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := deps.Channels.SetKeepReads("UCbikes", true); err != nil {
-		t.Fatal(err)
+	// keep_reads defaults to on (0037); only Bike Physics keeps its reads.
+	for _, id := range []string{"UCcook", "UCfresh"} {
+		if _, _, err := deps.Channels.SetKeepReads(id, false); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	seed := func(v videos.Video, category, yt, summary string, rows []rag.ChunkRow) {

@@ -120,6 +120,9 @@ type Deps struct {
 	// OnChannelArt fires when a background art fetch for a channel settles.
 	// Test-only, like OnChannelResolved. nil in production.
 	OnChannelArt func(channelID string)
+	// OnKeptPurged fires when a keep_reads switch-off purge for a channel
+	// settles. Test-only, like OnChannelArt. nil in production.
+	OnKeptPurged func(channelID string)
 	// QueueThumbnail asks for an inbox poster to be fetched in the background
 	// (scan.Scheduler.QueueThumbnail) and reports whether it is on its way.
 	// Optional: when nil, a missing poster just stays the placeholder.
@@ -271,6 +274,11 @@ type server struct {
 	images     media.ImageFetcher
 	background context.Context
 	onArt      func(channelID string)
+	// purgeMu guards purgeInFlight: channels whose switch-off purge is running,
+	// so a second toggle does not start a second one over the same rows.
+	purgeMu       sync.Mutex
+	purgeInFlight map[string]bool
+	onKeptPurged  func(channelID string)
 	// artMu guards artInFlight: channels whose art is being fetched, so a
 	// repeated Refresh does not queue the same two turns again.
 	artMu       sync.Mutex
@@ -341,6 +349,8 @@ func New(d Deps) http.Handler {
 		images:          d.Images,
 		background:      d.Background,
 		onArt:           d.OnChannelArt,
+		purgeInFlight:   map[string]bool{},
+		onKeptPurged:    d.OnKeptPurged,
 		artInFlight:     map[string]bool{},
 		resolveInFlight: map[string]bool{},
 		queueThumb:      d.QueueThumbnail,
@@ -455,6 +465,7 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelDetail)))
 	mux.Handle("PUT /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelsPut)))
 	mux.Handle("DELETE /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelsDelete)))
+	mux.Handle("GET /api/channels/{id}/keep-reads/impact", s.requireAuth(http.HandlerFunc(s.handleKeepReadsImpact)))
 	mux.Handle("POST /api/channels/{id}/subscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsSubscribe)))
 	mux.Handle("POST /api/channels/{id}/unsubscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsUnsubscribe)))
 	mux.Handle("POST /api/channels/{id}/scan", s.requireAuth(http.HandlerFunc(s.handleChannelScan)))
