@@ -76,7 +76,20 @@ func runGetTranscript(ctx context.Context, h *handler, raw json.RawMessage) tool
 	for i, l := range lines {
 		line := fmt.Sprintf("[%s] %s\n", clock(l.start), l.text)
 		if b.Len()+len(line) > limit {
-			fmt.Fprintf(&b, "[transcript truncated at the size limit; call get_transcript again with start_seconds=%d to continue]", lines[i].start)
+			next := lines[i].start
+			if i == 0 {
+				// One line (a second with a wall of cues) outgrows the whole
+				// budget. Advertising its own start would page in place
+				// forever, so cut it and resume at the next line, which starts
+				// on a later second (mergeCues never splits one).
+				b.WriteString(capText(line, limit-b.Len()) + "\n")
+				if len(lines) == 1 {
+					b.WriteString("[line cut at the size limit]")
+					return toolResult{Text: b.String()}
+				}
+				next = lines[1].start
+			}
+			fmt.Fprintf(&b, "[transcript truncated at the size limit; call get_transcript again with start_seconds=%d to continue]", next)
 			return toolResult{Text: b.String()}
 		}
 		b.WriteString(line)

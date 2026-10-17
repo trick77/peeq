@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/subtitles"
@@ -425,6 +426,35 @@ func TestGetTranscript_pagingNeverRepeatsACue(t *testing.T) {
 		if seen[key] != 1 {
 			t.Fatalf("%s shown %d times over %d pages", key, seen[key], pages)
 		}
+	}
+}
+
+// One second carrying more text than the whole budget: the reply must cut it
+// and point past it, never at the start it was asked for.
+func TestGetTranscript_oversizedSecondStillAdvances(t *testing.T) {
+	var cues []subtitles.Cue
+	for i := 0; i < 2000; i++ {
+		cues = append(cues, subtitles.Cue{StartSeconds: 5, Text: strings.Repeat("wörd ", 10)})
+	}
+	cues = append(cues, subtitles.Cue{StartSeconds: 9, Text: "after the wall"})
+	lib := &fakeLibrary{transcripts: map[string]*Transcript{"v": {VideoID: "v", Cues: cues}}}
+	text := toolText(t, callTool(t, lib, "get_transcript", map[string]any{"id": "v", "start_seconds": 5}))
+	if len(text) > maxToolTextBytes || !utf8.ValidString(text) {
+		t.Fatalf("text is %d bytes, valid utf-8 %v", len(text), utf8.ValidString(text))
+	}
+	if !strings.Contains(text, "start_seconds=9 ") {
+		t.Fatalf("want a resume at 9, got tail %q", text[len(text)-200:])
+	}
+	next := toolText(t, callTool(t, lib, "get_transcript", map[string]any{"id": "v", "start_seconds": 9}))
+	if !strings.Contains(next, "[00:09] after the wall") {
+		t.Errorf("resume page = %q", next)
+	}
+
+	// The wall is the whole transcript: cut, with no continuation at all.
+	lib.transcripts["v"].Cues = cues[:2000]
+	text = toolText(t, callTool(t, lib, "get_transcript", map[string]any{"id": "v", "start_seconds": 5}))
+	if strings.Contains(text, "start_seconds=") || !strings.Contains(text, "[line cut at the size limit]") {
+		t.Errorf("tail = %q", text[len(text)-200:])
 	}
 }
 
