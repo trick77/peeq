@@ -7,7 +7,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/ncruces/go-sqlite3 v0.23.3
 	github.com/trick77/llmwire v0.0.43
-	github.com/trick77/ship/kit v0.17.1
+	github.com/trick77/ship/kit v0.17.2
 	golang.org/x/image v0.46.0
 	golang.org/x/oauth2 v0.37.0
 	gopkg.in/yaml.v3 v3.0.1

@@ -602,9 +602,8 @@ func (r *Runner) now() time.Time {
 // instead of blocking for the full duration.
 func defaultSleep(ctx context.Context, d time.Duration) error {
 	// A zero or negative wait is reachable: on an idle Runner acquire grants
-	// the current instant. run.Sleep reports a cancelled ctx for that case; a
-	// tiny positive wait can still race it, and the cancelled ctx then stops
-	// the yt-dlp exec before it starts.
+	// the current instant. run.Sleep checks ctx before arming a timer, so a
+	// cancelled caller never proceeds on an already-due slot.
 	if !run.Sleep(ctx, d) {
 		return ctx.Err()
 	}
