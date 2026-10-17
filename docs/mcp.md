@@ -49,13 +49,19 @@ loom's `.env` as `PEEQ_MCP_TOKEN=…`, then restart both. Missing or wrong token
       "type": "http",
       "url": "${PEEQ_MCP_URL}",
       "headers": { "Authorization": "Bearer ${PEEQ_MCP_TOKEN}" },
-      "users": "${BACKEND_PEEQ_USERS}"
+      "users": "${BACKEND_PEEQ_USERS}",
+      "trustInstructions": true
     }
   }
 }
 ```
 
-with `PEEQ_MCP_URL=https://peeq.example.com/mcp` in loom's `.env`.
+with `PEEQ_MCP_URL=https://peeq.example.com/mcp` in loom's `.env`, and
+`BACKEND_PEEQ_USERS` set to the loom accounts that may read this library: their
+loom user id (the `id` loom's `GET /api/me` returns) or OIDC subject, comma
+separated. Usernames do not count, and an empty value means nobody.
+`trustInstructions` lets peeq's channel hint into loom's system prompt, which is
+what makes loom search peeq unprompted on those channels' topics.
 
 ## Authelia
 
