@@ -55,7 +55,7 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req settingsPatchRequest
-	if !decodeJSON(w, r, &req, maxJSONBody, "invalid request body") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxJSONBody, httpx.DecodeOptions{BadRequest: "invalid request body"}) {
 		return
 	}
 	// Reject negative numeric settings before they can be persisted: a
@@ -150,7 +150,7 @@ func (s *server) applyCookie(w http.ResponseWriter, r *http.Request, minimalAck 
 		return
 	}
 	var req cookiePutRequest
-	if !decodeJSON(w, r, &req, maxCookieBody, "invalid request body") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxCookieBody, httpx.DecodeOptions{BadRequest: "invalid request body"}) {
 		return
 	}
 	if req.Cookie == "" {

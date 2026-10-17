@@ -77,7 +77,7 @@ type downloadItem struct {
 // they already have, so this always re-queues.
 func (s *server) handleDownloadsPost(w http.ResponseWriter, r *http.Request) {
 	var req downloadsPostRequest
-	if !decodeJSON(w, r, &req, maxJSONBody, "url is required") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxJSONBody, httpx.DecodeOptions{BadRequest: "url is required"}) {
 		return
 	}
 

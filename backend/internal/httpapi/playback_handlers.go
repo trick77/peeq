@@ -63,7 +63,7 @@ func (s *server) handleGetPlaybackState(w http.ResponseWriter, r *http.Request) 
 // writes an hour for a value that doesn't change between them.
 func (s *server) handlePutPlaybackState(w http.ResponseWriter, r *http.Request) {
 	var req playbackPutRequest
-	if !decodeJSON(w, r, &req, maxJSONBody, "invalid request body") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxJSONBody, httpx.DecodeOptions{BadRequest: "invalid request body"}) {
 		return
 	}
 	if s.playback == nil {

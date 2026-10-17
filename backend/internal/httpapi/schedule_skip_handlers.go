@@ -95,7 +95,7 @@ func (s *server) skipTarget(w http.ResponseWriter, r *http.Request) (id string, 
 	var req skipRequest
 	// An absent body is the ordinary skip, so EOF is not an error here — only
 	// malformed JSON is.
-	if !decodeJSONOptional(w, r, &req, maxJSONBody, "invalid request body") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxJSONBody, httpx.DecodeOptions{BadRequest: "invalid request body", AllowEmpty: true}) {
 		return "", "", false
 	}
 	if req.At != "" {

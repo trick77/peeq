@@ -507,7 +507,7 @@ func (s *server) handleCategoryVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req categoryRequest
-	if !decodeJSON(w, r, &req, maxJSONBody, "category (string) is required") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxJSONBody, httpx.DecodeOptions{BadRequest: "category (string) is required"}) {
 		return
 	}
 	if req.Category == nil {
@@ -556,7 +556,7 @@ func (s *server) handleWatchedVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req watchedRequest
-	if !decodeJSON(w, r, &req, maxJSONBody, "watched (bool) is required") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxJSONBody, httpx.DecodeOptions{BadRequest: "watched (bool) is required"}) {
 		return
 	}
 	if req.Watched == nil {
@@ -609,7 +609,7 @@ func (s *server) handleResumeVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req resumeRequest
-	if !decodeJSON(w, r, &req, maxJSONBody, "position (number) is required") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxJSONBody, httpx.DecodeOptions{BadRequest: "position (number) is required"}) {
 		return
 	}
 	if req.Position == nil {

@@ -161,7 +161,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req channelsPostRequest
-	if !decodeJSON(w, r, &req, maxJSONBody, "url is required") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxJSONBody, httpx.DecodeOptions{BadRequest: "url is required"}) {
 		return
 	}
 	if strings.TrimSpace(req.URL) == "" {
@@ -758,7 +758,7 @@ func (s *server) handleChannelsPut(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var req channelsPutRequest
-	if !decodeJSON(w, r, &req, maxJSONBody, "invalid request body") {
+	if !httpx.DecodeJSONWith(w, r, &req, maxJSONBody, httpx.DecodeOptions{BadRequest: "invalid request body"}) {
 		return
 	}
 
