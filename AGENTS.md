@@ -113,7 +113,10 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 ## Database / migrations
 - New migration → next free number, `backend/internal/store/migrations/NNNN_*.sql`; kit's `migrate` refuses a
   repeated number. Records file names in `schema_migrations(name)`. `store.legacyNames` adopts the old runner's
-  `version` rows (pre-renumbering names); delete it once every instance booted the adopting build.
+  `version` rows (pre-renumbering names) and keeps `version` filled with them, so the pre-kit build still boots
+  after a rollback. A DB created fresh by a kit build has no `version` → can't roll back past kit. Delete
+  legacyNames/adoptLegacy/mirrorLegacy once no instance can roll back that far; `version` stays (TEXT PRIMARY KEY,
+  can't be dropped without a table rebuild; kit ignores it).
 - NEVER edit or rename a migration that has run anywhere real, `0001_init.sql` included: the runner skips a
   recorded name, so the edit silently never applies. Safe only before it ships; else write the next number.
 - Migration touching DATA (not just shape) → test on a populated DB stood up at the previous migration

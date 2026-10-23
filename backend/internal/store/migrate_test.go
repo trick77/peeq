@@ -29,10 +29,11 @@ func legacyBodies(t *testing.T) map[string][]byte {
 	return out
 }
 
-// applyLegacy is the old runner, kept here as the reference the switch is
-// measured against: schema_migrations(version), every file in lexicographic
-// name order, each in its own transaction. It stops after stopAt ("" runs
-// everything).
+// applyLegacy is the old runner (origin/master's Migrate before the switch),
+// kept here as the reference the switch is measured against and as the
+// previous release a rollback boots: schema_migrations(version), every file
+// not recorded under version applied in lexicographic name order, each in its
+// own transaction. It stops after stopAt ("" runs everything).
 func applyLegacy(t *testing.T, db *sql.DB, stopAt string) {
 	t.Helper()
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -48,18 +49,27 @@ func applyLegacy(t *testing.T, db *sql.DB, stopAt string) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		tx, err := db.Begin()
-		if err != nil {
+		var dummy int
+		err := db.QueryRow(`SELECT 1 FROM schema_migrations WHERE version = ?`, name).Scan(&dummy)
+		switch {
+		case err == nil:
+			// already applied
+		case !errors.Is(err, sql.ErrNoRows):
 			t.Fatal(err)
-		}
-		if _, err := tx.Exec(string(bodies[name])); err != nil {
-			t.Fatalf("apply %s: %v", name, err)
-		}
-		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
-			t.Fatal(err)
-		}
-		if err := tx.Commit(); err != nil {
-			t.Fatal(err)
+		default:
+			tx, err := db.Begin()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(string(bodies[name])); err != nil {
+				t.Fatalf("apply %s: %v", name, err)
+			}
+			if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
+				t.Fatal(err)
+			}
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if name == stopAt {
 			return
@@ -136,16 +146,61 @@ func assertNothingPending(t *testing.T, db *sql.DB) {
 	}
 }
 
+func columnsOf(t *testing.T, db *sql.DB, table string) []string {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?) ORDER BY cid`, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var cols []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			t.Fatal(err)
+		}
+		cols = append(cols, c)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return cols
+}
+
+// bookkeeping is every schema_migrations row as version|name|applied_at, with
+// NULL spelled out, sorted.
+func bookkeeping(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+	rows, err := db.Query(`SELECT coalesce(version, 'NULL') || '|' || coalesce(name, 'NULL') || '|' || applied_at
+		FROM schema_migrations ORDER BY 1`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var r string
+		if err := rows.Scan(&r); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 // The renumbering keeps the run order: the old names in the old runner's
-// lexicographic order, mapped through legacyNames, are kit's files in kit's
-// version order, one for one.
+// lexicographic order, mapped through legacyNames, are kit's first files in
+// kit's version order, one for one. Files added since come after them.
 func TestLegacyNames_keepTheOldRunOrder(t *testing.T) {
 	files, err := migrate.Files(migrations())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(legacyNames) != len(files) {
-		t.Fatalf("legacyNames has %d entries, %d files embedded", len(legacyNames), len(files))
+	if len(files) < len(legacyNames) {
+		t.Fatalf("legacyNames has %d entries, only %d files embedded", len(legacyNames), len(files))
 	}
 	old := make([]string, 0, len(legacyNames))
 	for n := range legacyNames {
@@ -156,8 +211,7 @@ func TestLegacyNames_keepTheOldRunOrder(t *testing.T) {
 		if got, want := legacyNames[n], files[i].Name; got != want {
 			t.Fatalf("position %d: %s maps to %s, kit runs %s there", i, n, got, want)
 		}
-		// The adopt step renames rows in place; a new name equal to another
-		// old name would collide on the primary key mid-way.
+		// The renumbering changed only the number.
 		if suffix := func(s string) string { return s[strings.IndexByte(s, '_'):] }; suffix(n) != suffix(legacyNames[n]) {
 			t.Fatalf("%s maps to %s: the name after the number changed", n, legacyNames[n])
 		}
@@ -215,21 +269,18 @@ func TestMigrate_adoptsAFullyMigratedOldDatabase(t *testing.T) {
 	if len(applied) != len(legacyNames) {
 		t.Fatalf("%d rows recorded, want %d", len(applied), len(legacyNames))
 	}
-	var cols []string
-	rows, err := db.Query(`SELECT name FROM pragma_table_info('schema_migrations') ORDER BY cid`)
-	if err != nil {
-		t.Fatal(err)
+	// And: the old runner's version column stays, holding the old names.
+	if cols := columnsOf(t, db, "schema_migrations"); !slices.Equal(cols, []string{"version", "applied_at", "name"}) {
+		t.Fatalf("schema_migrations columns = %v, want [version applied_at name]", cols)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var c string
-		if err := rows.Scan(&c); err != nil {
+	for old, name := range legacyNames {
+		var version string
+		if err := db.QueryRow(`SELECT version FROM schema_migrations WHERE name = ?`, name).Scan(&version); err != nil {
 			t.Fatal(err)
 		}
-		cols = append(cols, c)
-	}
-	if !slices.Equal(cols, []string{"name", "applied_at"}) {
-		t.Fatalf("schema_migrations columns = %v, want kit's [name applied_at]", cols)
+		if version != old {
+			t.Errorf("%s: version = %s, want %s", name, version, old)
+		}
 	}
 	// And: a later run of kit's runner has nothing to apply.
 	ran, err := migrate.Up(t.Context(), db, migrations(), migrateOptions)
@@ -294,14 +345,8 @@ func TestMigrate_refusesAnUnknownOldName(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "0004_from_a_branch.sql") {
 		t.Fatalf("Migrate = %v, want an error naming the unknown file", err)
 	}
-	var legacy bool
-	if err := db.QueryRow(
-		`SELECT count(*) > 0 FROM pragma_table_info('schema_migrations') WHERE name = 'version'`,
-	).Scan(&legacy); err != nil {
-		t.Fatal(err)
-	}
-	if !legacy {
-		t.Fatal("a failed adopt left schema_migrations half converted")
+	if cols := columnsOf(t, db, "schema_migrations"); !slices.Equal(cols, []string{"version", "applied_at"}) {
+		t.Fatalf("a failed adopt left schema_migrations as %v", cols)
 	}
 }
 
@@ -315,5 +360,103 @@ func TestMigrate_stopsOnACanceledContext(t *testing.T) {
 	// database.
 	if err := Migrate(ctx, db); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Migrate = %v, want context.Canceled", err)
+	}
+}
+
+// A rollback to the previous release runs the old runner, with the old file
+// set, against a database this build adopted. It must find every file it
+// knows recorded under version and boot as a no-op, both when adoption found
+// the old database complete and when kit applied the rest (its rows were
+// inserted with no version, which the old TEXT PRIMARY KEY accepts, and
+// mirrored afterwards).
+func TestMigrate_adoptedDatabaseBootsThePreviousRelease(t *testing.T) {
+	for _, stopAt := range []string{"", "0010_media_probe.sql"} {
+		t.Run("legacy stopped at "+stopAt, func(t *testing.T) {
+			// Given: an old database adopted and brought up to date by this build.
+			db := openTemp(t)
+			applyLegacy(t, db, stopAt)
+			if err := Migrate(t.Context(), db); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`UPDATE schema_migrations SET applied_at = 'adopted'`); err != nil {
+				t.Fatal(err)
+			}
+			wantSchema, wantRows := schemaOf(t, db), bookkeeping(t, db)
+			for _, r := range wantRows {
+				if strings.HasPrefix(r, "NULL|") || strings.Contains(r, "|NULL|") {
+					t.Fatalf("row left half recorded: %s", r)
+				}
+			}
+
+			// When: the previous release boots on it.
+			applyLegacy(t, db, "")
+
+			// Then: it applied nothing and recorded nothing.
+			if got := schemaOf(t, db); got != wantSchema {
+				t.Fatalf("old runner changed the schema\n--- after\n%s\n--- before\n%s", got, wantSchema)
+			}
+			if got := bookkeeping(t, db); !slices.Equal(got, wantRows) {
+				t.Fatalf("old runner changed schema_migrations\n--- after\n%v\n--- before\n%v", got, wantRows)
+			}
+
+			// And: rolling forward again boots with nothing pending.
+			if err := Migrate(t.Context(), db); err != nil {
+				t.Fatal(err)
+			}
+			assertNothingPending(t, db)
+		})
+	}
+}
+
+func TestMigrate_namesARowTheOldRunnerAddedAfterARollback(t *testing.T) {
+	// Given: an adopted database on which the previous release recorded a file
+	// it applied, under version only.
+	db := openTemp(t)
+	applyLegacy(t, db, "")
+	if err := Migrate(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = '0038_drop_sessions_users.sql'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES ('0038_drop_sessions_users.sql')`); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: this build boots again.
+	if err := Migrate(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: the row carries its current name, and the file did not run again.
+	if _, ok := appliedNames(t, db)["0043_drop_sessions_users.sql"]; !ok {
+		t.Fatal("0043_drop_sessions_users.sql not named")
+	}
+	assertNothingPending(t, db)
+}
+
+func TestMigrate_mirrorsAFileAddedAfterTheRenumbering(t *testing.T) {
+	// Given: an adopted database and a file the old runner never had.
+	db := openTemp(t)
+	applyLegacy(t, db, "")
+	if err := Migrate(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schema_migrations (name) VALUES ('0099_later.sql')`); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: this build boots again.
+	if err := mirrorLegacy(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: its version is its own name, which no old file matches.
+	var version string
+	if err := db.QueryRow(`SELECT version FROM schema_migrations WHERE name = '0099_later.sql'`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != "0099_later.sql" {
+		t.Fatalf("version = %q, want the current name", version)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 
@@ -25,21 +26,21 @@ var migrateOptions = migrate.Options{Dialect: migrate.SQLite}
 
 // Migrate applies any embedded migrations not yet recorded in
 // schema_migrations, each in its own transaction, in version order. A
-// database the old runner wrote is adopted first.
+// database the old runner wrote is adopted first, and stays readable by it.
 func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := adoptLegacy(ctx, db); err != nil {
 		return err
 	}
 	_, err := migrate.Up(ctx, db, migrations(), migrateOptions)
-	return err
+	return errors.Join(err, mirrorLegacy(ctx, db))
 }
 
 // legacyNames maps every file name the old runner may have recorded to the
 // file's name today. The old runner keyed schema_migrations.version by file
 // name in lexicographic order, which let five numbers repeat; kit orders by
 // the number and refuses a repeat, so every file from the first duplicate on
-// was renumbered, keeping the order. Remove this once every instance has
-// booted a build that adopts.
+// was renumbered, keeping the order. Remove this, adoptLegacy and
+// mirrorLegacy once no instance can roll back past the adopting build.
 var legacyNames = map[string]string{
 	"0001_init.sql":                       "0001_init.sql",
 	"0002_subtitles_default.sql":          "0002_subtitles_default.sql",
@@ -86,36 +87,58 @@ var legacyNames = map[string]string{
 	"0038_drop_sessions_users.sql":        "0043_drop_sessions_users.sql",
 }
 
-// adoptLegacy turns the old runner's schema_migrations(version, applied_at)
-// into kit's (name, applied_at) and renames each recorded file to its
-// current name, in one transaction. A fresh database, or one already adopted,
-// has no version column and is left alone. A recorded name the map does not
-// know is an error: the history would be silently cut.
+// adoptLegacy adds kit's name column next to the old runner's version
+// column and fills it with each recorded file's current name, in one
+// transaction. version keeps the old names, so the previous release still
+// finds every file it applied and boots as a no-op after a rollback. A fresh
+// database, or one already adopted with every name set, is left alone. A
+// recorded name the map does not know is an error: the history would be
+// silently cut.
 //
-// Only the applied_at default differs from kit's table afterwards; kit never
-// reads it and every insert takes the default, so the table is not rebuilt.
+// Rows the old runner adds after a rollback carry no name; the next boot
+// fills them the same way.
 func adoptLegacy(ctx context.Context, db *sql.DB) error {
+	var hasVersion, hasName bool
+	if err := db.QueryRowContext(ctx, `SELECT
+		count(*) FILTER (WHERE name = 'version') > 0,
+		count(*) FILTER (WHERE name = 'name') > 0
+		FROM pragma_table_info('schema_migrations')`,
+	).Scan(&hasVersion, &hasName); err != nil {
+		return fmt.Errorf("read schema_migrations: %w", err)
+	}
+	if !hasVersion {
+		return nil
+	}
+	if hasName {
+		var unnamed bool
+		if err := db.QueryRowContext(ctx,
+			`SELECT count(*) > 0 FROM schema_migrations WHERE name IS NULL`,
+		).Scan(&unnamed); err != nil {
+			return fmt.Errorf("read schema_migrations: %w", err)
+		}
+		if !unnamed {
+			return nil
+		}
+	}
+
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var legacy bool
-	err = tx.QueryRowContext(ctx,
-		`SELECT count(*) > 0 FROM pragma_table_info('schema_migrations') WHERE name = 'version'`,
-	).Scan(&legacy)
-	if err != nil || !legacy {
-		return err
+	if !hasName {
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE schema_migrations ADD COLUMN name TEXT`); err != nil {
+			return fmt.Errorf("adopt schema_migrations: %w", err)
+		}
 	}
-
 	known := make([]any, 0, len(legacyNames))
 	for old := range legacyNames {
 		known = append(known, old)
 	}
 	var unknown sql.NullString
 	if err := tx.QueryRowContext(ctx,
-		`SELECT min(version) FROM schema_migrations WHERE version NOT IN (`+Placeholders(len(known))+`)`, //nolint:gosec // placeholders only
+		`SELECT min(version) FROM schema_migrations WHERE name IS NULL AND version NOT IN (`+Placeholders(len(known))+`)`, //nolint:gosec // placeholders only
 		known...,
 	).Scan(&unknown); err != nil {
 		return fmt.Errorf("read schema_migrations: %w", err)
@@ -123,19 +146,50 @@ func adoptLegacy(ctx context.Context, db *sql.DB) error {
 	if unknown.Valid {
 		return fmt.Errorf("adopt schema_migrations: applied migration %s has no current file", unknown.String)
 	}
-
-	stmts := []string{`ALTER TABLE schema_migrations RENAME COLUMN version TO name`}
-	args := [][]any{nil}
 	for old, name := range legacyNames {
-		if old != name {
-			stmts = append(stmts, `UPDATE schema_migrations SET name = ? WHERE name = ?`)
-			args = append(args, []any{name, old})
-		}
-	}
-	for i, stmt := range stmts {
-		if _, err := tx.ExecContext(ctx, stmt, args[i]...); err != nil {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE schema_migrations SET name = ? WHERE version = ? AND name IS NULL`, name, old,
+		); err != nil {
 			return fmt.Errorf("adopt schema_migrations: %w", err)
 		}
+	}
+	return tx.Commit()
+}
+
+// mirrorLegacy gives every row kit recorded on an adopted database a version:
+// the file's old name where it has one, so the old runner does not run it a
+// second time after a rollback, else its current name, which the old runner
+// has no file for. It runs after every boot, so rows a crash left without a
+// version are filled on the next one.
+func mirrorLegacy(ctx context.Context, db *sql.DB) error {
+	var hasVersion, unmirrored bool
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) > 0 FROM pragma_table_info('schema_migrations') WHERE name = 'version'`,
+	).Scan(&hasVersion); err != nil || !hasVersion {
+		return err
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) > 0 FROM schema_migrations WHERE version IS NULL`,
+	).Scan(&unmirrored); err != nil || !unmirrored {
+		return err
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for old, name := range legacyNames {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE schema_migrations SET version = ? WHERE name = ? AND version IS NULL`, old, name,
+		); err != nil {
+			return fmt.Errorf("mirror schema_migrations: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE schema_migrations SET version = name WHERE version IS NULL`,
+	); err != nil {
+		return fmt.Errorf("mirror schema_migrations: %w", err)
 	}
 	return tx.Commit()
 }
