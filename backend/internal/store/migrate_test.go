@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/trick77/ship/kit/migrate"
 )
@@ -80,12 +81,12 @@ func applyLegacy(t *testing.T, db *sql.DB, stopAt string) {
 	}
 }
 
-// schemaOf is every object's DDL except the bookkeeping table, whose shape is
-// the one thing the switch changes on purpose.
+// schemaOf is every object's DDL except the bookkeeping tables and what hangs
+// off them, whose shape is the one thing the switch changes on purpose.
 func schemaOf(t *testing.T, db *sql.DB) string {
 	t.Helper()
 	rows, err := db.Query(`SELECT type, name, coalesce(sql, '') FROM sqlite_master
-		WHERE name NOT LIKE 'schema_migrations%' ORDER BY type, name`)
+		WHERE tbl_name NOT LIKE 'schema_migrations%' ORDER BY type, name`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,6 +192,49 @@ func bookkeeping(t *testing.T, db *sql.DB) []string {
 	return out
 }
 
+// assertOldRunnerIsANoOp boots the previous release on db and fails if it
+// applied or recorded anything.
+func assertOldRunnerIsANoOp(t *testing.T, db *sql.DB) {
+	t.Helper()
+	wantSchema, wantRows := schemaOf(t, db), bookkeeping(t, db)
+	for _, r := range wantRows {
+		if strings.HasPrefix(r, "NULL|") || strings.Contains(r, "|NULL|") {
+			t.Fatalf("row left half recorded: %s", r)
+		}
+	}
+	applyLegacy(t, db, "")
+	if got := schemaOf(t, db); got != wantSchema {
+		t.Fatalf("old runner changed the schema\n--- after\n%s\n--- before\n%s", got, wantSchema)
+	}
+	if got := bookkeeping(t, db); !slices.Equal(got, wantRows) {
+		t.Fatalf("old runner changed schema_migrations\n--- after\n%v\n--- before\n%v", got, wantRows)
+	}
+}
+
+// bookkeepingObjects is the DDL of schema_migrations' index, lookup table and
+// trigger, which every database gets whatever created it.
+func bookkeepingObjects(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM sqlite_master
+		WHERE name LIKE 'schema_migrations_%' AND sql IS NOT NULL ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, n)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 // The renumbering keeps the run order: the old names in the old runner's
 // lexicographic order, mapped through legacyNames, are kit's first files in
 // kit's version order, one for one. Files added since come after them.
@@ -233,7 +277,15 @@ func TestMigrate_freshSchemaMatchesTheOldRunner(t *testing.T) {
 	if got, want := schemaOf(t, fresh), schemaOf(t, legacy); got != want {
 		t.Fatalf("schema differs from the old runner's\n--- kit\n%s\n--- old\n%s", got, want)
 	}
-	// And: the bookkeeping table is kit's, with every current file recorded.
+	// And: the bookkeeping table has the shape an adopted one has, with every
+	// current file recorded.
+	if cols := columnsOf(t, fresh, "schema_migrations"); !slices.Equal(cols, []string{"version", "applied_at", "name"}) {
+		t.Fatalf("schema_migrations columns = %v, want [version applied_at name]", cols)
+	}
+	wantObjects := []string{"schema_migrations_legacy", "schema_migrations_name", "schema_migrations_version"}
+	if got := bookkeepingObjects(t, fresh); !slices.Equal(got, wantObjects) {
+		t.Fatalf("bookkeeping objects = %v, want %v", got, wantObjects)
+	}
 	files, err := migrate.Files(migrations())
 	if err != nil {
 		t.Fatal(err)
@@ -245,6 +297,9 @@ func TestMigrate_freshSchemaMatchesTheOldRunner(t *testing.T) {
 		}
 	}
 	assertNothingPending(t, fresh)
+	// And: the previous release boots on it as a no-op, since every row
+	// carries the old name as version.
+	assertOldRunnerIsANoOp(t, fresh)
 }
 
 func TestMigrate_adoptsAFullyMigratedOldDatabase(t *testing.T) {
@@ -329,6 +384,35 @@ func TestMigrate_adoptsAPartlyMigratedOldDatabase(t *testing.T) {
 	}
 }
 
+func TestMigrate_adoptsAFileTheOldRunnerAppliedAndDeleted(t *testing.T) {
+	// Given: a production database: the old runner ran
+	// 0021_backfill_inbox_summaries.sql before #255 deleted it, and stopped
+	// at 0020.
+	db := openTemp(t)
+	applyLegacy(t, db, "0020_inbox_summaries.sql")
+	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES ('0021_backfill_inbox_summaries.sql')`); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: the new build boots.
+	if err := Migrate(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: the row keeps its name, the rest ran, and the previous release
+	// boots as a no-op.
+	var version string
+	if err := db.QueryRow(`SELECT version FROM schema_migrations
+		WHERE name = '0021_backfill_inbox_summaries.sql'`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != "0021_backfill_inbox_summaries.sql" {
+		t.Fatalf("version = %q", version)
+	}
+	assertNothingPending(t, db)
+	assertOldRunnerIsANoOp(t, db)
+}
+
 func TestMigrate_refusesAnUnknownOldName(t *testing.T) {
 	// Given: an old database that recorded a file this build does not have.
 	db := openTemp(t)
@@ -336,6 +420,15 @@ func TestMigrate_refusesAnUnknownOldName(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES ('0004_from_a_branch.sql')`); err != nil {
 		t.Fatal(err)
 	}
+	oldRows := func() string {
+		var rows string
+		if err := db.QueryRow(`SELECT group_concat(version || '|' || applied_at, ',') FROM
+			(SELECT * FROM schema_migrations ORDER BY version)`).Scan(&rows); err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	wantRows := oldRows()
 
 	// When: the new build boots.
 	err := Migrate(t.Context(), db)
@@ -347,6 +440,12 @@ func TestMigrate_refusesAnUnknownOldName(t *testing.T) {
 	}
 	if cols := columnsOf(t, db, "schema_migrations"); !slices.Equal(cols, []string{"version", "applied_at"}) {
 		t.Fatalf("a failed adopt left schema_migrations as %v", cols)
+	}
+	if got := oldRows(); got != wantRows {
+		t.Fatalf("a failed adopt changed the rows\n--- after\n%s\n--- before\n%s", got, wantRows)
+	}
+	if got := bookkeepingObjects(t, db); len(got) != 0 {
+		t.Fatalf("a failed adopt created %v", got)
 	}
 }
 
@@ -366,9 +465,8 @@ func TestMigrate_stopsOnACanceledContext(t *testing.T) {
 // A rollback to the previous release runs the old runner, with the old file
 // set, against a database this build adopted. It must find every file it
 // knows recorded under version and boot as a no-op, both when adoption found
-// the old database complete and when kit applied the rest (its rows were
-// inserted with no version, which the old TEXT PRIMARY KEY accepts, and
-// mirrored afterwards).
+// the old database complete and when kit applied the rest (the trigger gave
+// its rows the old names).
 func TestMigrate_adoptedDatabaseBootsThePreviousRelease(t *testing.T) {
 	for _, stopAt := range []string{"", "0010_media_probe.sql"} {
 		t.Run("legacy stopped at "+stopAt, func(t *testing.T) {
@@ -381,23 +479,9 @@ func TestMigrate_adoptedDatabaseBootsThePreviousRelease(t *testing.T) {
 			if _, err := db.Exec(`UPDATE schema_migrations SET applied_at = 'adopted'`); err != nil {
 				t.Fatal(err)
 			}
-			wantSchema, wantRows := schemaOf(t, db), bookkeeping(t, db)
-			for _, r := range wantRows {
-				if strings.HasPrefix(r, "NULL|") || strings.Contains(r, "|NULL|") {
-					t.Fatalf("row left half recorded: %s", r)
-				}
-			}
 
-			// When: the previous release boots on it.
-			applyLegacy(t, db, "")
-
-			// Then: it applied nothing and recorded nothing.
-			if got := schemaOf(t, db); got != wantSchema {
-				t.Fatalf("old runner changed the schema\n--- after\n%s\n--- before\n%s", got, wantSchema)
-			}
-			if got := bookkeeping(t, db); !slices.Equal(got, wantRows) {
-				t.Fatalf("old runner changed schema_migrations\n--- after\n%v\n--- before\n%v", got, wantRows)
-			}
+			// When / Then: the previous release boots on it and changes nothing.
+			assertOldRunnerIsANoOp(t, db)
 
 			// And: rolling forward again boots with nothing pending.
 			if err := Migrate(t.Context(), db); err != nil {
@@ -435,28 +519,128 @@ func TestMigrate_namesARowTheOldRunnerAddedAfterARollback(t *testing.T) {
 	assertNothingPending(t, db)
 }
 
-func TestMigrate_mirrorsAFileAddedAfterTheRenumbering(t *testing.T) {
-	// Given: an adopted database and a file the old runner never had.
+func TestMigrate_kitsInsertSetsVersionInItsOwnTransaction(t *testing.T) {
+	// Given: an old database stopped after 0010_media_probe.sql, prepared.
 	db := openTemp(t)
-	applyLegacy(t, db, "")
+	applyLegacy(t, db, "0010_media_probe.sql")
+	if err := prepareLegacy(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: kit records a renumbered file and then crashes before commit.
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations (name) VALUES ('0014_video_state_version.sql')`); err != nil {
+		t.Fatal(err)
+	}
+	var inTx string
+	if err := tx.QueryRow(`SELECT version FROM schema_migrations
+		WHERE name = '0014_video_state_version.sql'`).Scan(&inTx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: the version was there before the commit, and went with the row.
+	if inTx != "0010_video_state_version.sql" {
+		t.Fatalf("version inside kit's transaction = %q, want the old name", inTx)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM schema_migrations
+		WHERE version = '0010_video_state_version.sql' OR name = '0014_video_state_version.sql'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("%d rows survived the rollback", n)
+	}
+}
+
+func TestMigrate_kitAloneLeavesNoRowWithoutVersion(t *testing.T) {
+	// Given: a prepared old database and a file the old runner never had.
+	db := openTemp(t)
+	applyLegacy(t, db, "0010_media_probe.sql")
+	if err := prepareLegacy(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	files := fstest.MapFS{"9999_later.sql": &fstest.MapFile{Data: []byte(`SELECT 1;`)}}
+	if err := fs.WalkDir(migrations(), ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		body, err := fs.ReadFile(migrations(), p)
+		files[p] = &fstest.MapFile{Data: body}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// When: kit's runner applies the rest, with nothing run after it.
+	if _, err := migrate.Up(t.Context(), db, files, migrateOptions); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then: every row it recorded has a version: the old name for a
+	// renumbered file, its own name for one added later.
+	var unversioned int
+	if err := db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version IS NULL`).Scan(&unversioned); err != nil {
+		t.Fatal(err)
+	}
+	if unversioned != 0 {
+		t.Fatalf("%d rows without version", unversioned)
+	}
+	var version string
+	if err := db.QueryRow(`SELECT version FROM schema_migrations WHERE name = '9999_later.sql'`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != "9999_later.sql" {
+		t.Fatalf("version = %q, want the current name", version)
+	}
+	assertOldRunnerIsANoOp(t, db)
+}
+
+func TestMigrate_secondBootWritesNothing(t *testing.T) {
+	// Given: a migrated database and a connection watching it for commits.
+	db := openTemp(t)
 	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations (name) VALUES ('0099_later.sql')`); err != nil {
+	watch, err := db.Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watch.Close()
+	dataVersion := func() int {
+		var v int
+		if err := watch.QueryRowContext(t.Context(), `PRAGMA data_version`).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	before := dataVersion()
+
+	// When: the next boot migrates again.
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
-	// When: this build boots again.
-	if err := mirrorLegacy(t.Context(), db); err != nil {
+	// Then: no other connection committed a change.
+	if after := dataVersion(); after != before {
+		t.Fatalf("data_version %d -> %d: a boot with nothing to do wrote", before, after)
+	}
+}
+
+func TestMigrate_refusesASchemaMigrationsWithoutVersion(t *testing.T) {
+	// Given: a database an unreleased build created with kit's own table.
+	db := openTemp(t)
+	if _, err := db.Exec(migrateOptions.Dialect.CreateTable); err != nil {
 		t.Fatal(err)
 	}
 
-	// Then: its version is its own name, which no old file matches.
-	var version string
-	if err := db.QueryRow(`SELECT version FROM schema_migrations WHERE name = '0099_later.sql'`).Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	if version != "0099_later.sql" {
-		t.Fatalf("version = %q, want the current name", version)
+	// When / Then: the boot stops instead of guessing.
+	if err := Migrate(t.Context(), db); err == nil || !strings.Contains(err.Error(), "no version column") {
+		t.Fatalf("Migrate = %v, want the missing version column", err)
 	}
 }

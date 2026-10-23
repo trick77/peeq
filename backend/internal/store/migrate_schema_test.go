@@ -19,6 +19,9 @@ import (
 // migration, set the database up as that version saw it, and then go on.
 func applyThrough(t *testing.T, db *sql.DB, stopAt string) {
 	t.Helper()
+	if err := prepareLegacy(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
 	files, err := migrate.Files(migrations())
 	if err != nil {
 		t.Fatal(err)
