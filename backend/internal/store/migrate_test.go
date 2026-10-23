@@ -385,32 +385,124 @@ func TestMigrate_adoptsAPartlyMigratedOldDatabase(t *testing.T) {
 }
 
 func TestMigrate_adoptsAFileTheOldRunnerAppliedAndDeleted(t *testing.T) {
-	// Given: a production database: the old runner ran
-	// 0021_backfill_inbox_summaries.sql before #255 deleted it, and stopped
-	// at 0020.
-	db := openTemp(t)
-	applyLegacy(t, db, "0020_inbox_summaries.sql")
-	if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES ('0021_backfill_inbox_summaries.sql')`); err != nil {
+	for _, tc := range []struct{ deleted, stopAt string }{
+		// 0021_backfill_inbox_summaries.sql ran on every database before #255
+		// deleted it.
+		{"0021_backfill_inbox_summaries.sql", "0020_inbox_summaries.sql"},
+		{"0002_auth.sql", "0001_init.sql"},
+		{"0002_auto_unsubscribe.sql", "0001_init.sql"},
+	} {
+		t.Run(tc.deleted, func(t *testing.T) {
+			// Given: an old database: the old runner ran a file that was
+			// deleted later, and stopped before the rest.
+			db := openTemp(t)
+			applyLegacy(t, db, tc.stopAt)
+			if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, tc.deleted); err != nil {
+				t.Fatal(err)
+			}
+
+			// When: the new build boots.
+			if err := Migrate(t.Context(), db); err != nil {
+				t.Fatal(err)
+			}
+
+			// Then: the row keeps its name, the rest ran, and the previous
+			// release boots as a no-op.
+			var version string
+			if err := db.QueryRow(`SELECT version FROM schema_migrations WHERE name = ?`, tc.deleted).Scan(&version); err != nil {
+				t.Fatal(err)
+			}
+			if version != tc.deleted {
+				t.Fatalf("version = %q", version)
+			}
+			assertNothingPending(t, db)
+			assertOldRunnerIsANoOp(t, db)
+		})
+	}
+}
+
+func TestMigrate_twoProcessesAdoptTheSameOldDatabase(t *testing.T) {
+	// Given: an old database, and a second process whose plain read saw it
+	// unadopted.
+	path := filepath.Join(t.TempDir(), "t.db")
+	first, err := Open(path)
+	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = first.Close() })
+	second, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+	applyLegacy(t, first, "0010_media_probe.sql")
+	stale, err := readLegacyState(t.Context(), second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale.current() {
+		t.Fatal("an old database read as current")
+	}
 
-	// When: the new build boots.
+	// When: the first process adopts it, then the second acts on its read.
+	if err := prepareLegacy(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	if err := adoptLegacy(t.Context(), second); err != nil {
+		t.Fatalf("second adopt = %v", err)
+	}
+
+	// Then: the database is adopted once and migrates.
+	if err := Migrate(t.Context(), second); err != nil {
+		t.Fatal(err)
+	}
+	assertNothingPending(t, first)
+	assertOldRunnerIsANoOp(t, first)
+}
+
+func TestMigrate_restoresAChangedBookkeepingObject(t *testing.T) {
+	// Given: a migrated database whose trigger, index and lookup rows are not
+	// what this build creates, as after a change to legacyObjects or
+	// legacyNames.
+	db := openTemp(t)
+	if err := Migrate(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`DROP TRIGGER schema_migrations_version`,
+		`CREATE TRIGGER schema_migrations_version AFTER INSERT ON schema_migrations BEGIN SELECT 1; END`,
+		`DROP INDEX schema_migrations_name`,
+		`INSERT INTO schema_migrations_legacy (name, version) VALUES ('9999_gone.sql', '9999_gone.sql')`,
+		`UPDATE schema_migrations_legacy SET version = 'wrong.sql' WHERE name = '0006_videos_category_index.sql'`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// When: the next boot migrates.
 	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
-	// Then: the row keeps its name, the rest ran, and the previous release
-	// boots as a no-op.
-	var version string
-	if err := db.QueryRow(`SELECT version FROM schema_migrations
-		WHERE name = '0021_backfill_inbox_summaries.sql'`).Scan(&version); err != nil {
+	// Then: every object is stored as legacyObjects has it, and the lookup
+	// holds exactly legacyNames.
+	for _, o := range legacyObjects {
+		var stmt string
+		if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE name = ?`, o.name).Scan(&stmt); err != nil {
+			t.Fatalf("%s: %v", o.name, err)
+		}
+		if stmt != o.sql {
+			t.Fatalf("%s stored as\n%s", o.name, stmt)
+		}
+	}
+	state, err := readLegacyState(t.Context(), db)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if version != "0021_backfill_inbox_summaries.sql" {
-		t.Fatalf("version = %q", version)
+	if !state.current() {
+		t.Fatalf("state after the boot = %+v", state)
 	}
-	assertNothingPending(t, db)
-	assertOldRunnerIsANoOp(t, db)
 }
 
 func TestMigrate_refusesAnUnknownOldName(t *testing.T) {
