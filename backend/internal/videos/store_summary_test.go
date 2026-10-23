@@ -380,7 +380,7 @@ func TestCategoryResetSetTellsResetsFromRemaps(t *testing.T) {
 		stmt string
 		want bool
 	}{
-		{"the real 0004/0015 statement", `UPDATE videos SET category = 'uncategorized' WHERE summary <> '' AND category_manual = 0`, true},
+		{"the real 0004/0019 statement", `UPDATE videos SET category = 'uncategorized' WHERE summary <> '' AND category_manual = 0`, true},
 		{"no spaces around the equals", `UPDATE videos SET category='uncategorized' WHERE summary <> ''`, true},
 		{"lowercased keywords", `update videos set category = 'uncategorized'`, true},
 		{"remap OUT of uncategorized", `UPDATE videos SET category = 'science' WHERE category = 'uncategorized'`, false},

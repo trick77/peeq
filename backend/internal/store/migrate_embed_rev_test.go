@@ -21,7 +21,7 @@ func TestMigrate0022_existingRowsAreStale(t *testing.T) {
 
 	var rev int
 	if err := db.QueryRow(`SELECT embed_rev FROM videos WHERE id='v1'`).Scan(&rev); err != nil {
-		t.Fatalf("embed_rev missing after 0018: %v", err)
+		t.Fatalf("embed_rev missing after 0022: %v", err)
 	}
 	if rev != 0 {
 		t.Errorf("embed_rev = %d for a pre-existing row, want 0 (stale)", rev)
@@ -49,7 +49,7 @@ func TestMigrate0023_dropsQueueButKeepsEmbedRev(t *testing.T) {
 	}
 	// The queue exists at 0022 and takes rows.
 	if _, err := db.Exec(`INSERT INTO embed_jobs (video_id) VALUES ('v1')`); err != nil {
-		t.Fatalf("embed_jobs should exist before 0019: %v", err)
+		t.Fatalf("embed_jobs should exist before 0023: %v", err)
 	}
 
 	if err := Migrate(t.Context(), db); err != nil {
@@ -57,7 +57,7 @@ func TestMigrate0023_dropsQueueButKeepsEmbedRev(t *testing.T) {
 	}
 
 	if _, err := db.Exec(`INSERT INTO embed_jobs (video_id) VALUES ('v1')`); err == nil {
-		t.Error("embed_jobs still exists after 0019")
+		t.Error("embed_jobs still exists after 0023")
 	}
 	var rev int
 	if err := db.QueryRow(`SELECT embed_rev FROM videos WHERE id='v1'`).Scan(&rev); err != nil {

@@ -40,7 +40,7 @@ func TestMigrate0043_dropsSessionsAndUsersOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 		if n != 0 {
-			t.Errorf("%s still exists after 0038", tbl)
+			t.Errorf("%s still exists after 0043", tbl)
 		}
 	}
 	if after := counts(); after["channels"] != before["channels"] || after["videos"] != before["videos"] {

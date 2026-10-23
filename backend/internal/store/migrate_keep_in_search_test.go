@@ -26,7 +26,7 @@ func TestMigrate0042_keepReadsOnForAllAndByDefault(t *testing.T) {
 			t.Fatal(err)
 		}
 		if keep != 1 {
-			t.Fatalf("%s keep_reads = %d after 0037, want 1", id, keep)
+			t.Fatalf("%s keep_reads = %d after 0042, want 1", id, keep)
 		}
 	}
 	var ledger int
@@ -34,7 +34,7 @@ func TestMigrate0042_keepReadsOnForAllAndByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ledger != 2 {
-		t.Fatalf("ledger rows = %d after 0037, want 2", ledger)
+		t.Fatalf("ledger rows = %d after 0042, want 2", ledger)
 	}
 
 	if _, err := db.Exec(`INSERT INTO channels (id, name) VALUES ('UCnew','new')`); err != nil {

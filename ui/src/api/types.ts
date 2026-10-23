@@ -162,7 +162,7 @@ export type Video = {
   // backend/internal/videos/category.go).
   category: string;
   // YouTube's own facts about the video, straight from yt-dlp. All optional:
-  // they arrive only with downloads made after migration 0009, and nothing
+  // they arrive only with downloads made after migration 0012, and nothing
   // backfills older rows. Note `category` above (peeq's classification) and
   // `yt_categories` here (YouTube's labels) are different things.
   media_type?: string;
@@ -174,7 +174,7 @@ export type Video = {
   // endpoint and are not folded in.
   //
   // All optional together: they are omitempty on the wire, so a video analysed
-  // before migration 0028 has none of them and the panel drops the group rather
+  // before migration 0032 has none of them and the panel drops the group rather
   // than reporting a cost of zero.
   //
   // chat_cached_tokens is a SUBSET of chat_prompt_tokens, not an addition to

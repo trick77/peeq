@@ -658,7 +658,7 @@ func TestMigrate_dropsAssetPathColumns(t *testing.T) {
 			t.Fatal(err)
 		}
 		if n != 0 {
-			t.Errorf("%s.%s still present after 0024", c.table, c.col)
+			t.Errorf("%s.%s still present after 0028", c.table, c.col)
 		}
 	}
 
@@ -673,7 +673,7 @@ func TestMigrate_dropsAssetPathColumns(t *testing.T) {
 			t.Fatal(err)
 		}
 		if n != 1 {
-			t.Errorf("%s missing after 0024 — did the migration become a table rebuild?", tbl)
+			t.Errorf("%s missing after 0028 — did the migration become a table rebuild?", tbl)
 		}
 	}
 }
