@@ -24,7 +24,7 @@ type ChannelStats struct {
 }
 
 // channelCategoryStatsSQL groups on every column it reads so the covering
-// index from migration 0036 answers it without opening a video row.
+// index from migration 0040 answers it without opening a video row.
 const channelCategoryStatsSQL = `
 SELECT channel_id, category, yt_categories, COUNT(*)
 FROM videos INDEXED BY idx_videos_channel_categories

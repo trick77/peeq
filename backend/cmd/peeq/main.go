@@ -101,7 +101,7 @@ func run() error {
 	}
 
 	// Sign-in before the database: a provider that cannot be reached, or a
-	// config it refuses, stops the boot before any migration has run (0038
+	// config it refuses, stops the boot before any migration has run (0043
 	// drops tables, and a boot that dies after it cannot be rolled back
 	// without a restore). Discovery is bounded, so a blackholed provider
 	// fails the boot instead of hanging it before anything listens.

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// openMigratedThrough stands a DB up at the state just BEFORE 0014, so the
+// openMigratedThrough stands a DB up at the state just BEFORE 0018, so the
 // rescue clauses in that migration act on rows shaped the way the bug left
 // them in production.
 func openMigratedThrough(t *testing.T, stopAt string) *sql.DB {
@@ -20,7 +20,7 @@ func openMigratedThrough(t *testing.T, stopAt string) *sql.DB {
 	return db
 }
 
-func TestMigrate0014_rebuildAcceptsUnavailableAndKeepsRows(t *testing.T) {
+func TestMigrate0018_rebuildAcceptsUnavailableAndKeepsRows(t *testing.T) {
 	db := openMigratedThrough(t, "0017_tombstone_thumbnail.sql")
 	if _, err := db.Exec(`INSERT INTO channels (id,name) VALUES ('UC1','c')`); err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestMigrate0014_rebuildAcceptsUnavailableAndKeepsRows(t *testing.T) {
 		t.Fatal("CHECK must still reject an unknown state")
 	}
 	// The indexes survive the drop/rename. The per-channel one is checked under
-	// the name 0032 gave its replacement.
+	// the name 0036 gave its replacement.
 	for _, idx := range []string{"idx_channel_videos_channel_state", "idx_channel_videos_state"} {
 		var n int
 		if err := db.QueryRow(
@@ -70,7 +70,7 @@ func TestMigrate0014_rebuildAcceptsUnavailableAndKeepsRows(t *testing.T) {
 // The rescue clauses: a video stranded by the old behaviour — ledger row stuck
 // at 'queued', videos row a permanent 'error' — is adopted into the new state
 // and its dead Library card removed.
-func TestMigrate0014_rescuesStrandedTerminalFailures(t *testing.T) {
+func TestMigrate0018_rescuesStrandedTerminalFailures(t *testing.T) {
 	db := openMigratedThrough(t, "0017_tombstone_thumbnail.sql")
 	if _, err := db.Exec(`INSERT INTO channels (id,name) VALUES ('UC1','c')`); err != nil {
 		t.Fatal(err)

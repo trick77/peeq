@@ -44,7 +44,7 @@ var imageExts = map[string]string{
 }
 
 // FetchImageBytes downloads url and returns the image bytes plus the content
-// type to serve them as. Nothing is written to disk: since migration 0023 every
+// type to serve them as. Nothing is written to disk: since migration 0027 every
 // image peeq caches — channel avatars and banners, inbox posters — lives in the
 // database, so the bytes go straight to a row.
 //

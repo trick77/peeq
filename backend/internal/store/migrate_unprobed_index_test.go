@@ -41,16 +41,16 @@ ORDER BY downloaded_at ASC
 LIMIT 25`
 
 // The media-probe worker runs this claim every 30 seconds for the life of the
-// process and, in the steady state, finds nothing. Before 0025 it had no index
+// process and, in the steady state, finds nothing. Before 0029 it had no index
 // to use: status = 'downloaded' matches nearly the whole table, so each pass
 // walked the library and built a temp b-tree to sort it.
 //
 // Two assertions, and the second matters as much as the first. peeq never runs
 // ANALYZE, and without statistics the planner will take an equality seek on
-// idx_videos_status over an ordered walk — an earlier version of 0025 indexed
+// idx_videos_status over an ordered walk — an earlier version of 0029 indexed
 // downloaded_at alone and was quietly never used. Leading with status is what
 // gets both the seek and the ordering from one index.
-func TestMigrate0025_unprobedClaimUsesItsIndex(t *testing.T) {
+func TestMigrate0029_unprobedClaimUsesItsIndex(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestMigrate0025_unprobedClaimUsesItsIndex(t *testing.T) {
 // awaiting a probe and empties out as the library is probed — that is what
 // makes the steady-state pass cheap. Rows are still found in oldest-first
 // order, and a probed row leaves the index entirely.
-func TestMigrate0025_partialIndexHoldsOnlyUnprobedRows(t *testing.T) {
+func TestMigrate0029_partialIndexHoldsOnlyUnprobedRows(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)

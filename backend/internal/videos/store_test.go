@@ -139,7 +139,7 @@ var categoryResetSet = regexp.MustCompile(`(?i)SET\s+category\s*=\s*'` + Uncateg
 //
 // It scans the whole directory rather than naming 0004: a reset is written
 // every time the enum or the classify prompt changes enough to invalidate past
-// answers (0004 for the enum growing, 0015 for the category hints), and a
+// answers (0004 for the enum growing, 0019 for the category hints), and a
 // helper that names one file silently stops covering the next one. Finding
 // none is a failure — the caller's whole assertion would otherwise vacuously
 // pass if the scan ever broke.

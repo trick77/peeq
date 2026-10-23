@@ -19,7 +19,7 @@ package channelvideos
 // later scans, which is the whole reason the ledger is durable rather than
 // derived.
 //
-// StateUnavailable (added by 0014) is the odd one out: alone among these it is
+// StateUnavailable (added by 0018) is the odd one out: alone among these it is
 // neither terminal nor a user decision. It marks a video peeq knows about but
 // cannot fetch — members-only, age-gated, geo-blocked, private, deleted — and
 // a scan pass revisits it, returning it to StatePending once the gate lifts.

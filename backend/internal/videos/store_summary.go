@@ -14,7 +14,7 @@ import (
 // SetAudioLanguage records the language a video's captions are in.
 //
 // It is what is left of SetSubtitle, which also wrote the subtitle_path column
-// dropped in 0024. The language is not vestigial with it: the download worker
+// dropped in 0028. The language is not vestigial with it: the download worker
 // asks yt-dlp for that language on the next fetch, and both video DTOs carry it
 // to the player as the <track srcLang>.
 func (s *Store) SetAudioLanguage(id, audioLang string) error {
@@ -227,7 +227,7 @@ type ChatUsage struct {
 }
 
 // Empty reports whether nothing has been accounted for this video, which is the
-// state of every row analysed before migration 0028 as well as of any video the
+// state of every row analysed before migration 0032 as well as of any video the
 // endpoint never reported usage for. Callers use it to omit a figure rather than
 // display a confident zero.
 func (u ChatUsage) Empty() bool {

@@ -65,7 +65,7 @@ func (s *server) issueSession(w http.ResponseWriter, r *http.Request, claims aut
 // session lives in the cookie, so a copy taken before stays valid until it
 // expires (BACKEND_SESSION_TTL); rotating BACKEND_SESSION_SECRET ends them all.
 // Not behind requireAuth: clearing needs no valid session, and a dead one (a
-// pre-0038 token, a rotated key) must still be clearable.
+// pre-0043 token, a rotated key) must still be clearable.
 func (s *server) handleAuthLogout(w http.ResponseWriter, _ *http.Request) {
 	if s.sessions == nil {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "auth is not configured")

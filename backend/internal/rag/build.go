@@ -17,7 +17,7 @@ import (
 // Bump this whenever BuildVideoChunks starts or stops emitting a kind of chunk,
 // or changes how one is composed. Every video whose videos.embed_rev is below
 // the current value is stale. Nothing re-indexes a stale video on its own
-// (0019 dropped the sweep); a reprocess does. Forgetting to bump it means new
+// (0023 dropped the sweep); a reprocess does. Forgetting to bump it means new
 // videos get the new recipe and old ones silently keep the old one, with nothing to
 // distinguish them afterwards.
 const ChunkRecipeRev = 3

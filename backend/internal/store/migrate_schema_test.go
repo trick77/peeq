@@ -281,7 +281,7 @@ INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
 
 // TestMigrate_spreadsMetadataRefreshAcrossTheWeek guards the backfills that are
 // the entire anti-batch mechanism: 0005 introduced next_meta_refresh_at with a
-// random spread, and 0016 moves both schedules onto their computed slots. A DB
+// random spread, and 0020 moves both schedules onto their computed slots. A DB
 // that already has subscriptions gets them all seeded at once, and if they were
 // all seeded to the SAME time they would run together, come due together an
 // interval later, and stay a convoy forever — a stampede of yt-dlp calls on
@@ -289,7 +289,7 @@ INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
 //
 // The assertions are on the SPREAD, not merely on non-null: a plain
 // datetime('now','+7 days') backfill would pass a null check and still be the
-// bug this test exists to catch. Since 0016 the spread is exact rather than
+// bug this test exists to catch. Since 0020 the spread is exact rather than
 // random, so this asserts the precise spacing — a convoy could no longer hide
 // inside a "scattered enough" tolerance.
 func TestMigrate_spreadsMetadataRefreshAcrossTheWeek(t *testing.T) {
@@ -339,7 +339,7 @@ func TestMigrate_spreadsMetadataRefreshAcrossTheWeek(t *testing.T) {
 
 	// Then: both schedules are seeded, each inside its own cycle, and spaced
 	// exactly evenly. The windows are half an interval to one-and-a-half, which
-	// is what the half-interval floor in 0016 costs on the one cycle that moves
+	// is what the half-interval floor in 0020 costs on the one cycle that moves
 	// a fleet onto its slots; every cycle after that is exact.
 	for _, c := range []struct {
 		column  string
@@ -384,7 +384,7 @@ SELECT MIN(t - prev), MAX(t - prev) FROM ordered WHERE prev IS NOT NULL`).Scan(&
 	}
 }
 
-// TestMigrate_slotBackfillLeavesAPendingScanRequestAlone: 0016 spreads the fleet
+// TestMigrate_slotBackfillLeavesAPendingScanRequestAlone: 0020 spreads the fleet
 // across the cycle, but a channel with an outstanding "Check now" is waiting on
 // a next_scan_at already in the past, and moving it 12–36h out would silently
 // drop the user's request while Activity still showed it as pending. That is not
@@ -443,7 +443,7 @@ FROM subscriptions`).Scan(&requested, &ordinary, &metas); err != nil {
 	}
 }
 
-// TestMigrate_seedsPlaybackStateOnAnExistingDB guards migration 0011. Unlike the
+// TestMigrate_seedsPlaybackStateOnAnExistingDB guards migration 0015. Unlike the
 // ALTER TABLE migrations, this one INSERTs: the singleton row has to be there for
 // playback.Store's plain UPDATE/QueryRow to work at all, so a DB that upgraded
 // rather than being created fresh must come out of Migrate with the row present.
@@ -491,7 +491,7 @@ func TestMigrate_seedsPlaybackStateOnAnExistingDB(t *testing.T) {
 	}
 }
 
-// TestSchemaRenamesTrackedAt guards migration 0012's column swap. It is a
+// TestSchemaRenamesTrackedAt guards migration 0016's column swap. It is a
 // two-step rename — added_at has to be vacated before tracked_at can take the
 // name — so getting the order wrong would either fail outright or leave the
 // two columns holding each other's meaning, which nothing else would catch.
@@ -527,7 +527,7 @@ func TestSchemaRenamesTrackedAt(t *testing.T) {
 	}
 }
 
-// TestMigrate_backfillsChannelsFromDownloadedVideos asserts 0012's backfill.
+// TestMigrate_backfillsChannelsFromDownloadedVideos asserts 0016's backfill.
 // Adding a video by URL never created a channels row, so channels the library
 // already holds downloads from had nothing to list — this is what makes them
 // appear under "From downloads" on an existing install rather than only for
@@ -538,7 +538,7 @@ func TestMigrate_backfillsChannelsFromDownloadedVideos(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	// Stop just before 0012 so the videos below look exactly like an existing
+	// Stop just before 0016 so the videos below look exactly like an existing
 	// install's: channel_id set, no channels row anywhere.
 	applyThrough(t, db, "0015_playback_state.sql")
 
@@ -582,16 +582,16 @@ INSERT INTO videos (id, url, channel_id, channel_name, status) VALUES
 	}
 }
 
-// TestMigrate_clearsStaleTombstonedThumbnailPath asserts 0013. Tombstoning
+// TestMigrate_clearsStaleTombstonedThumbnailPath asserts 0017. Tombstoning
 // used to unlink the thumbnail file while leaving thumbnail_path set, so
 // has_thumbnail stayed true and every tombstoned card asked for a poster
 // that 404s. Those files are gone for good, so the migration clears the
 // column and the UI draws its gradient placeholder instead. Rows in any
 // other status keep their path — theirs still points at a real file.
 //
-// It stops AT 0013 rather than running Migrate to the end: 0024 drops the
-// column this is about, and a test of what 0013 did has to look at the database
-// as 0013 left it.
+// It stops AT 0017 rather than running Migrate to the end: 0028 drops the
+// column this is about, and a test of what 0017 did has to look at the database
+// as 0017 left it.
 func TestMigrate_clearsStaleTombstonedThumbnailPath(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -626,14 +626,14 @@ INSERT INTO videos (id, url, status, thumbnail_path) VALUES
 	}
 }
 
-// TestMigrate_dropsAssetPathColumns asserts 0024: the four columns that used to
+// TestMigrate_dropsAssetPathColumns asserts 0028: the four columns that used to
 // point at files are gone.
 //
 // It also checks that the tables which cascade off videos and channels are still
 // there. That is the real hazard this migration walks past: dropping a COLUMN is
-// harmless, but rebuilding either table — the pattern 0014 uses — would have
+// harmless, but rebuilding either table — the pattern 0018 uses — would have
 // meant DROP TABLE with foreign_keys on, which fires every ON DELETE CASCADE and
-// empties the library. If someone ever "fixes" 0024 into a rebuild, this is what
+// empties the library. If someone ever "fixes" 0028 into a rebuild, this is what
 // catches it.
 func TestMigrate_dropsAssetPathColumns(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "t.db"))

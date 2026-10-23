@@ -33,8 +33,8 @@ type Channel struct {
 	Name        string
 	Description string
 	// HasAvatar and HasBanner are whether artwork is stored for this channel.
-	// Migration 0024 took the avatar_path/banner_path columns that used to
-	// stand in for them; the images themselves are rows (0023).
+	// Migration 0028 took the avatar_path/banner_path columns that used to
+	// stand in for them; the images themselves are rows (0027).
 	HasAvatar bool
 	HasBanner bool
 	// AvatarVersion and BannerVersion are each image's updated_at as a unix
@@ -52,12 +52,12 @@ type Channel struct {
 	FirstSeenAt   string
 	// AutoSummary is whether peeq reads this channel's new videos — fetching
 	// their captions and writing a summary — before the user decides whether to
-	// download them. Default true (migration 0018); the switch exists for the
+	// download them. Default true (migration 0022); the switch exists for the
 	// channel subscribed to for one video in ten, where the other nine are
 	// summaries nobody asked for.
 	AutoSummary bool
 	// KeepReads decides what of a video survives its file, for every video of
-	// the channel. On (the default since 0037): a delete tombstones, keeping
+	// the channel. On (the default since 0042): a delete tombstones, keeping
 	// transcript, summary and search index; an inbox read is indexed and kept
 	// when ignored — searchable and nothing else, it stays status 'new', which
 	// every Library query excludes. Off: a delete or an ignore purges the row,
@@ -79,7 +79,7 @@ type Subscription struct {
 	// ScanRequestedAt is set while a user-pressed "Scan now" is still waiting
 	// for the scan loop to reach this channel, and "" for an ordinary automatic
 	// scan. The scanner reads it to decide whether the pass owes the user a
-	// receipt even when it found nothing new — see migration 0009.
+	// receipt even when it found nothing new — see migration 0011.
 	ScanRequestedAt string
 	// NextMetaRefreshAt is when the weekly metadata refresh is next due, or ""
 	// when this channel has no rotation slot at all — a subscription predating
@@ -89,7 +89,7 @@ type Subscription struct {
 	NextMetaRefreshAt string
 	// StreamsMissingAt is when a scan was last told this channel has no
 	// /streams tab, or "" when the tab answered or was never asked for. The
-	// scan skips the tab while this is recent — see migration 0033.
+	// scan skips the tab while this is recent — see migration 0037.
 	StreamsMissingAt string
 }
 
@@ -136,7 +136,7 @@ func (s *Store) DB() *sql.DB {
 // unlink the file after the rows are gone.
 //
 // Just the media path: the poster, transcript and everything else a video owns
-// are rows that go with it on the cascade (0022, 0023), and whatever a
+// are rows that go with it on the cascade (0026, 0027), and whatever a
 // pre-migration library still has beside the file is collected by
 // media.RemoveVideoFiles taking the whole per-video directory.
 type VideoRef struct {
@@ -861,7 +861,7 @@ FROM videos WHERE status = 'downloaded' AND ` + where
 // indexedCountQuery counts the channel's videos that have a search index,
 // whatever their status. It visits every video the channel ever had,
 // tombstones included, and needs each one's id to probe transcript_chunks, so
-// it must stay on idx_videos_channel_search (0036): a video row keeps its id
+// it must stay on idx_videos_channel_search (0041): a video row keeps its id
 // behind description and analysis text, and reading it from the table walks
 // overflow pages per row. channels/queryplan_test.go pins both where shapes.
 func indexedCountQuery(where string) string {

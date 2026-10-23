@@ -343,7 +343,7 @@ func TestChannelPut_autoSummary(t *testing.T) {
 }
 
 // TestChannelPut_keepReads covers the second channel-level switch. It defaults
-// ON (0037) — off purges a video on delete — and, living on the channel like
+// ON (0042) — off purges a video on delete — and, living on the channel like
 // auto_summary, it is settable on a channel that is merely added. The last
 // assertion is the one worth having: a request that sets only one of the two
 // must not report the other as off.

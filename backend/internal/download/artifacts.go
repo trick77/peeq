@@ -60,7 +60,7 @@ func (w *Worker) probeDownloaded(videoID, mediaPath string) {
 // language and auto-caption variants, and both globs that look for them take
 // the FIRST match, so the rest were already unreferenced. Best-effort at every
 // step — the download succeeded either way. Nothing retries a transcript that
-// did not land now that the import worker is gone (0024), which is why every
+// did not land now that the import worker is gone (0028), which is why every
 // failure below returns BEFORE the unlink rather than after it.
 func (w *Worker) storeTranscript(videoID, subtitleRelPath, mediaPath string) {
 	if w.deps.Videos == nil {
@@ -97,7 +97,7 @@ func (w *Worker) storeTranscript(videoID, subtitleRelPath, mediaPath string) {
 // video row. Best-effort at every step: no poster, an unreadable file, an
 // oversized image or a failed insert are all logged and shrugged off — the
 // download itself succeeded, and a card with no poster draws its gradient
-// placeholder. Nothing retries it since the import worker went with 0024; a
+// placeholder. Nothing retries it since the import worker went with 0028; a
 // re-download is the only way back.
 func (w *Worker) storeThumbnail(videoID, thumbPath string) {
 	if thumbPath == "" || w.deps.Videos == nil {

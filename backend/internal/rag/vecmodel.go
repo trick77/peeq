@@ -8,7 +8,7 @@ import (
 )
 
 // The vec_model row names the embedding model every vector in vec_chunks came
-// from (migration 0031). Same-width models embed into different spaces, so the
+// from (migration 0035). Same-width models embed into different spaces, so the
 // width check alone cannot catch a swap; this can.
 
 // RecordedEmbedModel returns the model recorded for the stored vectors, or ""

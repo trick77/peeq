@@ -110,7 +110,7 @@ type keptVideo struct {
 
 // keptVideosQuery lists the channel's tombstoned and never-downloaded videos
 // with what the decision needs: the ledger state, the transcript source and
-// whether the video is indexed. It stays on idx_videos_channel_kept (0037);
+// whether the video is indexed. It stays on idx_videos_channel_kept (0042);
 // see queryplan_test.go. Not forced with INDEXED BY: that index is partial,
 // usable only while the status term here matches its WHERE exactly, and a
 // forced index that stops matching fails the query at runtime instead of

@@ -38,7 +38,7 @@ func TestList_reportsKeepReads(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// On is the default (0037); the plain one is turned off.
+	// On is the default (0042); the plain one is turned off.
 	if _, _, err := s.SetKeepReads("UCplain", false); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestSearchable_isSubscribedOrKeepReads(t *testing.T) {
 	if err := s.Subscribe("UCsub", "2099-01-01 00:00:00"); err != nil {
 		t.Fatal(err)
 	}
-	// keep_reads is on by default (0037); the two that are not "reads kept"
+	// keep_reads is on by default (0042); the two that are not "reads kept"
 	// get there each their own way: Sub has it off, Added only has nothing
 	// read in the first place (auto_summary off).
 	if _, _, err := s.SetKeepReads("UCsub", false); err != nil {

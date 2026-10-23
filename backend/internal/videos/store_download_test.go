@@ -245,7 +245,7 @@ func TestSetDownloaded_emptyPublishedAt_keepsExisting(t *testing.T) {
 	}
 }
 
-// TestSetDownloaded_storesYouTubeMetadata covers the columns migration 0009
+// TestSetDownloaded_storesYouTubeMetadata covers the columns migration 0012
 // added: they arrive from the download's own info.json, and an empty value
 // leaves what is stored rather than wiping it (a re-download whose extractor
 // omitted tags must not erase the ones already there).

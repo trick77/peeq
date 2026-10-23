@@ -66,7 +66,7 @@ func writeInboxCaption(t *testing.T, h *workerHarness, id string) string {
 //
 // The source follows the path: a caption under .summaries/ was read to inform
 // an inbox decision, anything else arrived with a download. That is exactly the
-// rule migration 0023 turned from a path-prefix guess into a stored fact.
+// rule migration 0027 turned from a path-prefix guess into a stored fact.
 func seedTranscript(t *testing.T, h *workerHarness, id, rel string) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(h.mediaDir, rel))
@@ -88,7 +88,7 @@ func seedTranscript(t *testing.T, h *workerHarness, id, rel string) {
 // seedChannel writes a bare channels row with keep_reads set as given, and
 // points the video at it. The flag reaches the worker through the join
 // videoColumns already makes. A video with no channels row at all reads as on
-// (0037), so a test about the off path seeds an off channel explicitly.
+// (0042), so a test about the off path seeds an off channel explicitly.
 func seedChannel(t *testing.T, h *workerHarness, channelID, videoID string, keepReads bool) {
 	t.Helper()
 	if _, err := h.db.Exec(

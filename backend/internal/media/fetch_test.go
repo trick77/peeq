@@ -12,7 +12,7 @@ import (
 
 // TestFetchImageBytes_returnsBodyAndMime asserts the caller gets the bytes and
 // the content type to store them under, and that nothing is written to disk on
-// the way — since migration 0023 every image peeq caches lives in a row.
+// the way — since migration 0027 every image peeq caches lives in a row.
 func TestFetchImageBytes_returnsBodyAndMime(t *testing.T) {
 	body := []byte("\xff\xd8\xff fake jpeg bytes")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

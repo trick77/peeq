@@ -21,7 +21,7 @@ type Thumbnail struct {
 
 // SetThumbnail stores (or replaces) the poster for a video. The bytes live in
 // the database rather than the media tree so they cannot drift away from the
-// row that references them — see migration 0022 for why.
+// row that references them — see migration 0026 for why.
 //
 // Over MaxThumbnailBytes is a no-op, reported as an error so the caller can log
 // it: the video is fine, only its oversized poster was declined.

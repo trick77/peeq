@@ -41,7 +41,7 @@ func TestGet_emptyBeforeAnythingIsSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	// Migration 0011 seeds the singleton with a NULL video_id, so this is a
+	// Migration 0015 seeds the singleton with a NULL video_id, so this is a
 	// plain empty pointer and not a missing-row error.
 	if got.VideoID != "" {
 		t.Fatalf("video_id = %q, want empty", got.VideoID)

@@ -931,7 +931,7 @@ func (s *server) handleReprocess(w http.ResponseWriter, r *http.Request) {
 	// status='tombstoned'. A tombstone takes the media file only; the transcript
 	// stays on the row, so a swept video is still rebuildable and rejecting it
 	// here would make it permanently unsearchable the moment its chunks needed
-	// rebuilding. Since migration 0023 this asks whether the text exists rather
+	// rebuilding. Since migration 0027 this asks whether the text exists rather
 	// than whether a path column happens to be set — a pointer standing in for
 	// the thing itself is exactly what used to make this gate lie.
 	if !v.HasTranscript {

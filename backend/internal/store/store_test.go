@@ -44,7 +44,7 @@ func TestMigrate_createsPhase2Tables(t *testing.T) {
 	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
-	// users and sessions are gone since 0038 (kit/auth's cookie sessions).
+	// users and sessions are gone since 0043 (kit/auth's cookie sessions).
 	for _, tbl := range []string{"channels", "subscriptions", "channel_videos"} {
 		var n int
 		if err := db.QueryRow(
@@ -55,7 +55,7 @@ func TestMigrate_createsPhase2Tables(t *testing.T) {
 	}
 }
 
-func TestMigrate_0007CreatesActivityEvents(t *testing.T) {
+func TestMigrate_0008CreatesActivityEvents(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)

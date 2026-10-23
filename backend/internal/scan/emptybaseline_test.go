@@ -22,7 +22,7 @@ func missingTabErr(tab string) error {
 // undatedEntry is a listing entry with NO publish date. This is the shape that
 // matters: isBackCatalogue returns false for an empty PublishedAt, so such a
 // video is never filtered as back catalogue however old it really is. Rows
-// written before migration 0008 and any listing yt-dlp returns without a tab
+// written before migration 0009 and any listing yt-dlp returns without a tab
 // date look like this.
 func undatedEntry(id string) ytdlp.ChannelEntry {
 	return ytdlp.ChannelEntry{

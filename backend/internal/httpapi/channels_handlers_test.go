@@ -2649,7 +2649,7 @@ func TestChannelsList_includesImageFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The flags follow the STORED IMAGE, not a path column — that is the whole
-	// point of migration 0023.
+	// point of migration 0027.
 	if err := h.channels.SetImage("UCart", channels.ImageAvatar, "image/jpeg", []byte("a")); err != nil {
 		t.Fatal(err)
 	}
@@ -3068,7 +3068,7 @@ func TestChannelAvatar_noAvatar_404(t *testing.T) {
 
 // The two tests that used to sit here — one for a stored path escaping the
 // media dir, one for a path whose file had been deleted underneath it — are
-// gone with the column they were about. Since 0024 this endpoint reads bytes
+// gone with the column they were about. Since 0028 this endpoint reads bytes
 // off the row and never touches the filesystem, so neither failure exists to
 // guard against; the no-image case above is the whole negative path now. This
 // is the same retirement #282 gave the subtitle endpoint's path-safety pair.

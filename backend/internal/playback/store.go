@@ -1,5 +1,5 @@
 // Package playback persists the "now playing" pointer: the single video the
-// user last opened in the Player (migration 0011_playback_state.sql). It exists
+// user last opened in the Player (migration 0015_playback_state.sql). It exists
 // so the pointer is a property of the account rather than of one browser tab —
 // open a video on one device and the rail on another opens the same thing.
 //
@@ -64,7 +64,7 @@ WHERE p.id = 1 AND v.status = 'downloaded'`).Scan(&st.VideoID, &st.UpdatedAt)
 	return st, nil
 }
 
-// Set points at videoID. Idempotent, and never needs an upsert: migration 0011
+// Set points at videoID. Idempotent, and never needs an upsert: migration 0015
 // seeds the singleton row. The caller is responsible for having checked that the
 // video exists and is playable — Get filters anyway, but storing a pointer at a
 // video that was never downloaded would just be silently dead.

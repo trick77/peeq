@@ -63,7 +63,7 @@ func TestVideosSubtitles_notFoundWithoutTranscript(t *testing.T) {
 // It used to resolve subtitle_path through media.SafeMediaPath and serve the
 // file, so a symlink escape or a literal "../" traversal stored in that column
 // was a real route to a file outside the media dir, and each was pinned by its
-// own test. Since migration 0023 the endpoint reads the row and never touches
+// own test. Since migration 0027 the endpoint reads the row and never touches
 // the filesystem, so the whole class is gone rather than guarded — which is
 // what this pins: a hostile path with no stored transcript is simply a 404.
 func TestVideosSubtitles_ignoresSubtitlePathEntirely(t *testing.T) {

@@ -6,7 +6,7 @@ import "testing"
 // are therefore stale against the current recipe. If the column defaulted to
 // anything else, the sweep would find nothing and the library would silently
 // keep its old index.
-func TestMigrate0018_existingRowsAreStale(t *testing.T) {
+func TestMigrate0022_existingRowsAreStale(t *testing.T) {
 	db := openMigratedThrough(t, "0021_direct_stream.sql")
 
 	// A video indexed under the pre-chapter recipe.
@@ -36,10 +36,10 @@ func TestMigrate0018_existingRowsAreStale(t *testing.T) {
 	}
 }
 
-// 0019 removes the one-shot backfill's queue. embed_rev must survive it: the
+// 0023 removes the one-shot backfill's queue. embed_rev must survive it: the
 // column records which content recipe each video's index follows, which is
 // knowable now and impossible to reconstruct later.
-func TestMigrate0019_dropsQueueButKeepsEmbedRev(t *testing.T) {
+func TestMigrate0023_dropsQueueButKeepsEmbedRev(t *testing.T) {
 	db := openMigratedThrough(t, "0022_embed_rev.sql")
 	if _, err := db.Exec(`INSERT INTO videos (id, url) VALUES ('v1','u')`); err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestMigrate0019_dropsQueueButKeepsEmbedRev(t *testing.T) {
 	if _, err := db.Exec(`UPDATE videos SET embed_rev=2 WHERE id='v1'`); err != nil {
 		t.Fatal(err)
 	}
-	// The queue exists at 0018 and takes rows.
+	// The queue exists at 0022 and takes rows.
 	if _, err := db.Exec(`INSERT INTO embed_jobs (video_id) VALUES ('v1')`); err != nil {
 		t.Fatalf("embed_jobs should exist before 0019: %v", err)
 	}

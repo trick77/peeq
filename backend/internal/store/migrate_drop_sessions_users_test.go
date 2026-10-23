@@ -2,10 +2,10 @@ package store
 
 import "testing"
 
-// 0038 drops sessions and users. It deletes DATA, so it runs over a database
-// shaped the way 0037 left it: a user with a live session, beside a channel,
+// 0043 drops sessions and users. It deletes DATA, so it runs over a database
+// shaped the way 0042 left it: a user with a live session, beside a channel,
 // a video and a playback pointer that must survive it untouched.
-func TestMigrate0038_dropsSessionsAndUsersOnly(t *testing.T) {
+func TestMigrate0043_dropsSessionsAndUsersOnly(t *testing.T) {
 	db := openMigratedThrough(t, "0042_keep_in_search_default_on.sql")
 	for _, q := range []string{
 		`INSERT INTO users (id, oidc_subject, username, role) VALUES ('u1', 'sub-1', 'jan', 'admin')`,

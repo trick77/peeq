@@ -255,7 +255,7 @@ func (w *Worker) pass(ctx context.Context) {
 	}
 
 	// The transcript goes into the row and the file it came from goes away
-	// (migration 0023). source='caption' is what the ".summaries/" path prefix
+	// (migration 0027). source='caption' is what the ".summaries/" path prefix
 	// used to say: this video was read to help decide whether to download it, so
 	// the analysis it gets is deliberately truncated.
 	if err := w.storeTranscript(c.VideoID, relPath); err != nil {
@@ -267,7 +267,7 @@ func (w *Worker) pass(ctx context.Context) {
 	}
 	// The language the captions are in still has to be recorded: the next
 	// download asks yt-dlp for it, and the player uses it as the track's
-	// srcLang. It used to ride along on the subtitle-path write, which 0024
+	// srcLang. It used to ride along on the subtitle-path write, which 0028
 	// took away.
 	if err := w.d.Videos.SetAudioLanguage(c.VideoID, w.d.DefaultSubLang); err != nil {
 		w.d.Logger.Error("captionfetch: save audio language failed", "video_id", c.VideoID, "err", err)

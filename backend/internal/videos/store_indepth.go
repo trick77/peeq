@@ -7,7 +7,7 @@ import (
 )
 
 // SetInDepth stores (or replaces) a video's in-depth summary. It lives in its
-// own table (migration 0035) so whole-row reads of videos never carry it.
+// own table (migration 0039) so whole-row reads of videos never carry it.
 func (s *Store) SetInDepth(id, body string) error {
 	_, err := s.db.ExecContext(context.Background(), `
 INSERT INTO video_in_depth (video_id, body, updated_at)

@@ -942,7 +942,7 @@ func TestWorker_rescheduleSurvivesALostRankQuery(t *testing.T) {
 	}
 }
 
-// A resolve stores the channel's artwork on its row (migration 0023) rather
+// A resolve stores the channel's artwork on its row (migration 0027) rather
 // than under .channels/, so nothing has to delete it later — a channel delete
 // takes it on the cascade.
 func TestResolve_storesArtworkOnTheRow(t *testing.T) {

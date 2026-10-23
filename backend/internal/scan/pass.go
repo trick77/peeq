@@ -72,7 +72,7 @@ func (s *Scheduler) scanOnce(ctx context.Context, sub *channels.Subscription) er
 		handled[e.ID] = true
 		if row := known[e.ID]; row != nil {
 			// Dedup vs ledger — but heal the row's date first. Rows written
-			// before migration 0008 have none, and a known video is never
+			// before migration 0009 have none, and a known video is never
 			// revisited anywhere else, so this is the only chance an item
 			// already sitting in the inbox has to gain one. Only a row still
 			// without a date is written; Ledger.SetPublishedAt's own guard is

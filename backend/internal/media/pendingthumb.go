@@ -12,7 +12,7 @@ import (
 // never directly from YouTube's CDN — and a broken remote variant never renders
 // a broken-image glyph on the card.
 //
-// Since migration 0023 the caching itself belongs to the caller, which stores
+// Since migration 0027 the caching itself belongs to the caller, which stores
 // the bytes in pending_thumbnails; this file is only the candidate order.
 
 // ImageFetcher downloads one image and returns its mime type and bytes.

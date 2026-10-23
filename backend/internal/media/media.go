@@ -102,7 +102,7 @@ func resolveExistingOrAncestor(path string) (string, error) {
 // yt-dlp writes captions as <videoID>*.vtt next to <videoID>.<ext>, and may
 // write several language and auto-caption variants at once; the code that
 // records subtitle_path globs and takes the first match, so the rest were
-// already referenced by nothing. Since migration 0023 the transcript text lives
+// already referenced by nothing. Since migration 0027 the transcript text lives
 // in the database, so the files are an import source and nothing more.
 //
 // mediaPath must already be a SafeMediaPath result. Best-effort throughout.
@@ -130,7 +130,7 @@ func RemoveSubtitleSidecars(mediaPath string) {
 //
 // This is the hard-delete flavour, for when the database row goes too (a channel
 // cascade). Everything else the video owned — poster, transcript, summary,
-// chunks — lives in the database since 0022 and 0023 and goes with the row on
+// chunks — lives in the database since 0026 and 0027 and goes with the row on
 // the FK cascade, so the caller does not have to name any of it. What is left on
 // disk is the media file plus whatever a pre-migration library still has beside
 // it, and taking the directory collects the lot.
@@ -162,7 +162,7 @@ func RemoveVideoFiles(mediaDir, mediaPath string) {
 //
 // Everything the card still shows after a delete — the poster, the transcript
 // the transcript panel reads and the chunks search answers from, the summary —
-// lives in the database (migrations 0022 and 0023) and is untouched by this.
+// lives in the database (migrations 0026 and 0027) and is untouched by this.
 // That is what a delete means in peeq: the file goes, the memory of the video
 // stays, and it stays searchable and re-analysable with nothing on disk at all.
 //
