@@ -87,7 +87,7 @@
 
 <section>
 <div class="piece first">
-<div class="phead"><h2>1 · Migration 0023</h2><span class="badge be">schema</span></div>
+<div class="phead"><h2>1 · Migration 0027</h2><span class="badge be">schema</span></div>
 <p>One migration, three side tables — a blob must never ride along on the row reads that only want titles.</p>
 <pre><code>CREATE TABLE video_transcripts (
     video_id   TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
@@ -146,8 +146,8 @@ CREATE TABLE pending_thumbnails (
 <div class="phead"><h2>6 · The teardown</h2><span class="badge be">backend</span><span class="badge later">separate PR, after production</span></div>
 <ul>
 <li>delete <code>internal/diskimport</code> and its <code>cmd/peeq/main.go</code> wiring, restoring the <code>workerWG.Add(n)</code> comment block</li>
-<li><code>0024_drop_asset_paths.sql</code> drops <code>videos.thumbnail_path</code>, <code>videos.subtitle_path</code>, <code>channels.avatar_path</code>, <code>channels.banner_path</code> — vestigial once nothing looks for files. SQLite needs the table-rebuild dance; <code>0014_channel_videos_unavailable.sql</code> is the worked example in-repo.</li>
-<li>precedent for the header and commit message: <code>0019_drop_embed_jobs.sql</code> and #255, "Drop the inbox backfill now that it has run"</li>
+<li><code>0028_drop_asset_paths.sql</code> drops <code>videos.thumbnail_path</code>, <code>videos.subtitle_path</code>, <code>channels.avatar_path</code>, <code>channels.banner_path</code> — vestigial once nothing looks for files. SQLite needs the table-rebuild dance; <code>0018_channel_videos_unavailable.sql</code> is the worked example in-repo.</li>
+<li>precedent for the header and commit message: <code>0023_drop_embed_jobs.sql</code> and #255, "Drop the inbox backfill now that it has run"</li>
 </ul>
 <div class="warn"><b>The gate is the log line, not the calendar.</b> The teardown must not ship until production confirms the import drained.</div>
 </div>
@@ -159,7 +159,7 @@ CREATE TABLE pending_thumbnails (
 <li><b>Query time: nothing changes.</b> Find (FTS5) and Ask (hybrid) read the chunk tables. No query path opens a <code>.vtt</code> today, so results are identical before and after.</li>
 <li><b>Index time: one line.</b> <code>rag</code> never touches the filesystem — <code>BuildVideoChunks</code> takes an already-parsed <code>subtitles.Parsed</code>. The single disk read in the whole pipeline is the summarize worker's, and <code>ParseVTT</code> already takes an <code>io.Reader</code>.</li>
 <li><b>The gate moves.</b> <code>handleReprocess</code> stops asking whether <code>subtitle_path</code> is set and asks whether a transcript exists — the same defect class as the poster bug, a pointer standing in for the thing itself.</li>
-<li><b>What improves.</b> Reprocess is the only repair route after a chunk-recipe or embedding-model change, since the re-embed worker was retired in <code>0019</code>. It can no longer be blocked by a missing file, and the reason #239 spared sidecars stops existing.</li>
+<li><b>What improves.</b> Reprocess is the only repair route after a chunk-recipe or embedding-model change, since the re-embed worker was retired in <code>0023</code>. It can no longer be blocked by a missing file, and the reason #239 spared sidecars stops existing.</li>
 <li class="c">The transcript will exist twice in SQLite — raw here, chunked there. Deliberate: source vs. derivative, the same relationship the file and the chunks have today.</li>
 </ul>
 </section>

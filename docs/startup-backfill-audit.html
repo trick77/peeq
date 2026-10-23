@@ -65,7 +65,7 @@
 
 <div class="ok"><b>None of the four can go.</b> The one job that genuinely was migration-only — <code>internal/diskimport</code> — already left with #287. But two of the survivors are misnamed in a way that invites deleting them, and one was quietly expensive forever.</div>
 
-<div class="warn"><b>Migration DML is immutable.</b> Several items below are legacy-only <em>by construction</em> — <code>0004</code>/<code>0015</code>'s category resets, <code>0013</code>, <code>0020</code>'s <code>caption_attempts = 99</code>, <code>0021</code>. They are recorded in <code>schema_migrations</code>, and rewriting one breaks every existing database. Here, "legacy" never means "removable".</div>
+<div class="warn"><b>Migration DML is immutable.</b> Several items below are legacy-only <em>by construction</em> — <code>0004</code>/<code>0019</code>'s category resets, <code>0017</code>, <code>0024</code>'s <code>caption_attempts = 99</code>, <code>0025</code>. They are recorded in <code>schema_migrations</code>, and rewriting one breaks every existing database. Here, "legacy" never means "removable".</div>
 
 <section>
 <h2>The four boot-time backfills</h2>
@@ -75,13 +75,13 @@
 <p>Its own doc said it <em>"exists purely for the backlog, and idles once it is drained."</em> That is the opposite of how it is used. The download worker's inline probe is bounded at 5s and deliberately writes <b>nothing</b> on failure, leaving <code>probed_at</code> NULL precisely so this loop retries it — <code>probeDownloaded</code> says so in as many words. It is the retry path for every failed inline probe, and never drains.</p>
 <p>So its claim cost is permanent — and it had no index. <code>status = 'downloaded'</code> matches nearly every row, so each pass walked the whole library and built a temp b-tree to sort it, twice a minute, to return nothing.</p>
 <pre><code>before             SCAN videos / SEARCH ... idx_videos_status | <b>USE TEMP B-TREE FOR ORDER BY</b>
-after (0025)       SEARCH videos USING INDEX idx_videos_unprobed (status=?)</code></pre>
+after (0029)       SEARCH videos USING INDEX idx_videos_unprobed (status=?)</code></pre>
 <div class="warn"><b>Leading the index with <code>status</code>, not <code>downloaded_at</code>, is load-bearing.</b> peeq never runs <code>ANALYZE</code>. With no statistics the planner takes an equality seek on <code>idx_videos_status</code> over an ordered walk — the first version of this index sorted on <code>downloaded_at</code> alone, was perfectly usable, and was silently never chosen. A test asserts the plan and fails against that shape.</div>
 </div>
 
 <div class="piece">
 <div class="phead"><h2>2 · SponsorBlock</h2><span class="badge">keep as-is · 60s · batch 20</span></div>
-<p>Logged as a backfill; it is a <b>30-day refresher</b>. Segments keep being submitted long after a video is published, so <code>ClaimSponsorblockStale</code> re-claims anything older than the interval. It never drains <em>by design</em> — and its idle poll is already cheap, because <code>0006</code> gave it the partial index the probe worker never got.</p>
+<p>Logged as a backfill; it is a <b>30-day refresher</b>. Segments keep being submitted long after a video is published, so <code>ClaimSponsorblockStale</code> re-claims anything older than the interval. It never drains <em>by design</em> — and its idle poll is already cheap, because <code>0007</code> gave it the partial index the probe worker never got.</p>
 </div>
 
 <div class="piece">
