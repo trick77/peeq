@@ -52,7 +52,7 @@ type Channel struct {
 	FirstSeenAt   string
 	// AutoSummary is whether peeq reads this channel's new videos — fetching
 	// their captions and writing a summary — before the user decides whether to
-	// download them. Default true (migration 0022); the switch exists for the
+	// download them. Default true (migration 0024); the switch exists for the
 	// channel subscribed to for one video in ten, where the other nine are
 	// summaries nobody asked for.
 	AutoSummary bool
