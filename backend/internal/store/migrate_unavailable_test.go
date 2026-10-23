@@ -21,7 +21,7 @@ func openMigratedThrough(t *testing.T, stopAt string) *sql.DB {
 }
 
 func TestMigrate0014_rebuildAcceptsUnavailableAndKeepsRows(t *testing.T) {
-	db := openMigratedThrough(t, "0013_tombstone_thumbnail.sql")
+	db := openMigratedThrough(t, "0017_tombstone_thumbnail.sql")
 	if _, err := db.Exec(`INSERT INTO channels (id,name) VALUES ('UC1','c')`); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestMigrate0014_rebuildAcceptsUnavailableAndKeepsRows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -71,7 +71,7 @@ func TestMigrate0014_rebuildAcceptsUnavailableAndKeepsRows(t *testing.T) {
 // at 'queued', videos row a permanent 'error' — is adopted into the new state
 // and its dead Library card removed.
 func TestMigrate0014_rescuesStrandedTerminalFailures(t *testing.T) {
-	db := openMigratedThrough(t, "0013_tombstone_thumbnail.sql")
+	db := openMigratedThrough(t, "0017_tombstone_thumbnail.sql")
 	if _, err := db.Exec(`INSERT INTO channels (id,name) VALUES ('UC1','c')`); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestMigrate0014_rescuesStrandedTerminalFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 

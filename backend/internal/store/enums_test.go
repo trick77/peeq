@@ -59,7 +59,7 @@ func TestEnumConstantsMatchTheCheckConstraints(t *testing.T) {
 		{"download_jobs", "state", jobs.States, "0001_init.sql", "download_jobs"},
 		{"summary_jobs", "state", summaryjobs.States, "0001_init.sql", "summary_jobs"},
 		{"channel_videos", "state", channelvideos.States,
-			"0014_channel_videos_unavailable.sql", "channel_videos_new"},
+			"0018_channel_videos_unavailable.sql", "channel_videos_new"},
 	}
 
 	for _, c := range cases {

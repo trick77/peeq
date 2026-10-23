@@ -384,7 +384,7 @@ func TestVideoChunkWrites_warnOfBloatTheyLeave(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	const dim = 1536

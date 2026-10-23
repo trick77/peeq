@@ -47,7 +47,7 @@ func newHarness(t *testing.T, retentionDays int) *harness {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })

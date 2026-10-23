@@ -174,7 +174,7 @@ func newScanHarness(t *testing.T) *scanHarness {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })

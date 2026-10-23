@@ -118,7 +118,7 @@ func run() error {
 	}
 	defer func() { _ = db.Close() }()
 
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(context.Background(), db); err != nil {
 		return err
 	}
 

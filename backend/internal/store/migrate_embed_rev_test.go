@@ -7,7 +7,7 @@ import "testing"
 // anything else, the sweep would find nothing and the library would silently
 // keep its old index.
 func TestMigrate0018_existingRowsAreStale(t *testing.T) {
-	db := openMigratedThrough(t, "0017_direct_stream.sql")
+	db := openMigratedThrough(t, "0021_direct_stream.sql")
 
 	// A video indexed under the pre-chapter recipe.
 	if _, err := db.Exec(`
@@ -15,7 +15,7 @@ func TestMigrate0018_existingRowsAreStale(t *testing.T) {
 		VALUES ('v1','u','downloaded','text-embedding-3-small',1536)`); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -40,7 +40,7 @@ func TestMigrate0018_existingRowsAreStale(t *testing.T) {
 // column records which content recipe each video's index follows, which is
 // knowable now and impossible to reconstruct later.
 func TestMigrate0019_dropsQueueButKeepsEmbedRev(t *testing.T) {
-	db := openMigratedThrough(t, "0018_embed_rev.sql")
+	db := openMigratedThrough(t, "0022_embed_rev.sql")
 	if _, err := db.Exec(`INSERT INTO videos (id, url) VALUES ('v1','u')`); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestMigrate0019_dropsQueueButKeepsEmbedRev(t *testing.T) {
 		t.Fatalf("embed_jobs should exist before 0019: %v", err)
 	}
 
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 

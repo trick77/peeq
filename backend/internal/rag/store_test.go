@@ -14,7 +14,7 @@ func TestReplaceRetrieveAndDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	// vec_chunks in 0001 is float[1536]; use matching-length vectors here.
@@ -80,7 +80,7 @@ func TestReplaceVideoChunksWritesFTSAndKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	dim := 1536
@@ -140,7 +140,7 @@ func TestSearchFTSMatchesKeyword(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	dim := 1536

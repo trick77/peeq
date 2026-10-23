@@ -7,7 +7,7 @@ import "testing"
 // that had opted in, one that had not, and a ledger row hanging off each so the
 // column swap is seen not to cascade anything away.
 func TestMigrate0037_keepReadsOnForAllAndByDefault(t *testing.T) {
-	db := openMigratedThrough(t, "0036_videos_channel_search.sql")
+	db := openMigratedThrough(t, "0041_videos_channel_search.sql")
 	if _, err := db.Exec(`INSERT INTO channels (id, name, keep_reads) VALUES ('UCon','on',1), ('UCoff','off',0)`); err != nil {
 		t.Fatal(err)
 	}
@@ -16,7 +16,7 @@ func TestMigrate0037_keepReadsOnForAllAndByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 

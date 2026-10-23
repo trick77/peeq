@@ -11,7 +11,7 @@ func TestMigrate_createsCoreTables(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	for _, tbl := range []string{"settings", "videos", "download_jobs", "schema_migrations"} {
@@ -41,7 +41,7 @@ func TestMigrate_createsPhase2Tables(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	// users and sessions are gone since 0038 (kit/auth's cookie sessions).
@@ -61,7 +61,7 @@ func TestMigrate_0007CreatesActivityEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -95,7 +95,7 @@ func TestMigrate_idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db1); err != nil {
+	if err := Migrate(t.Context(), db1); err != nil {
 		t.Fatal(err)
 	}
 	if err := db1.Close(); err != nil {
@@ -107,7 +107,7 @@ func TestMigrate_idempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db2.Close()
-	if err := Migrate(db2); err != nil {
+	if err := Migrate(t.Context(), db2); err != nil {
 		t.Fatalf("second migrate should be a no-op, got error: %v", err)
 	}
 }

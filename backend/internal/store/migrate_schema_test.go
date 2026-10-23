@@ -5,59 +5,35 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-	"sort"
 	"testing"
+	"testing/fstest"
+
+	"github.com/trick77/ship/kit/migrate"
 )
 
-// applyThrough stands db up part-way through the migration history: it applies
-// every migration up to and including stopAt and records it, so a following
+// applyThrough stands db up part-way through the migration history: it runs
+// kit's runner over every migration up to and including stopAt, so a following
 // Migrate() sees exactly the pending set a deployed peeq would. Tests that only
-// care about the final schema call Migrate directly instead.
+// care about the final schema call Migrate directly instead. A second call
+// steps forward from where the first stopped, so a test can stop at one
+// migration, set the database up as that version saw it, and then go on.
 func applyThrough(t *testing.T, db *sql.DB, stopAt string) {
 	t.Helper()
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-		version    TEXT PRIMARY KEY,
-		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-	)`); err != nil {
-		t.Fatal(err)
-	}
-	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	files, err := migrate.Files(migrations())
 	if err != nil {
 		t.Fatal(err)
 	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		// Skip what a previous call already applied, so a test can stop at one
-		// migration, set the database up as that version saw it, and then step
-		// forward to the next.
-		var dummy int
-		switch err := db.QueryRow(`SELECT 1 FROM schema_migrations WHERE version = ?`, name).Scan(&dummy); {
-		case err == nil:
-			if name == stopAt {
-				return
-			}
-			continue
-		case err != sql.ErrNoRows:
-			t.Fatal(err)
-		}
-		body, err := migrationsFS.ReadFile("migrations/" + name)
+	upTo := fstest.MapFS{}
+	for _, m := range files {
+		body, err := fs.ReadFile(migrations(), m.Name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(string(body)); err != nil {
-			t.Fatalf("apply %s: %v", name, err)
-		}
-		if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
-			t.Fatal(err)
-		}
-		if name == stopAt {
+		upTo[m.Name] = &fstest.MapFile{Data: body}
+		if m.Name == stopAt {
+			if _, err := migrate.Up(t.Context(), db, upTo, migrateOptions); err != nil {
+				t.Fatalf("migrate through %s: %v", stopAt, err)
+			}
 			return
 		}
 	}
@@ -70,7 +46,7 @@ func TestSchemaHasPhase3Objects(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,7 +77,7 @@ func TestSchemaHasKindAndFTS(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,7 +110,7 @@ func TestSchemaHasYoutubePauseColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	for _, col := range []string{"youtube_paused", "youtube_pause_reason", "youtube_paused_at"} {
@@ -165,7 +141,7 @@ func TestMigrate_addsSubtitlesDefaultToAnExisting0001DB(t *testing.T) {
 	}
 
 	// When: peeq starts and migrates.
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -197,7 +173,7 @@ func TestSchemaHasChannelMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -259,7 +235,7 @@ INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
 	// When: peeq starts and migrates. Twice — a recorded migration must never
 	// run again, which is the property that makes this reset a one-shot.
 	for i := 0; i < 2; i++ {
-		if err := Migrate(db); err != nil {
+		if err := Migrate(t.Context(), db); err != nil {
 			t.Fatalf("Migrate #%d: %v", i+1, err)
 		}
 	}
@@ -294,7 +270,7 @@ INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
 	// silently skipped rather than replayed (see AGENTS.md).
 	var recorded int
 	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM schema_migrations WHERE version = '0004_category_manual.sql'`,
+		`SELECT COUNT(*) FROM schema_migrations WHERE name = '0004_category_manual.sql'`,
 	).Scan(&recorded); err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +333,7 @@ func TestMigrate_spreadsMetadataRefreshAcrossTheWeek(t *testing.T) {
 	}
 
 	// When: peeq starts and migrates.
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -424,7 +400,7 @@ func TestMigrate_slotBackfillLeavesAPendingScanRequestAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	applyThrough(t, db, "0015_reclassify_hints.sql")
+	applyThrough(t, db, "0019_reclassify_hints.sql")
 
 	// Given: two subscriptions overdue for a scan, one of them requested by hand.
 	for _, id := range []string{"UCa", "UCb"} {
@@ -442,7 +418,7 @@ func TestMigrate_slotBackfillLeavesAPendingScanRequestAlone(t *testing.T) {
 	}
 
 	// When: peeq starts and migrates.
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -479,10 +455,10 @@ func TestMigrate_seedsPlaybackStateOnAnExistingDB(t *testing.T) {
 	defer db.Close()
 
 	// Given: a DB standing at the migration right before this one.
-	applyThrough(t, db, "0010_video_state_version.sql")
+	applyThrough(t, db, "0014_video_state_version.sql")
 
 	// When: peeq starts and migrates.
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -504,7 +480,7 @@ func TestMigrate_seedsPlaybackStateOnAnExistingDB(t *testing.T) {
 
 	// And: re-running is a no-op rather than a duplicate-key failure — every
 	// restart re-runs Migrate.
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
 	if err := db.QueryRow(`SELECT COUNT(*) FROM playback_state`).Scan(&count); err != nil {
@@ -525,7 +501,7 @@ func TestSchemaRenamesTrackedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -564,7 +540,7 @@ func TestMigrate_backfillsChannelsFromDownloadedVideos(t *testing.T) {
 	defer db.Close()
 	// Stop just before 0012 so the videos below look exactly like an existing
 	// install's: channel_id set, no channels row anywhere.
-	applyThrough(t, db, "0011_playback_state.sql")
+	applyThrough(t, db, "0015_playback_state.sql")
 
 	if _, err := db.Exec(`
 INSERT INTO videos (id, url, channel_id, channel_name, status) VALUES
@@ -574,7 +550,7 @@ INSERT INTO videos (id, url, channel_id, channel_name, status) VALUES
   ('v4','u','','Orphan','downloaded')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -622,7 +598,7 @@ func TestMigrate_clearsStaleTombstonedThumbnailPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	applyThrough(t, db, "0012_channel_added_rename.sql")
+	applyThrough(t, db, "0016_channel_added_rename.sql")
 
 	if _, err := db.Exec(`
 INSERT INTO videos (id, url, status, thumbnail_path) VALUES
@@ -631,7 +607,7 @@ INSERT INTO videos (id, url, status, thumbnail_path) VALUES
   ('e1','u','error','/media/c/e1/e1.jpg')`); err != nil {
 		t.Fatal(err)
 	}
-	applyThrough(t, db, "0013_tombstone_thumbnail.sql")
+	applyThrough(t, db, "0017_tombstone_thumbnail.sql")
 
 	var got string
 	if err := db.QueryRow(`SELECT thumbnail_path FROM videos WHERE id = 't1'`).Scan(&got); err != nil {
@@ -665,7 +641,7 @@ func TestMigrate_dropsAssetPathColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 

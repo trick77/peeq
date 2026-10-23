@@ -6,7 +6,7 @@ import "testing"
 // shaped the way 0037 left it: a user with a live session, beside a channel,
 // a video and a playback pointer that must survive it untouched.
 func TestMigrate0038_dropsSessionsAndUsersOnly(t *testing.T) {
-	db := openMigratedThrough(t, "0037_keep_in_search_default_on.sql")
+	db := openMigratedThrough(t, "0042_keep_in_search_default_on.sql")
 	for _, q := range []string{
 		`INSERT INTO users (id, oidc_subject, username, role) VALUES ('u1', 'sub-1', 'jan', 'admin')`,
 		`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ('h1', 'u1', '2099-01-01T00:00:00Z')`,
@@ -30,7 +30,7 @@ func TestMigrate0038_dropsSessionsAndUsersOnly(t *testing.T) {
 	}
 	before := counts()
 
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 

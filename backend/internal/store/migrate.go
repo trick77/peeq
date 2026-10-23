@@ -1,69 +1,141 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"embed"
-	"errors"
 	"fmt"
 	"io/fs"
-	"sort"
+
+	"github.com/trick77/ship/kit/migrate"
 )
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
+// migrations is the embedded directory as kit's runner reads it: the files at
+// the root of the FS. fs.Sub fails only on an invalid path, and this one is a
+// constant.
+func migrations() fs.FS {
+	sub, _ := fs.Sub(migrationsFS, "migrations")
+	return sub
+}
+
+var migrateOptions = migrate.Options{Dialect: migrate.SQLite}
+
 // Migrate applies any embedded migrations not yet recorded in
-// schema_migrations, each in its own transaction, in lexicographic filename
-// order.
-func Migrate(db *sql.DB) error {
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-		version    TEXT PRIMARY KEY,
-		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-	)`); err != nil {
+// schema_migrations, each in its own transaction, in version order. A
+// database the old runner wrote is adopted first.
+func Migrate(ctx context.Context, db *sql.DB) error {
+	if err := adoptLegacy(ctx, db); err != nil {
 		return err
 	}
+	_, err := migrate.Up(ctx, db, migrations(), migrateOptions)
+	return err
+}
 
-	entries, err := fs.ReadDir(migrationsFS, "migrations")
+// legacyNames maps every file name the old runner may have recorded to the
+// file's name today. The old runner keyed schema_migrations.version by file
+// name in lexicographic order, which let five numbers repeat; kit orders by
+// the number and refuses a repeat, so every file from the first duplicate on
+// was renumbered, keeping the order. Remove this once every instance has
+// booted a build that adopts.
+var legacyNames = map[string]string{
+	"0001_init.sql":                       "0001_init.sql",
+	"0002_subtitles_default.sql":          "0002_subtitles_default.sql",
+	"0003_channel_metadata.sql":           "0003_channel_metadata.sql",
+	"0004_category_manual.sql":            "0004_category_manual.sql",
+	"0005_channel_meta_refresh.sql":       "0005_channel_meta_refresh.sql",
+	"0005_videos_category_index.sql":      "0006_videos_category_index.sql",
+	"0006_sponsorblock_refresh.sql":       "0007_sponsorblock_refresh.sql",
+	"0007_activity.sql":                   "0008_activity.sql",
+	"0008_channel_videos_published.sql":   "0009_channel_videos_published.sql",
+	"0008_share_links.sql":                "0010_share_links.sql",
+	"0009_scan_requested.sql":             "0011_scan_requested.sql",
+	"0009_video_metadata.sql":             "0012_video_metadata.sql",
+	"0010_media_probe.sql":                "0013_media_probe.sql",
+	"0010_video_state_version.sql":        "0014_video_state_version.sql",
+	"0011_playback_state.sql":             "0015_playback_state.sql",
+	"0012_channel_added_rename.sql":       "0016_channel_added_rename.sql",
+	"0013_tombstone_thumbnail.sql":        "0017_tombstone_thumbnail.sql",
+	"0014_channel_videos_unavailable.sql": "0018_channel_videos_unavailable.sql",
+	"0015_reclassify_hints.sql":           "0019_reclassify_hints.sql",
+	"0016_scan_slots.sql":                 "0020_scan_slots.sql",
+	"0017_direct_stream.sql":              "0021_direct_stream.sql",
+	"0018_embed_rev.sql":                  "0022_embed_rev.sql",
+	"0019_drop_embed_jobs.sql":            "0023_drop_embed_jobs.sql",
+	"0020_inbox_summaries.sql":            "0024_inbox_summaries.sql",
+	"0021_retire_apple_720p.sql":          "0025_retire_apple_720p.sql",
+	"0022_video_thumbnails.sql":           "0026_video_thumbnails.sql",
+	"0023_assets_to_database.sql":         "0027_assets_to_database.sql",
+	"0024_drop_asset_paths.sql":           "0028_drop_asset_paths.sql",
+	"0025_unprobed_index.sql":             "0029_unprobed_index.sql",
+	"0026_keep_reads.sql":                 "0030_keep_reads.sql",
+	"0027_summary_job_backoff.sql":        "0031_summary_job_backoff.sql",
+	"0028_video_chat_cost.sql":            "0032_video_chat_cost.sql",
+	"0029_drop_video_chat_cost.sql":       "0033_drop_video_chat_cost.sql",
+	"0030_download_job_backoff.sql":       "0034_download_job_backoff.sql",
+	"0031_vec_model.sql":                  "0035_vec_model.sql",
+	"0032_library_load_indexes.sql":       "0036_library_load_indexes.sql",
+	"0033_streams_missing.sql":            "0037_streams_missing.sql",
+	"0034_caption_last_error.sql":         "0038_caption_last_error.sql",
+	"0035_video_in_depth.sql":             "0039_video_in_depth.sql",
+	"0036_channel_category_stats.sql":     "0040_channel_category_stats.sql",
+	"0036_videos_channel_search.sql":      "0041_videos_channel_search.sql",
+	"0037_keep_in_search_default_on.sql":  "0042_keep_in_search_default_on.sql",
+	"0038_drop_sessions_users.sql":        "0043_drop_sessions_users.sql",
+}
+
+// adoptLegacy turns the old runner's schema_migrations(version, applied_at)
+// into kit's (name, applied_at) and renames each recorded file to its
+// current name, in one transaction. A fresh database, or one already adopted,
+// has no version column and is left alone. A recorded name the map does not
+// know is an error: the history would be silently cut.
+//
+// Only the applied_at default differs from kit's table afterwards; kit never
+// reads it and every insert takes the default, so the table is not rebuilt.
+func adoptLegacy(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() {
-			names = append(names, e.Name())
+	defer func() { _ = tx.Rollback() }()
+
+	var legacy bool
+	err = tx.QueryRowContext(ctx,
+		`SELECT count(*) > 0 FROM pragma_table_info('schema_migrations') WHERE name = 'version'`,
+	).Scan(&legacy)
+	if err != nil || !legacy {
+		return err
+	}
+
+	known := make([]any, 0, len(legacyNames))
+	for old := range legacyNames {
+		known = append(known, old)
+	}
+	var unknown sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT min(version) FROM schema_migrations WHERE version NOT IN (`+Placeholders(len(known))+`)`, //nolint:gosec // placeholders only
+		known...,
+	).Scan(&unknown); err != nil {
+		return fmt.Errorf("read schema_migrations: %w", err)
+	}
+	if unknown.Valid {
+		return fmt.Errorf("adopt schema_migrations: applied migration %s has no current file", unknown.String)
+	}
+
+	stmts := []string{`ALTER TABLE schema_migrations RENAME COLUMN version TO name`}
+	args := [][]any{nil}
+	for old, name := range legacyNames {
+		if old != name {
+			stmts = append(stmts, `UPDATE schema_migrations SET name = ? WHERE name = ?`)
+			args = append(args, []any{name, old})
 		}
 	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		var dummy int
-		err := db.QueryRow(`SELECT 1 FROM schema_migrations WHERE version = ?`, name).Scan(&dummy)
-		if err == nil {
-			continue // already applied
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-
-		body, err := migrationsFS.ReadFile("migrations/" + name)
-		if err != nil {
-			return err
-		}
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(string(body)); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("apply %s: %w", name, err)
-		}
-		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("record %s: %w", name, err)
-		}
-		if err := tx.Commit(); err != nil {
-			return err
+	for i, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt, args[i]...); err != nil {
+			return fmt.Errorf("adopt schema_migrations: %w", err)
 		}
 	}
-	return nil
+	return tx.Commit()
 }

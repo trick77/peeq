@@ -40,7 +40,7 @@ func seedLibraryBench(b *testing.B) (http.Handler, *http.Cookie) {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = db.Close() })
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(b.Context(), db); err != nil {
 		b.Fatal(err)
 	}
 

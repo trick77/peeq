@@ -26,7 +26,7 @@ func openTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return db
