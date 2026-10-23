@@ -174,7 +174,7 @@ func newScanHarness(t *testing.T) *scanHarness {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
@@ -402,7 +402,7 @@ func TestScan_prefetchesPendingThumbnail(t *testing.T) {
 		t.Fatalf("newp state = %q, want pending", h.ledgerState("newp"))
 	}
 
-	// The poster is cached on the ledger row, not under .pending/ (0023).
+	// The poster is cached on the ledger row, not under .pending/ (0027).
 	var found bool
 	for i := 0; i < 200; i++ {
 		if t, err := h.ledger.GetThumbnail("newp"); err == nil && t != nil {

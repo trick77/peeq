@@ -10,7 +10,7 @@ import (
 )
 
 // handleVideoSubtitles serves the video's WebVTT captions from the row that
-// owns them (migration 0023). 404 covers both "no video" and "video has no
+// owns them (migration 0027). 404 covers both "no video" and "video has no
 // transcript" — and a video deleted to reclaim space keeps its captions, since
 // a tombstone takes the media file and nothing else.
 //

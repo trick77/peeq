@@ -84,7 +84,7 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	// corrects the setting. A retired id reaches here without anyone hand-
 	// crafting a request: a Settings tab rendered before the deploy that
 	// retired it still carries its button, and clicking it writes the id
-	// straight back over what 0021_retire_apple_720p.sql just fixed. Refuse
+	// straight back over what 0025_retire_apple_720p.sql just fixed. Refuse
 	// it at the door, the way PUT /api/channels/{id} refuses "custom".
 	if req.FormatPreset != nil && *req.FormatPreset != "custom" && !ytdlp.IsPreset(*req.FormatPreset) {
 		httpx.WriteError(w, http.StatusBadRequest,

@@ -341,7 +341,7 @@ func TestVideosDelete_tombstonesRowAndUnlinksFile(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("set downloaded: %v", err)
 	}
-	// The poster the card renders is stored on the row (0022).
+	// The poster the card renders is stored on the row (0026).
 	if err := deps.Videos.SetThumbnail("v1", "image/jpeg", []byte("fake thumbnail bytes")); err != nil {
 		t.Fatalf("store thumbnail: %v", err)
 	}
@@ -733,8 +733,8 @@ func TestVideosThumbnail_notFoundWithoutThumbnail(t *testing.T) {
 }
 
 // The symlink-escape test that used to sit here went with the column it was
-// about. The thumbnail endpoint has read bytes off the row since 0022 and the
-// path is gone since 0024, so there is no filesystem lookup left to escape —
+// about. The thumbnail endpoint has read bytes off the row since 0026 and the
+// path is gone since 0028, so there is no filesystem lookup left to escape —
 // the same retirement the subtitle and channel-image endpoints got.
 
 // TestVideosGet_exposesSponsorblockSegments covers the Task 14 player's

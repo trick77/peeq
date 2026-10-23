@@ -47,7 +47,7 @@ func newHarness(t *testing.T, retentionDays int) *harness {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
@@ -179,7 +179,7 @@ func TestSweepOnce_deletesOnlyWatchedNonFavoriteAgedAndNotPlaying(t *testing.T) 
 // and embeddings are rebuilt from, so losing it would make the video
 // permanently unsearchable on the next reprocess.
 //
-// Both are rows now (0022, 0023), which is what makes this hold by construction
+// Both are rows now (0026, 0027), which is what makes this hold by construction
 // — the sweep touches one file and cannot reach them.
 func TestSweepOnce_keepsThumbnailAndSubtitleOfTombstonedVideo(t *testing.T) {
 	h := newHarness(t, 30) // retention_days = 30; fixed now is 2026-07-18

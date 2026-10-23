@@ -16,7 +16,7 @@ func newTestStore(t *testing.T) (*Store, *videos.Store, *sql.DB) {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
@@ -41,7 +41,7 @@ func TestGet_emptyBeforeAnythingIsSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	// Migration 0011 seeds the singleton with a NULL video_id, so this is a
+	// Migration 0015 seeds the singleton with a NULL video_id, so this is a
 	// plain empty pointer and not a missing-row error.
 	if got.VideoID != "" {
 		t.Fatalf("video_id = %q, want empty", got.VideoID)

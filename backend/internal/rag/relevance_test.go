@@ -85,7 +85,7 @@ func TestSearchFTSHighlightsTheMatchNotTheHead(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO videos (id, url) VALUES ('v1','u')`); err != nil {
@@ -133,7 +133,7 @@ func TestRetrieveWithinBoundsDistance(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`INSERT INTO videos (id, url) VALUES ('near','u'),('far','u')`); err != nil {

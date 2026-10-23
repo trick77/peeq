@@ -15,7 +15,7 @@ type SearchableChannel struct {
 	Subscribed  bool
 	// KeepReads is whether videos peeq only read (never downloaded) stay
 	// searchable: keep_reads AND auto_summary. keep_reads alone is on for
-	// nearly every channel since 0037, and with auto_summary off nothing is
+	// nearly every channel since 0042, and with auto_summary off nothing is
 	// read to keep.
 	KeepReads bool
 }

@@ -7,7 +7,7 @@
 // re-sharing a still-live link keeps its token and only re-stamps the expiry,
 // minting a new token only once the previous one has expired or been revoked;
 // DeleteByVideo (Stop sharing) is what kills a link immediately. See migration
-// 0008_share_links.sql for why the raw token (not just a hash) is stored here,
+// 0010_share_links.sql for why the raw token (not just a hash) is stored here,
 // unlike sessions and the machine api token.
 package sharelink
 

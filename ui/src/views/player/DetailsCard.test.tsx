@@ -19,7 +19,7 @@ function stats(overrides: Partial<VideoEmbeddings> = {}): VideoEmbeddings {
   };
 }
 
-// A fully populated video: probed, downloaded after migration 0009, watched.
+// A fully populated video: probed, downloaded after migration 0012, watched.
 // The near-empty case gets its own test — it is the one most of a real library
 // hits, since nothing backfills the YouTube columns onto older rows.
 function baseVideo(overrides: Partial<Video> = {}): Video {

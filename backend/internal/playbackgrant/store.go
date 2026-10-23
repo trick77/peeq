@@ -10,7 +10,7 @@
 //     keyed on the video id would be enumerable; a grant is 32 bytes of entropy
 //     instead, and the token→video mapping never crosses the wire.
 //   - It expires. Unlike a share link, which may live forever by design, a grant
-//     is always bounded (see migration 0017_direct_stream.sql).
+//     is always bounded (see migration 0021_direct_stream.sql).
 //   - It is revocable in bulk. The stream handler re-reads the
 //     direct_stream_enabled setting on every request, so turning the feature off
 //     kills every outstanding grant at once, without a restart.

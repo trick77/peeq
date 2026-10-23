@@ -54,7 +54,7 @@ type Video struct {
 	PublishedAt     string
 	Description     string
 	// HasThumbnail is whether a poster is stored for this video (see
-	// videoColumns). Migration 0024 took the thumbnail_path column that used to
+	// videoColumns). Migration 0028 took the thumbnail_path column that used to
 	// stand in for this: a string claiming a file exists was something any
 	// metadata write could blank out from under a perfectly good image, and did.
 	HasThumbnail bool
@@ -76,7 +76,7 @@ type Video struct {
 	WatchedAt             string
 	ResumePositionSeconds float64
 	// StateVersion is the row's watched-state generation counter (migration
-	// 0010). It is read-only from this struct's point of view: only SetWatched
+	// 0014). It is read-only from this struct's point of view: only SetWatched
 	// and SetResume's auto-watch path bump it, and both return the new value
 	// rather than expecting a caller to set this field.
 	StateVersion  int64
@@ -103,7 +103,7 @@ type Video struct {
 	EmbedRev int
 	Category string
 	// ChatUsage is what the chat model has spent analysing this video, summed
-	// over every attempt. Zero on a video analysed before migration 0028.
+	// over every attempt. Zero on a video analysed before migration 0032.
 	ChatUsage ChatUsage
 	// MediaContainer, VideoCodec, VideoHeight and AudioCodec are what the
 	// downloaded file actually is, filled in by mediaprobe. They carry
@@ -203,7 +203,7 @@ func New(db *sql.DB) *Store {
 // thumbnail_path used to be here, unguarded, and it cost real posters: every
 // channel scan, every inbox caption-fetch and every add-by-URL blanked it on the
 // rows it touched while the image sat untouched on disk. The poster is stored
-// bytes now (0022) and the column is gone (0024), so there is no pointer left to
+// bytes now (0026) and the column is gone (0028), so there is no pointer left to
 // get wrong — which is the durable version of that fix.
 func (s *Store) Upsert(v Video) error {
 	return upsertTx(context.Background(), s.db, v)
@@ -643,7 +643,7 @@ func (s *Store) List(opts ListOptions) ([]Video, error) {
 	return out, nil
 }
 
-// listFrom is videoFrom with the videos side pinned to idx_videos_cards (0032),
+// listFrom is videoFrom with the videos side pinned to idx_videos_cards (0036),
 // which holds every column List selects, filters or sorts on. The grid is then
 // answered from the index alone. That matters because of where a row's small
 // columns live: status, watched, category and the rest sit behind the
@@ -718,7 +718,7 @@ type Counts struct {
 //
 // One statement on purpose. A query per chip walked the table five times, and
 // the columns it filters on sit behind the description and analysis text in the
-// row; idx_videos_counts (0032) covers this one, so it reads no row at all.
+// row; idx_videos_counts (0036) covers this one, so it reads no row at all.
 func (s *Store) Counts(opts CountOptions) (Counts, error) {
 	out := Counts{
 		Filters:    make(map[string]int, len(CountFilters)),

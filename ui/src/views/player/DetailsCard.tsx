@@ -43,7 +43,7 @@ type Row = { k: string; v: string; sub?: string };
 
 // Group is one titled block of rows. Rows with no value are dropped, and a
 // group left with no rows is dropped too: 109 of the 174 videos in a real
-// library predate the migration that added YouTube's own metadata (0009,
+// library predate the migration that added YouTube's own metadata (0012,
 // nothing backfills), and a bare "SOURCE" heading over a single line is worse
 // than no heading at all.
 type Group = { title: string; rows: Row[]; tags?: string[] };

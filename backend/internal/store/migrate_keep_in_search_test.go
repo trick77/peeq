@@ -2,12 +2,12 @@ package store
 
 import "testing"
 
-// 0037 turns keep_reads on for every channel and makes on the default. It is a
-// DATA migration, so it runs over channels shaped the way 0036 left them: one
+// 0042 turns keep_reads on for every channel and makes on the default. It is a
+// DATA migration, so it runs over channels shaped the way 0041 left them: one
 // that had opted in, one that had not, and a ledger row hanging off each so the
 // column swap is seen not to cascade anything away.
-func TestMigrate0037_keepReadsOnForAllAndByDefault(t *testing.T) {
-	db := openMigratedThrough(t, "0036_videos_channel_search.sql")
+func TestMigrate0042_keepReadsOnForAllAndByDefault(t *testing.T) {
+	db := openMigratedThrough(t, "0041_videos_channel_search.sql")
 	if _, err := db.Exec(`INSERT INTO channels (id, name, keep_reads) VALUES ('UCon','on',1), ('UCoff','off',0)`); err != nil {
 		t.Fatal(err)
 	}
@@ -16,7 +16,7 @@ func TestMigrate0037_keepReadsOnForAllAndByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 
@@ -26,7 +26,7 @@ func TestMigrate0037_keepReadsOnForAllAndByDefault(t *testing.T) {
 			t.Fatal(err)
 		}
 		if keep != 1 {
-			t.Fatalf("%s keep_reads = %d after 0037, want 1", id, keep)
+			t.Fatalf("%s keep_reads = %d after 0042, want 1", id, keep)
 		}
 	}
 	var ledger int
@@ -34,7 +34,7 @@ func TestMigrate0037_keepReadsOnForAllAndByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ledger != 2 {
-		t.Fatalf("ledger rows = %d after 0037, want 2", ledger)
+		t.Fatalf("ledger rows = %d after 0042, want 2", ledger)
 	}
 
 	if _, err := db.Exec(`INSERT INTO channels (id, name) VALUES ('UCnew','new')`); err != nil {

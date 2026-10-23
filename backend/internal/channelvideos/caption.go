@@ -9,7 +9,7 @@ import (
 )
 
 // CaptionExhausted is the attempt count that means "never fetch captions for
-// this row". Migration 0018 stamps it on every row that existed when the
+// this row". Migration 0022 stamps it on every row that existed when the
 // feature shipped, and MarkCaptionSettled stamps it on every row that has been
 // answered — by captions arriving, or by the ladder running out.
 //
@@ -148,7 +148,7 @@ UPDATE channel_videos
 }
 
 // SetCaptionLastError records how the latest caption fetch for videoID ended:
-// the failure's text, or "" for a call that ran cleanly. See migration 0034.
+// the failure's text, or "" for a call that ran cleanly. See migration 0038.
 //
 // Not called for a refused fetch (cookie, pause, block): that is no outcome
 // for this video, and it must not erase one.

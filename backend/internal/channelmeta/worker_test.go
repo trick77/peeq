@@ -65,7 +65,7 @@ func newTestStore(t *testing.T) *channels.Store {
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
@@ -942,7 +942,7 @@ func TestWorker_rescheduleSurvivesALostRankQuery(t *testing.T) {
 	}
 }
 
-// A resolve stores the channel's artwork on its row (migration 0023) rather
+// A resolve stores the channel's artwork on its row (migration 0027) rather
 // than under .channels/, so nothing has to delete it later — a channel delete
 // takes it on the cascade.
 func TestResolve_storesArtworkOnTheRow(t *testing.T) {

@@ -8,7 +8,7 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - Commit subjects + PR titles: Go style `area: what` (`ytdlp: …`, `httpapi: …`, `llm: …`, `summarize: …`, `ui: …`, `extension: …`), gated by ship; release notes list them by area.
 - Gate: `ship check` (`make check`): conform, lint, tests, coverage floors 75 (Go, UI) and patch 75, the `ship.yaml` steps. `ship hooks` once per clone runs it on every push. Raise tests, never a floor. The extension's Playwright e2e is CI only (`extension-e2e.yaml`, PRs touching `extension/`): too slow for the hook.
 - Release by hand only, on GitHub (images are built and signed there): `gh workflow run Release -f bump=auto`. auto = patch, or a commit's `Release: minor` + `Release-note: …` lines.
-- Stays in peeq, not kit: `store.Migrate` (column `version`, numeric prefixes repeat), the yt-dlp throttle and serial queue (one global gated gap, not a per-key throttle), the `sched` slot math, the yt-dlp selfupdate symlink swap.
+- Stays in peeq, not kit: the yt-dlp throttle and serial queue (one global gated gap, not a per-key throttle), the `sched` slot math, the yt-dlp selfupdate symlink swap.
 - TDD: failing test first, then the minimal implementation.
 - Keep files focused — one clear responsibility each.
 - Phase 3 needs chat + embeddings models (`BACKEND_*_MODEL` + `LLMWIRE_<PROVIDER>_API_KEY`); tests
@@ -111,12 +111,12 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
   search implementation. Items unnumbered, `sources[i]` ↔ i-th item: a contract with loom.
 
 ## Database / migrations
-- New migration → new numbered file `backend/internal/store/migrations/NNNN_*.sql`. Runner applies pending
-  ones in order, records them in `schema_migrations`.
-- NEVER edit a migration that has run anywhere real, `0001_init.sql` included: the runner skips a recorded
-  version, so the edit silently never applies. Safe only before it ships; else write the next number.
-- Migration touching DATA (not just shape) → test on a populated DB stood up at the previous migration
-  (`applyThrough`). Fresh-DB test runs it over zero rows and passes whatever it says.
+- New migration → next free number, `backend/internal/store/migrations/NNNN_*.sql`; kit refuses repeats.
+- `schema_migrations.version` + `schema_migrations_*` trigger/lookup: keep while rollback to the last pre-kit
+  release must work; dropping them = deliberate later migration.
+- NEVER edit or rename a migration that ran anywhere real, `0001_init.sql` included: the runner skips a
+  recorded name → edit never applies. Safe only before it ships; else next number.
+- Migration touching DATA → test on a populated DB at the previous migration (`applyThrough`). Fresh-DB test runs it over zero rows: proves nothing.
 - **vec0 never frees a deleted vector** — the storage chunk stays, inserts only append, every KNN reads every chunk. Each re-embed adds dead chunks; rongo hit 46k vectors in 380 chunks and minutes per search, surfacing as `chunks iter error` (sqlite-vec's word for an interrupt). `rag.CompactVectors` rebuilds past 2× AT BOOT ONLY: it holds the write lock for minutes (rongo production: 8m33s for 46k vectors), far past `busy_timeout`. Writes that delete vectors warn.
 - **List queries are index-only, and must stay so.** Production DB sits on 7200rpm disks: cost = pages touched cold. A row's small columns live BEHIND its big ones (image `bytes` before `updated_at`; `videos.status/watched/category` behind description + analysis text), so reading them from the table walks overflow pages per row — the Library took 2.5s. Image version → `INDEXED BY idx_*_version`. `videos.Store.List` → `idx_videos_cards`; a new card/filter/sort column needs a migration adding it to that index (`videos/queryplan_test.go` fails otherwise). New list endpoint → narrow projection + a plan test, never `videoColumns`.
 - Ad-hoc query against a containerised DB → sqlite base image, never `alpine` + `apk add sqlite`:

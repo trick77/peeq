@@ -212,9 +212,9 @@ func (w *Worker) succeed(ctx context.Context, job *jobs.Job, video *videos.Video
 	// Take the poster into the database. yt-dlp wrote it to disk beside the
 	// media file; from here on that file is only an import source, and the bytes
 	// in video_thumbnails are what every card and player renders (migration
-	// 0022). Best-effort and never gating: a video with no poster is a cosmetic
+	// 0026). Best-effort and never gating: a video with no poster is a cosmetic
 	// loss, and never worth failing a download that otherwise succeeded. With
-	// the import worker retired (0024) nothing retries it, so the file is left
+	// the import worker retired (0028) nothing retries it, so the file is left
 	// where it is on a failure rather than unlinked.
 	w.storeThumbnail(video.ID, res.ThumbnailPath)
 

@@ -4,7 +4,7 @@ tidy:
 	cd backend && go mod tidy
 
 test:
-	cd backend && go test ./...
+	cd backend && go test -race ./...
 
 fe-test:
 	cd ui && npm run test

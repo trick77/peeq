@@ -256,7 +256,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// both were thrown away.
 	//
 	// The index is the exception, and only where the channel's keep_reads says
-	// so (migration 0026). There the reading is worth keeping on its own: the
+	// so (migration 0030). There the reading is worth keeping on its own: the
 	// chunks survive the ignore (see dropInboxRead), so a video peeq read and
 	// the user never downloaded is still findable in Search. It reaches no list
 	// while doing so — status 'new' is excluded from every one of them.
@@ -498,7 +498,7 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 //
 // The path is not, because it is only meaningful in combination: it says where
 // the .vtt came from, and captionfetch is the sole writer under
-// video's stored transcript. Before migration 0023 that was inferred from a
+// video's stored transcript. Before migration 0027 that was inferred from a
 // ".summaries/" prefix on subtitle_path; the text no longer has a path, so the
 // provenance is recorded on the row instead. Once the video is downloaded, the
 // download worker stores its transcript with source='download' — overwriting,

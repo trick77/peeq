@@ -198,7 +198,7 @@ const shareCardVersion = "1"
 // unreadable and undecodable all mean "no image", and the card falls back to its
 // text-only layout instead of the whole unfurl failing.
 //
-// It reads the same bytes the thumbnail endpoint serves (migration 0023). While
+// It reads the same bytes the thumbnail endpoint serves (migration 0027). While
 // this decoded a file and its sibling endpoint read the row, an unfurl silently
 // lost its picture for every video whose poster had been imported.
 func (s *server) loadThumbnail(videoID string) image.Image {

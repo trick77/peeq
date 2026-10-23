@@ -325,7 +325,7 @@ func (s *server) handleGetVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dto := toVideoDTO(v)
-	// Here and not in toVideoDTO: the text lives in its own table (0035), and
+	// Here and not in toVideoDTO: the text lives in its own table (0039), and
 	// the library list builds that DTO once per card for a field no card shows.
 	// A failed read costs the page one collapsed card, not the page: logged,
 	// and the field stays empty.
@@ -728,7 +728,7 @@ func attachmentDisposition(name string) string {
 }
 
 // handleVideoThumbnail serves the video's poster from the database (migration
-// 0022). There is no filesystem lookup left here: the bytes are either stored on
+// 0026). There is no filesystem lookup left here: the bytes are either stored on
 // the row or the video has no poster, which is the whole point of the move — a
 // path column could go stale under a perfectly good image, stored bytes cannot.
 //

@@ -29,7 +29,7 @@ type Entry struct {
 	DecidedAt       string
 	// PublishedAt is YYYY-MM-DD, or "" when not known. It is yt-dlp's
 	// APPROXIMATE tab date, not the exact upload_date on videos.published_at,
-	// and rows written before migration 0008 carry "" until a scan heals them.
+	// and rows written before migration 0009 carry "" until a scan heals them.
 	PublishedAt string
 	// UnavailableReason is why State is StateUnavailable — one of the
 	// ytdlp.TerminalError reasons (members, age, geo, private, deleted). It is
@@ -173,7 +173,7 @@ func nullIfEmpty(s string) any {
 }
 
 // SetPublishedAt fills in a row's approximate publish date, but ONLY while it
-// is still NULL. Rows written before migration 0008 — every item sitting in
+// is still NULL. Rows written before migration 0009 — every item sitting in
 // the inbox when this shipped — have no date, and a scan skips them entirely
 // as already-seen, so without this they would stay dateless forever. The
 // WHERE published_at IS NULL guard is what makes it safe to call on every

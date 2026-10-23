@@ -12,7 +12,7 @@ import (
 func TestEnqueueClaimFinishResetOrphans(t *testing.T) {
 	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()
-	store.Migrate(db)
+	store.Migrate(t.Context(), db)
 	db.Exec(`INSERT INTO videos (id, url) VALUES ('v1','u')`)
 	s := New(db)
 
@@ -44,7 +44,7 @@ func TestEnqueueClaimFinishResetOrphans(t *testing.T) {
 func TestFail_terminalVsRequeue(t *testing.T) {
 	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()
-	store.Migrate(db)
+	store.Migrate(t.Context(), db)
 	db.Exec(`INSERT INTO videos (id, url) VALUES ('term','u'),('retry','u')`)
 	// 'term' has spent its last attempt (attempts >= max_attempts) → Fail marks
 	// it 'failed' and reports terminal=true. 'retry' still has attempts left →
@@ -83,7 +83,7 @@ func TestFail_terminalVsRequeue(t *testing.T) {
 func TestListActive(t *testing.T) {
 	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()
-	store.Migrate(db)
+	store.Migrate(t.Context(), db)
 	db.Exec(`INSERT INTO videos (id, url) VALUES ('a','u'),('b','u'),('c','u'),('d','u')`)
 	// pending 'a' and 'c', running 'b', and terminal 'd' (done) — only the
 	// first three are in flight and should come back, oldest enqueued first.
@@ -116,7 +116,7 @@ func TestListActive(t *testing.T) {
 func TestListActiveEmpty(t *testing.T) {
 	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()
-	store.Migrate(db)
+	store.Migrate(t.Context(), db)
 	s := New(db)
 	active, err := s.ListActive()
 	if err != nil {
@@ -130,7 +130,7 @@ func TestListActiveEmpty(t *testing.T) {
 func TestEnqueueMissing(t *testing.T) {
 	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()
-	store.Migrate(db)
+	store.Migrate(t.Context(), db)
 	s := New(db)
 
 	// gap        — downloaded, never enqueued: the taimport crash window.
@@ -182,7 +182,7 @@ func TestEnqueueMissing(t *testing.T) {
 func TestFailDefersTheNextAttempt(t *testing.T) {
 	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()
-	store.Migrate(db)
+	store.Migrate(t.Context(), db)
 	db.Exec(`INSERT INTO videos (id, url) VALUES ('v1','u')`)
 	s := New(db)
 
@@ -226,7 +226,7 @@ func TestFailDefersTheNextAttempt(t *testing.T) {
 func TestClaimSkipsDeferredJobForADueOne(t *testing.T) {
 	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()
-	store.Migrate(db)
+	store.Migrate(t.Context(), db)
 	db.Exec(`INSERT INTO videos (id, url) VALUES ('old','u'), ('new','u')`)
 	s := New(db)
 
@@ -249,7 +249,7 @@ func TestClaimSkipsDeferredJobForADueOne(t *testing.T) {
 func TestFailIsTerminalOnTheLastAttempt(t *testing.T) {
 	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()
-	store.Migrate(db)
+	store.Migrate(t.Context(), db)
 	db.Exec(`INSERT INTO videos (id, url) VALUES ('v1','u')`)
 	s := NewWithBackoff(db, nil)
 
@@ -286,7 +286,7 @@ func TestFailIsTerminalOnTheLastAttempt(t *testing.T) {
 func TestListFailedAndRetryFailed(t *testing.T) {
 	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()
-	store.Migrate(db)
+	store.Migrate(t.Context(), db)
 	db.Exec(`INSERT INTO videos (id, url) VALUES ('a','u'), ('b','u'), ('c','u')`)
 	s := New(db)
 

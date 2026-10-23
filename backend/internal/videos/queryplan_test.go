@@ -43,9 +43,9 @@ func TestKeptVideos_staysOnTheCoveringIndex(t *testing.T) {
 
 // The image tables store the bytes ahead of updated_at, so reading the version
 // stamp from the table walks the whole image's overflow chain, once per listed
-// row. 0032's indexes carry the stamp, and these statements must stay on them.
+// row. 0036's indexes carry the stamp, and these statements must stay on them.
 // Each is the subquery its reader runs, verbatim.
-func TestMigrate0032_imageVersionReadsNeverTouchTheBlob(t *testing.T) {
+func TestMigrate0036_imageVersionReadsNeverTouchTheBlob(t *testing.T) {
 	db := openTestDB(t)
 	for name, tc := range map[string]struct{ query, index string }{
 		"video poster (videoColumns)": {
@@ -70,7 +70,7 @@ func TestMigrate0032_imageVersionReadsNeverTouchTheBlob(t *testing.T) {
 
 // The chip row is asked for on every Library load. Its statement must be
 // answered from idx_videos_counts alone, in category order.
-func TestMigrate0032_countsAreAnsweredFromTheIndex(t *testing.T) {
+func TestMigrate0036_countsAreAnsweredFromTheIndex(t *testing.T) {
 	db := openTestDB(t)
 	query, args := countsQuery("")
 	plan := queryPlan(t, db, query, args...)
@@ -83,7 +83,7 @@ func TestMigrate0032_countsAreAnsweredFromTheIndex(t *testing.T) {
 }
 
 // The per-channel numbers on the channel list and the channel page.
-func TestMigrate0032_channelCountsSeekOnTheChannel(t *testing.T) {
+func TestMigrate0036_channelCountsSeekOnTheChannel(t *testing.T) {
 	db := openTestDB(t)
 	for name, tc := range map[string]struct{ query, index string }{
 		"pending per channel": {
@@ -109,7 +109,7 @@ func TestMigrate0032_channelCountsSeekOnTheChannel(t *testing.T) {
 // The grid must be answered from idx_videos_cards alone, whatever the filter
 // and the sort: a plan that opens the videos table follows each row's text
 // into its overflow pages, which is what made the Library slow on a cold cache.
-func TestMigrate0032_listNeverOpensTheVideosTable(t *testing.T) {
+func TestMigrate0036_listNeverOpensTheVideosTable(t *testing.T) {
 	db := openTestDB(t)
 	cases := []ListOptions{
 		{},

@@ -9,7 +9,7 @@ import (
 // Transcript sources. A caption fetched to decide whether a video is worth
 // downloading gets a deliberately truncated analysis — summary only, no
 // category, no key points, no embeddings — while a downloaded video gets the
-// whole pipeline. Before migration 0023 the two were told apart by looking for
+// whole pipeline. Before migration 0027 the two were told apart by looking for
 // the ".summaries/" prefix in subtitle_path; with the file gone the provenance
 // is recorded rather than inferred from a path string.
 const (

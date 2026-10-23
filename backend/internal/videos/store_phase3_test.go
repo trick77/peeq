@@ -10,7 +10,7 @@ import (
 func TestPhase3Setters(t *testing.T) {
 	db, _ := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()
-	store.Migrate(db)
+	store.Migrate(t.Context(), db)
 	s := New(db)
 	if err := s.Upsert(Video{ID: "v1", URL: "u"}); err != nil {
 		t.Fatal(err)

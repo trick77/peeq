@@ -15,7 +15,7 @@ const watchedThreshold = 0.9
 // state_version no longer matches the row: the video's watched state changed
 // somewhere else (another tab, another device) and this caller has not seen it,
 // so its position is stale. The HTTP layer maps this to 409 so the losing
-// client can refetch instead of clobbering. See migration 0010 and issue #97.
+// client can refetch instead of clobbering. See migration 0014 and issue #97.
 var ErrStaleVersion = errors.New("video state changed since last read")
 
 // SetFavorite sets a video's favorite flag, stamping (or clearing)
@@ -50,7 +50,7 @@ func (s *Store) SetFavorite(id string, fav bool) error {
 // SetResume's auto-watched check and undo the un-watch.
 //
 // Either direction bumps state_version and returns the new value (migration
-// 0010). The bump lives here because this is where the two halves of playback
+// 0014). The bump lives here because this is where the two halves of playback
 // state stop agreeing: the zeroed position is only correct for a client that
 // knows the toggle happened, so every other client's echoed version has to stop
 // being valid at exactly this moment. The caller returns the new version to the
@@ -108,10 +108,10 @@ RETURNING state_version`
 //   - Only a genuine unwatched -> watched transition bumps state_version. A
 //     plain position write is not a watched-state transition, and bumping on
 //     every resume ping would invalidate every other client's echo instantly
-//     (see migration 0010). That includes the pings AFTER the threshold has
+//     (see migration 0014). That includes the pings AFTER the threshold has
 //     already been crossed: every one of them is "auto-watched" by the ratio
 //     test, so bumping on the ratio rather than on the transition would turn the
-//     whole last 10% of a video into exactly the 409 storm 0010 rules out. Hence
+//     whole last 10% of a video into exactly the 409 storm 0014 rules out. Hence
 //     the `watched = 0` guard on the bump.
 //
 // Returns the row's state_version after the write and whether the video is

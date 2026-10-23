@@ -71,7 +71,7 @@ func TestSetResume_autoMarksWatchedAtNinetyPercent_noResetOnRewatch(t *testing.T
 	}
 }
 
-// TestStateVersion_watchedTogglesBump covers the counter migration 0010 added:
+// TestStateVersion_watchedTogglesBump covers the counter migration 0014 added:
 // either direction of the manual toggle is a watched-state transition, so both
 // must invalidate whatever version other clients are holding.
 func TestStateVersion_watchedTogglesBump(t *testing.T) {
@@ -280,7 +280,7 @@ func TestSetResume_onlyAutoWatchBumps(t *testing.T) {
 	// And it must NOT bump again. Every ping in the last 10% satisfies the
 	// >=90% ratio, so bumping on the ratio rather than on the unwatched->watched
 	// transition would invalidate every other client's echo once per ping — the
-	// 409 storm migration 0010 exists to avoid.
+	// 409 storm migration 0014 exists to avoid.
 	if again != bumped {
 		t.Fatalf("state_version = %d, want it unchanged at %d — only the transition bumps", again, bumped)
 	}

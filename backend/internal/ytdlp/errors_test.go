@@ -345,7 +345,7 @@ func TestClassify_matchedSignaturesKeepStderr(t *testing.T) {
 	if !errors.As(err, &te) || te.Reason != "private" {
 		t.Fatalf("Reason changed: %+v", te)
 	}
-	// Migration 0014 matched stored error text on this prefix; keep the shape.
+	// Migration 0018 matched stored error text on this prefix; keep the shape.
 	if !strings.HasPrefix(err.Error(), "ytdlp: terminal (private): ") {
 		t.Fatalf("terminal error text lost its prefix: %q", err.Error())
 	}

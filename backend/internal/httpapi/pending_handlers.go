@@ -219,7 +219,7 @@ func (s *server) handlePendingDownload(w http.ResponseWriter, r *http.Request) {
 // makes sure it never comes back to be read a second time.
 //
 // The exception is a video that was indexed for search, which only happens on a
-// channel whose keep_reads is on (migration 0026). There the reading is the
+// channel whose keep_reads is on (migration 0030). There the reading is the
 // point: the row stays, unreachable from every list but findable in Search, and
 // its poster stays with it because the summary page and the search card both
 // render one.
@@ -318,7 +318,7 @@ func (s *server) dropInboxRead(r *http.Request, e *channelvideos.Entry, id strin
 	}
 	// Only a row whose transcript came from a caption READ may be discarded: a
 	// downloaded video's analysis is not this endpoint's to throw away. Since
-	// migration 0023 that is a recorded fact rather than a guess at a path
+	// migration 0027 that is a recorded fact rather than a guess at a path
 	// prefix.
 	source, serr := s.videos.TranscriptSource(id)
 	if serr != nil {

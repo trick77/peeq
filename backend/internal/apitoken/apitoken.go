@@ -13,11 +13,12 @@ package apitoken
 
 import (
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
+
+	"github.com/trick77/ship/kit/secret"
 )
 
 // Prefix marks a peeq API token, making it greppable in logs and
@@ -46,15 +47,13 @@ func Hash(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Verify reports whether presented is the token behind storedHash, using a
-// constant-time compare so a caller cannot recover the hash byte by byte
-// from response timing.
+// Verify reports whether presented is the token behind storedHash, using
+// secret.Match so a caller cannot recover the hash byte by byte from
+// response timing.
 //
-// An empty storedHash always fails: peeq without a generated token must
-// never authenticate a request, including one presenting the empty string.
+// An empty storedHash always fails (secret.Match refuses an empty want): peeq
+// without a generated token must never authenticate a request, including one
+// presenting the empty string.
 func Verify(presented, storedHash string) bool {
-	if storedHash == "" {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(Hash(presented)), []byte(storedHash)) == 1
+	return secret.Match(Hash(presented), storedHash)
 }

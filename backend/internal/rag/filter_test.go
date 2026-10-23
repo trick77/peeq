@@ -21,7 +21,7 @@ func filterFixture(t *testing.T) (*sql.DB, *Store, []float32) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	const dim = 1536

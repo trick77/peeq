@@ -177,7 +177,7 @@ func (s *Store) Remove(v Video) (purged bool, err error) {
 // leave the file where the still-'downloaded' row says it is.
 //
 // media_path is the ONLY thing cleared. The poster and the transcript are rows
-// of their own (0022, 0023) and are untouched by a delete, so the remembered
+// of their own (0026, 0027) and are untouched by a delete, so the remembered
 // card keeps its picture and the video stays searchable and re-analysable with
 // nothing left on disk. There is no longer a column and a file to keep in step,
 // which is what used to leave tombstoned cards showing a broken image.

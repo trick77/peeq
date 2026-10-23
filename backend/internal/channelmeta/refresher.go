@@ -151,7 +151,7 @@ func (f *Refresher) Resolve(ctx context.Context, channelID string, cached *chann
 		return fmt.Errorf("cache resolved channel %s: %w", channelID, uerr)
 	}
 
-	// Artwork goes into the row (migration 0023), and only AFTER SaveResolved:
+	// Artwork goes into the row (migration 0027), and only AFTER SaveResolved:
 	// channel_images has an FK to channels, so storing first would be rejected
 	// for a channel being resolved for the very first time — which is most of
 	// them, and exactly when the artwork is new.

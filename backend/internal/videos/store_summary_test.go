@@ -380,7 +380,7 @@ func TestCategoryResetSetTellsResetsFromRemaps(t *testing.T) {
 		stmt string
 		want bool
 	}{
-		{"the real 0004/0015 statement", `UPDATE videos SET category = 'uncategorized' WHERE summary <> '' AND category_manual = 0`, true},
+		{"the real 0004/0019 statement", `UPDATE videos SET category = 'uncategorized' WHERE summary <> '' AND category_manual = 0`, true},
 		{"no spaces around the equals", `UPDATE videos SET category='uncategorized' WHERE summary <> ''`, true},
 		{"lowercased keywords", `update videos set category = 'uncategorized'`, true},
 		{"remap OUT of uncategorized", `UPDATE videos SET category = 'science' WHERE category = 'uncategorized'`, false},
@@ -409,7 +409,7 @@ func TestCategoryResetSetTellsResetsFromRemaps(t *testing.T) {
 // reads category.go instead of mirroring it.
 //
 // It covers every migration carrying a reset, not just 0004, because a second
-// one exists (0015, for the category hints) and a third will follow the next
+// one exists (0019, for the category hints) and a third will follow the next
 // time the enum or the classify prompt changes enough to invalidate past
 // answers. Copying a reset into a new file must not silently opt it out of the
 // only check that says the reset is reversible.

@@ -131,7 +131,7 @@ function sameLines(a: string[], b: string[]): boolean {
 //
 // The raw ".vtt" download and the <track> element the browser renders captions
 // from both still carry the markers this strips: they get the stored file
-// byte-for-byte, which is deliberate (see migration 0023).
+// byte-for-byte, which is deliberate (see migration 0027).
 export function parseVtt(text: string): Cue[] {
   const lines = text.split(/\r?\n/);
   const timingRe =

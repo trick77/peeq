@@ -26,7 +26,7 @@ func openTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := store.Migrate(db); err != nil {
+	if err := store.Migrate(t.Context(), db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return db
@@ -231,7 +231,7 @@ func runCheckTicks(t *testing.T, dir string, cache *ytdlp.StatusCache, rec *acti
 // TestYtdlpVersionCheck_recordsActivityOnce is the only test that exercises the
 // Activity write with a REAL store. activity.Record swallows every error at
 // ERROR level by design, and the kind/outcome pair is enforced by a CHECK in
-// 0007_activity.sql, so a wrong pair would fail silently and forever — a fake
+// 0008_activity.sql, so a wrong pair would fail silently and forever — a fake
 // recorder would never notice.
 //
 // It also pins the silence rule twice over: the row lands once no matter how

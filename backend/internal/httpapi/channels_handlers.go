@@ -206,7 +206,7 @@ func (s *server) handleChannelsPost(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "adding the channel failed")
 		return
 	}
-	// Artwork lands in the row rather than the media tree (migration 0023), and
+	// Artwork lands in the row rather than the media tree (migration 0027), and
 	// only AFTER SaveResolved: channel_images has an FK to channels, so storing
 	// first would be rejected for exactly the case this handler is — a channel
 	// being added for the first time.

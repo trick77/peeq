@@ -5,59 +5,38 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-	"sort"
 	"testing"
+	"testing/fstest"
+
+	"github.com/trick77/ship/kit/migrate"
 )
 
-// applyThrough stands db up part-way through the migration history: it applies
-// every migration up to and including stopAt and records it, so a following
+// applyThrough stands db up part-way through the migration history: it runs
+// kit's runner over every migration up to and including stopAt, so a following
 // Migrate() sees exactly the pending set a deployed peeq would. Tests that only
-// care about the final schema call Migrate directly instead.
+// care about the final schema call Migrate directly instead. A second call
+// steps forward from where the first stopped, so a test can stop at one
+// migration, set the database up as that version saw it, and then go on.
 func applyThrough(t *testing.T, db *sql.DB, stopAt string) {
 	t.Helper()
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-		version    TEXT PRIMARY KEY,
-		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-	)`); err != nil {
+	if err := prepareLegacy(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	files, err := migrate.Files(migrations())
 	if err != nil {
 		t.Fatal(err)
 	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		// Skip what a previous call already applied, so a test can stop at one
-		// migration, set the database up as that version saw it, and then step
-		// forward to the next.
-		var dummy int
-		switch err := db.QueryRow(`SELECT 1 FROM schema_migrations WHERE version = ?`, name).Scan(&dummy); {
-		case err == nil:
-			if name == stopAt {
-				return
-			}
-			continue
-		case err != sql.ErrNoRows:
-			t.Fatal(err)
-		}
-		body, err := migrationsFS.ReadFile("migrations/" + name)
+	upTo := fstest.MapFS{}
+	for _, m := range files {
+		body, err := fs.ReadFile(migrations(), m.Name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(string(body)); err != nil {
-			t.Fatalf("apply %s: %v", name, err)
-		}
-		if _, err := db.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
-			t.Fatal(err)
-		}
-		if name == stopAt {
+		upTo[m.Name] = &fstest.MapFile{Data: body}
+		if m.Name == stopAt {
+			if _, err := migrate.Up(t.Context(), db, upTo, migrateOptions); err != nil {
+				t.Fatalf("migrate through %s: %v", stopAt, err)
+			}
 			return
 		}
 	}
@@ -70,7 +49,7 @@ func TestSchemaHasPhase3Objects(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,7 +80,7 @@ func TestSchemaHasKindAndFTS(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,7 +113,7 @@ func TestSchemaHasYoutubePauseColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 	for _, col := range []string{"youtube_paused", "youtube_pause_reason", "youtube_paused_at"} {
@@ -165,7 +144,7 @@ func TestMigrate_addsSubtitlesDefaultToAnExisting0001DB(t *testing.T) {
 	}
 
 	// When: peeq starts and migrates.
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -197,7 +176,7 @@ func TestSchemaHasChannelMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -259,7 +238,7 @@ INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
 	// When: peeq starts and migrates. Twice — a recorded migration must never
 	// run again, which is the property that makes this reset a one-shot.
 	for i := 0; i < 2; i++ {
-		if err := Migrate(db); err != nil {
+		if err := Migrate(t.Context(), db); err != nil {
 			t.Fatalf("Migrate #%d: %v", i+1, err)
 		}
 	}
@@ -294,7 +273,7 @@ INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
 	// silently skipped rather than replayed (see AGENTS.md).
 	var recorded int
 	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM schema_migrations WHERE version = '0004_category_manual.sql'`,
+		`SELECT COUNT(*) FROM schema_migrations WHERE name = '0004_category_manual.sql'`,
 	).Scan(&recorded); err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +284,7 @@ INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
 
 // TestMigrate_spreadsMetadataRefreshAcrossTheWeek guards the backfills that are
 // the entire anti-batch mechanism: 0005 introduced next_meta_refresh_at with a
-// random spread, and 0016 moves both schedules onto their computed slots. A DB
+// random spread, and 0020 moves both schedules onto their computed slots. A DB
 // that already has subscriptions gets them all seeded at once, and if they were
 // all seeded to the SAME time they would run together, come due together an
 // interval later, and stay a convoy forever — a stampede of yt-dlp calls on
@@ -313,7 +292,7 @@ INSERT INTO videos (id, url, status, summary, summary_status, category) VALUES
 //
 // The assertions are on the SPREAD, not merely on non-null: a plain
 // datetime('now','+7 days') backfill would pass a null check and still be the
-// bug this test exists to catch. Since 0016 the spread is exact rather than
+// bug this test exists to catch. Since 0020 the spread is exact rather than
 // random, so this asserts the precise spacing — a convoy could no longer hide
 // inside a "scattered enough" tolerance.
 func TestMigrate_spreadsMetadataRefreshAcrossTheWeek(t *testing.T) {
@@ -357,13 +336,13 @@ func TestMigrate_spreadsMetadataRefreshAcrossTheWeek(t *testing.T) {
 	}
 
 	// When: peeq starts and migrates.
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
 	// Then: both schedules are seeded, each inside its own cycle, and spaced
 	// exactly evenly. The windows are half an interval to one-and-a-half, which
-	// is what the half-interval floor in 0016 costs on the one cycle that moves
+	// is what the half-interval floor in 0020 costs on the one cycle that moves
 	// a fleet onto its slots; every cycle after that is exact.
 	for _, c := range []struct {
 		column  string
@@ -408,7 +387,7 @@ SELECT MIN(t - prev), MAX(t - prev) FROM ordered WHERE prev IS NOT NULL`).Scan(&
 	}
 }
 
-// TestMigrate_slotBackfillLeavesAPendingScanRequestAlone: 0016 spreads the fleet
+// TestMigrate_slotBackfillLeavesAPendingScanRequestAlone: 0020 spreads the fleet
 // across the cycle, but a channel with an outstanding "Check now" is waiting on
 // a next_scan_at already in the past, and moving it 12–36h out would silently
 // drop the user's request while Activity still showed it as pending. That is not
@@ -424,7 +403,7 @@ func TestMigrate_slotBackfillLeavesAPendingScanRequestAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	applyThrough(t, db, "0015_reclassify_hints.sql")
+	applyThrough(t, db, "0019_reclassify_hints.sql")
 
 	// Given: two subscriptions overdue for a scan, one of them requested by hand.
 	for _, id := range []string{"UCa", "UCb"} {
@@ -442,7 +421,7 @@ func TestMigrate_slotBackfillLeavesAPendingScanRequestAlone(t *testing.T) {
 	}
 
 	// When: peeq starts and migrates.
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -467,7 +446,7 @@ FROM subscriptions`).Scan(&requested, &ordinary, &metas); err != nil {
 	}
 }
 
-// TestMigrate_seedsPlaybackStateOnAnExistingDB guards migration 0011. Unlike the
+// TestMigrate_seedsPlaybackStateOnAnExistingDB guards migration 0015. Unlike the
 // ALTER TABLE migrations, this one INSERTs: the singleton row has to be there for
 // playback.Store's plain UPDATE/QueryRow to work at all, so a DB that upgraded
 // rather than being created fresh must come out of Migrate with the row present.
@@ -479,10 +458,10 @@ func TestMigrate_seedsPlaybackStateOnAnExistingDB(t *testing.T) {
 	defer db.Close()
 
 	// Given: a DB standing at the migration right before this one.
-	applyThrough(t, db, "0010_video_state_version.sql")
+	applyThrough(t, db, "0014_video_state_version.sql")
 
 	// When: peeq starts and migrates.
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -504,7 +483,7 @@ func TestMigrate_seedsPlaybackStateOnAnExistingDB(t *testing.T) {
 
 	// And: re-running is a no-op rather than a duplicate-key failure — every
 	// restart re-runs Migrate.
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
 	if err := db.QueryRow(`SELECT COUNT(*) FROM playback_state`).Scan(&count); err != nil {
@@ -515,7 +494,7 @@ func TestMigrate_seedsPlaybackStateOnAnExistingDB(t *testing.T) {
 	}
 }
 
-// TestSchemaRenamesTrackedAt guards migration 0012's column swap. It is a
+// TestSchemaRenamesTrackedAt guards migration 0016's column swap. It is a
 // two-step rename — added_at has to be vacated before tracked_at can take the
 // name — so getting the order wrong would either fail outright or leave the
 // two columns holding each other's meaning, which nothing else would catch.
@@ -525,7 +504,7 @@ func TestSchemaRenamesTrackedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -551,7 +530,7 @@ func TestSchemaRenamesTrackedAt(t *testing.T) {
 	}
 }
 
-// TestMigrate_backfillsChannelsFromDownloadedVideos asserts 0012's backfill.
+// TestMigrate_backfillsChannelsFromDownloadedVideos asserts 0016's backfill.
 // Adding a video by URL never created a channels row, so channels the library
 // already holds downloads from had nothing to list — this is what makes them
 // appear under "From downloads" on an existing install rather than only for
@@ -562,9 +541,9 @@ func TestMigrate_backfillsChannelsFromDownloadedVideos(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	// Stop just before 0012 so the videos below look exactly like an existing
+	// Stop just before 0016 so the videos below look exactly like an existing
 	// install's: channel_id set, no channels row anywhere.
-	applyThrough(t, db, "0011_playback_state.sql")
+	applyThrough(t, db, "0015_playback_state.sql")
 
 	if _, err := db.Exec(`
 INSERT INTO videos (id, url, channel_id, channel_name, status) VALUES
@@ -574,7 +553,7 @@ INSERT INTO videos (id, url, channel_id, channel_name, status) VALUES
   ('v4','u','','Orphan','downloaded')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -606,23 +585,23 @@ INSERT INTO videos (id, url, channel_id, channel_name, status) VALUES
 	}
 }
 
-// TestMigrate_clearsStaleTombstonedThumbnailPath asserts 0013. Tombstoning
+// TestMigrate_clearsStaleTombstonedThumbnailPath asserts 0017. Tombstoning
 // used to unlink the thumbnail file while leaving thumbnail_path set, so
 // has_thumbnail stayed true and every tombstoned card asked for a poster
 // that 404s. Those files are gone for good, so the migration clears the
 // column and the UI draws its gradient placeholder instead. Rows in any
 // other status keep their path — theirs still points at a real file.
 //
-// It stops AT 0013 rather than running Migrate to the end: 0024 drops the
-// column this is about, and a test of what 0013 did has to look at the database
-// as 0013 left it.
+// It stops AT 0017 rather than running Migrate to the end: 0028 drops the
+// column this is about, and a test of what 0017 did has to look at the database
+// as 0017 left it.
 func TestMigrate_clearsStaleTombstonedThumbnailPath(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	applyThrough(t, db, "0012_channel_added_rename.sql")
+	applyThrough(t, db, "0016_channel_added_rename.sql")
 
 	if _, err := db.Exec(`
 INSERT INTO videos (id, url, status, thumbnail_path) VALUES
@@ -631,7 +610,7 @@ INSERT INTO videos (id, url, status, thumbnail_path) VALUES
   ('e1','u','error','/media/c/e1/e1.jpg')`); err != nil {
 		t.Fatal(err)
 	}
-	applyThrough(t, db, "0013_tombstone_thumbnail.sql")
+	applyThrough(t, db, "0017_tombstone_thumbnail.sql")
 
 	var got string
 	if err := db.QueryRow(`SELECT thumbnail_path FROM videos WHERE id = 't1'`).Scan(&got); err != nil {
@@ -650,14 +629,14 @@ INSERT INTO videos (id, url, status, thumbnail_path) VALUES
 	}
 }
 
-// TestMigrate_dropsAssetPathColumns asserts 0024: the four columns that used to
+// TestMigrate_dropsAssetPathColumns asserts 0028: the four columns that used to
 // point at files are gone.
 //
 // It also checks that the tables which cascade off videos and channels are still
 // there. That is the real hazard this migration walks past: dropping a COLUMN is
-// harmless, but rebuilding either table — the pattern 0014 uses — would have
+// harmless, but rebuilding either table — the pattern 0018 uses — would have
 // meant DROP TABLE with foreign_keys on, which fires every ON DELETE CASCADE and
-// empties the library. If someone ever "fixes" 0024 into a rebuild, this is what
+// empties the library. If someone ever "fixes" 0028 into a rebuild, this is what
 // catches it.
 func TestMigrate_dropsAssetPathColumns(t *testing.T) {
 	db, err := Open(filepath.Join(t.TempDir(), "t.db"))
@@ -665,7 +644,7 @@ func TestMigrate_dropsAssetPathColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := Migrate(db); err != nil {
+	if err := Migrate(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
 
@@ -682,7 +661,7 @@ func TestMigrate_dropsAssetPathColumns(t *testing.T) {
 			t.Fatal(err)
 		}
 		if n != 0 {
-			t.Errorf("%s.%s still present after 0024", c.table, c.col)
+			t.Errorf("%s.%s still present after 0028", c.table, c.col)
 		}
 	}
 
@@ -697,7 +676,7 @@ func TestMigrate_dropsAssetPathColumns(t *testing.T) {
 			t.Fatal(err)
 		}
 		if n != 1 {
-			t.Errorf("%s missing after 0024 — did the migration become a table rebuild?", tbl)
+			t.Errorf("%s missing after 0028 — did the migration become a table rebuild?", tbl)
 		}
 	}
 }
