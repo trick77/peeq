@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/trick77/llmwire"
+	"github.com/trick77/ship/kit/run"
 )
 
 // Three bounds replace the single whole-request timeout this client used while
@@ -209,14 +210,10 @@ func (c *Client) pace(ctx context.Context) (time.Duration, error) {
 	if wait <= 0 {
 		return 0, nil
 	}
-	t := time.NewTimer(wait)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
+	if !run.Sleep(ctx, wait) {
 		return 0, ctx.Err()
-	case <-t.C:
-		return wait, nil
 	}
+	return wait, nil
 }
 
 // The request body is llmwire's to render, from the fields chatRequestFor
