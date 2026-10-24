@@ -11,8 +11,8 @@ func TestResolve_knownPresets(t *testing.T) {
 		preset string
 		want   string
 	}{
-		{"apple-1080p", "bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4"},
-		{"apple-vp9-4k", "bestvideo[height<=2160][vcodec*=vp9]+bestaudio[acodec*=mp4a]/bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4"},
+		{"apple-1080p", "bestvideo[height<=1080][aspect_ratio>=?1][vcodec*=avc1]+bestaudio[acodec*=mp4a]/bestvideo[width<=1080][aspect_ratio<1][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4"},
+		{"apple-vp9-4k", "bestvideo[height<=2160][aspect_ratio>=?1][vcodec*=vp9]+bestaudio[acodec*=mp4a]/bestvideo[width<=2160][aspect_ratio<1][vcodec*=vp9]+bestaudio[acodec*=mp4a]/bestvideo[height<=1080][aspect_ratio>=?1][vcodec*=avc1]+bestaudio[acodec*=mp4a]/bestvideo[width<=1080][aspect_ratio<1][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4"},
 		{"best-mp4", "bestvideo+bestaudio/best"},
 	}
 	for _, c := range cases {

@@ -9,17 +9,24 @@
 // per-channel list filter it out via PRESETS_NO_CUSTOM below.
 export type FormatPreset = { id: string; label: string; format: string };
 
+// avc1080/vp94k mirror the Go constants of the same names.
+const avc1080 =
+  "bestvideo[height<=1080][aspect_ratio>=?1][vcodec*=avc1]+bestaudio[acodec*=mp4a]" +
+  "/bestvideo[width<=1080][aspect_ratio<1][vcodec*=avc1]+bestaudio[acodec*=mp4a]";
+const vp94k =
+  "bestvideo[height<=2160][aspect_ratio>=?1][vcodec*=vp9]+bestaudio[acodec*=mp4a]" +
+  "/bestvideo[width<=2160][aspect_ratio<1][vcodec*=vp9]+bestaudio[acodec*=mp4a]";
+
 export const PRESETS: FormatPreset[] = [
   {
     id: "apple-1080p",
     label: "Apple AirPlay 1080p",
-    format: "bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4",
+    format: `${avc1080}/mp4`,
   },
   {
     id: "apple-vp9-4k",
     label: "Apple VP9 4K",
-    format:
-      "bestvideo[height<=2160][vcodec*=vp9]+bestaudio[acodec*=mp4a]/bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4",
+    format: `${vp94k}/${avc1080}/mp4`,
   },
   {
     id: "best-mp4",
