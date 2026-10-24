@@ -13,10 +13,24 @@ import "fmt"
 // "best-mp4" takes whatever the best available video+audio is, which on
 // YouTube today usually means AV1 and Opus.
 var Presets = map[string]string{
-	"apple-1080p":  "bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4",
-	"apple-vp9-4k": "bestvideo[height<=2160][vcodec*=vp9]+bestaudio[acodec*=mp4a]/bestvideo[height<=1080][vcodec*=avc1]+bestaudio[acodec*=mp4a]/mp4",
+	"apple-1080p":  avc1080 + "/mp4",
+	"apple-vp9-4k": vp94k + "/" + avc1080 + "/mp4",
 	"best-mp4":     "bestvideo+bestaudio/best",
 }
+
+// avc1080 and vp94k cap the SHORT side, which is what "1080p" and "4K"
+// mean. A plain [height<=N] only says so for landscape: a portrait Short's
+// 1080p rung is 1080x1920, so apple-1080p fell to 480x854. yt-dlp cannot
+// filter on min(width, height) ([res<=1080] matches nothing and drops to the
+// 360p "mp4" fallback), so the two orientations are spelled apart. A square
+// video takes the landscape branch, and so does a format with no known
+// aspect ratio ('?'), which [height<=N] alone matched before.
+const (
+	avc1080 = "bestvideo[height<=1080][aspect_ratio>=?1][vcodec*=avc1]+bestaudio[acodec*=mp4a]" +
+		"/bestvideo[width<=1080][aspect_ratio<1][vcodec*=avc1]+bestaudio[acodec*=mp4a]"
+	vp94k = "bestvideo[height<=2160][aspect_ratio>=?1][vcodec*=vp9]+bestaudio[acodec*=mp4a]" +
+		"/bestvideo[width<=2160][aspect_ratio<1][vcodec*=vp9]+bestaudio[acodec*=mp4a]"
+)
 
 // IsPreset reports whether id names an entry in Presets. "custom" is
 // deliberately NOT a preset: it is Resolve's escape hatch for a
