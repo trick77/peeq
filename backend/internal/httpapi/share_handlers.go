@@ -93,7 +93,7 @@ var shareTTLs = map[string]time.Duration{
 }
 
 // shareURL builds the absolute link handed to a recipient. It prefers the
-// configured external base (BACKEND_PUBLIC_URL); with none set (typical in dev)
+// configured external base (https://<PUBLIC_FQDN>); with none set (PUBLIC_FQDN unset)
 // it returns the relative /s/<token> path and lets the browser resolve it
 // against the origin the owner is already on.
 func (s *server) shareURL(token string) string {

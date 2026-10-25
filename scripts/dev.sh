@@ -15,7 +15,6 @@ trap cleanup EXIT INT TERM
   cd "$ROOT/backend"
   BACKEND_AUTH_MODE=dev \
   BACKEND_ADDR=127.0.0.1:8080 \
-  BACKEND_PUBLIC_URL=http://127.0.0.1:8080 \
   BACKEND_DB_PATH="$DB_PATH" \
   go run ./cmd/peeq
 ) &

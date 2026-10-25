@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,7 +19,7 @@ import (
 func TestLoad_devAuthRejectsNonLoopback(t *testing.T) {
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "0.0.0.0:8080")
-	t.Setenv("BACKEND_PUBLIC_URL", "")
+	t.Setenv("PUBLIC_FQDN", "")
 	if _, err := Load(); err == nil {
 		t.Fatal("dev auth on non-loopback must fail")
 	}
@@ -26,7 +28,7 @@ func TestLoad_devAuthRejectsNonLoopback(t *testing.T) {
 func TestLoad_devAuthLoopbackOK(t *testing.T) {
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
-	t.Setenv("BACKEND_PUBLIC_URL", "")
+	t.Setenv("PUBLIC_FQDN", "")
 	if _, err := Load(); err != nil {
 		t.Fatalf("loopback dev auth must pass: %v", err)
 	}
@@ -136,7 +138,7 @@ func TestLoad_summarizeDelays(t *testing.T) {
 	setRequired := func() {
 		t.Setenv("BACKEND_AUTH_MODE", "dev")
 		t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
-		t.Setenv("BACKEND_PUBLIC_URL", "")
+		t.Setenv("PUBLIC_FQDN", "")
 	}
 
 	setRequired()
@@ -183,7 +185,7 @@ func TestLoad_chatStreamIdleTimeout(t *testing.T) {
 	setRequired := func() {
 		t.Setenv("BACKEND_AUTH_MODE", "dev")
 		t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
-		t.Setenv("BACKEND_PUBLIC_URL", "")
+		t.Setenv("PUBLIC_FQDN", "")
 	}
 
 	setRequired()
@@ -221,7 +223,7 @@ func baseEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
-	t.Setenv("BACKEND_PUBLIC_URL", "")
+	t.Setenv("PUBLIC_FQDN", "")
 }
 
 // The session cookie is only as strong as its key: OIDC needs a real secret,
@@ -258,6 +260,7 @@ func TestLoad_session(t *testing.T) {
 	t.Setenv("BACKEND_OIDC_CLIENT_ID", "client")
 	t.Setenv("BACKEND_OIDC_CLIENT_SECRET", "secret")
 	t.Setenv("BACKEND_OIDC_REDIRECT_URL", "https://peeq.example/api/auth/callback")
+	t.Setenv("PUBLIC_FQDN", "peeq.example")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "BACKEND_SESSION_SECRET is required") {
 		t.Errorf("oidc without a secret: err = %v", err)
 	}
@@ -441,7 +444,6 @@ func TestLoad_mcpToken(t *testing.T) {
 		t.Fatalf("MCPToken defaulted to %q; unset must leave /mcp unmounted", cfg.MCPToken)
 	}
 	t.Setenv("BACKEND_MCP_TOKEN", "  abc123  ")
-	t.Setenv("BACKEND_PUBLIC_URL", "http://localhost:8080")
 	cfg, err = Load()
 	if err != nil {
 		t.Fatalf("expected ok, got %v", err)
@@ -456,7 +458,6 @@ func TestLoad_mcpToken(t *testing.T) {
 func TestLoad_mcpTokenWithInnerWhitespaceRefused(t *testing.T) {
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
-	t.Setenv("BACKEND_PUBLIC_URL", "http://localhost:8080")
 	// A control character cannot travel in a header either.
 	for _, tok := range []string{"abc 123", "abc\v123", "abc\x01123"} {
 		t.Setenv("BACKEND_MCP_TOKEN", tok)
@@ -466,20 +467,94 @@ func TestLoad_mcpTokenWithInnerWhitespaceRefused(t *testing.T) {
 	}
 }
 
-// MCP results link back into peeq; without a public URL every link would be
-// relative and useless to the client citing it.
-func TestLoad_mcpTokenNeedsAPublicURL(t *testing.T) {
+// oidcEnv sets a complete oidc environment without PUBLIC_FQDN.
+func oidcEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("BACKEND_AUTH_MODE", "oidc")
+	t.Setenv("BACKEND_ADDR", ":8080")
+	t.Setenv("BACKEND_OIDC_ISSUER", "https://issuer.example")
+	t.Setenv("BACKEND_OIDC_CLIENT_ID", "client")
+	t.Setenv("BACKEND_OIDC_CLIENT_SECRET", "secret")
+	t.Setenv("BACKEND_OIDC_REDIRECT_URL", "https://peeq.example.com/api/auth/callback")
+	t.Setenv("BACKEND_SESSION_SECRET", strings.Repeat("s", 32))
+	t.Setenv("PUBLIC_FQDN", "")
+}
+
+// The public URL is the hostname compose routes on, so it is PUBLIC_FQDN with the
+// scheme TLS termination gives it; .env never repeats the host.
+func TestLoad_publicURLFromFQDN(t *testing.T) {
+	oidcEnv(t)
+	t.Setenv("PUBLIC_FQDN", "peeq.example.com")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PublicURL != "https://peeq.example.com" {
+		t.Fatalf("PublicURL = %q, want https://peeq.example.com", cfg.PublicURL)
+	}
+}
+
+// Without a public URL the session cookie loses Secure and share/MCP links go
+// relative: oidc refuses to boot instead.
+func TestLoad_oidcRequiresPublicFQDN(t *testing.T) {
+	oidcEnv(t)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PUBLIC_FQDN") {
+		t.Fatalf("oidc without PUBLIC_FQDN: err = %v, want one naming PUBLIC_FQDN", err)
+	}
+}
+
+// BACKEND_PUBLIC_URL is gone; a deployment still setting it boots, and the log
+// says what replaced it.
+func TestLoad_staleBackendPublicURLWarns(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	oidcEnv(t)
+	t.Setenv("PUBLIC_FQDN", "peeq.example.com")
+	t.Setenv("BACKEND_PUBLIC_URL", "https://peeq.example.com")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !strings.Contains(buf.String(), "BACKEND_PUBLIC_URL") || !strings.Contains(buf.String(), "PUBLIC_FQDN") {
+		t.Fatalf("log = %q, want a warning naming BACKEND_PUBLIC_URL and PUBLIC_FQDN", buf.String())
+	}
+}
+
+// PUBLIC_FQDN is a bare hostname: a scheme, port, userinfo, query, fragment or
+// path in it would build a URL nobody can reach, so boot refuses and names the
+// variable.
+func TestLoad_fqdnMustBeABareHost(t *testing.T) {
+	oidcEnv(t)
+	for _, bad := range []string{
+		"https://peeq.example.com", "peeq.example.com/peeq", "peeq example.com",
+		"peeq.example.com:443", "user@peeq.example.com", "peeq.example.com?x", "peeq.example.com#x",
+		// Traefik's Host rule gets the raw value, so whitespace must fail here
+		// rather than be trimmed into a name the router never matches.
+		"peeq.example.com ", " peeq.example.com", "   ",
+	} {
+		t.Setenv("PUBLIC_FQDN", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PUBLIC_FQDN") {
+			t.Errorf("PUBLIC_FQDN=%q: err = %v, want one naming PUBLIC_FQDN", bad, err)
+		}
+	}
+}
+
+// Dev auth binds to loopback and is reached there, so its public URL is the
+// listen address. PUBLIC_FQDN is ignored rather than refused: compose.dev.yaml loads
+// the production .env whole.
+func TestLoad_devPublicURLIsTheLoopbackAddr(t *testing.T) {
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
-	t.Setenv("BACKEND_PUBLIC_URL", "")
-	t.Setenv("BACKEND_MCP_TOKEN", "abc123")
-	_, err := Load()
-	if err == nil {
-		t.Fatal("a token without a public URL must not boot")
-	}
-	for _, v := range []string{"BACKEND_MCP_TOKEN", "BACKEND_PUBLIC_URL"} {
-		if !strings.Contains(err.Error(), v) {
-			t.Errorf("error %q does not name %s", err, v)
+	for _, fqdn := range []string{"peeq.example.com", "https://not-validated-in-dev"} {
+		t.Setenv("PUBLIC_FQDN", fqdn)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("PUBLIC_FQDN=%q: Load: %v", fqdn, err)
+		}
+		if cfg.PublicURL != "http://127.0.0.1:8080" {
+			t.Fatalf("PUBLIC_FQDN=%q: PublicURL = %q, want http://127.0.0.1:8080", fqdn, cfg.PublicURL)
 		}
 	}
 }

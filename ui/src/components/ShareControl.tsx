@@ -65,7 +65,7 @@ function bucketTtl(status: ShareStatus): ShareTTL {
 }
 
 // absoluteUrl turns the API's link (which may be a bare /s/<token> path when
-// BACKEND_PUBLIC_URL is unset) into a full URL the recipient can open.
+// PUBLIC_FQDN is unset) into a full URL the recipient can open.
 function absoluteUrl(url: string): string {
   if (/^https?:\/\//.test(url)) return url;
   return window.location.origin + url;

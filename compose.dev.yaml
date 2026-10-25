@@ -36,7 +36,6 @@ services:
       TMPDIR: /tmp
       BACKEND_AUTH_MODE: dev
       BACKEND_ADDR: "127.0.0.1:8080"
-      BACKEND_PUBLIC_URL: "http://localhost:8080"
       BACKEND_DB_PATH: /data/peeq.db
       BACKEND_MEDIA_DIR: /data/media
       BACKEND_YTDLP_DIR: /data/bin
