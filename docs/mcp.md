@@ -71,7 +71,7 @@ needs no Authelia change. If forward-auth is ever added to that router, add an
 `access_control` rule above the `group:Peeq` rule:
 
 ```yaml
-- domain: peeq.trick77.com
+- domain: peeq.example.com
   resources: ['^/mcp$']
   policy: bypass
 ```
