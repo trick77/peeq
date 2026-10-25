@@ -28,12 +28,14 @@ func inDepthWait(attempts int) time.Duration {
 
 // deferInDepth queues (or re-queues) the video's in-depth retry after attempts
 // earlier ones, keeping err as the row's last_error. Redacted: the row is read
-// outside the log handler that would otherwise scrub a URL from it.
+// outside the log handler that would otherwise scrub a URL from it. When the
+// write fails, retries pause for the same wait instead.
 func (w *Worker) deferInDepth(id string, attempts int, err error) {
 	attempts++
-	next := w.d.Now().Add(inDepthWait(attempts))
-	if derr := w.d.Videos.DeferInDepthRetry(id, logx.RedactErr(err).Error(), attempts, next); derr != nil {
+	wait := inDepthWait(attempts)
+	if derr := w.d.Videos.DeferInDepthRetry(id, logx.RedactErr(err).Error(), attempts, w.d.Now().Add(wait)); derr != nil {
 		w.d.Logger.Error("summarize worker: queue in-depth retry failed", "video_id", id, "err", derr)
+		w.inDepthPausedUntil = w.d.Now().Add(wait)
 	}
 }
 
@@ -58,6 +60,9 @@ func (w *Worker) deferInDepthFromJob(id string, err error) {
 // escaping here would kill the process again on every boot. did is true only
 // when a chat or embed call was made, so a dropped row keeps the poll gap.
 func (w *Worker) inDepthOne(ctx context.Context) (did bool, err error) {
+	if w.d.Now().Before(w.inDepthPausedUntil) {
+		return false, nil
+	}
 	id, attempts, err := w.d.Videos.NextInDepthRetry(w.d.Now())
 	if err != nil || id == "" {
 		return false, err
@@ -69,14 +74,14 @@ func (w *Worker) inDepthOne(ctx context.Context) (did bool, err error) {
 			did, err = true, nil
 		}
 	}()
+	drop := func(reason string, attrs ...any) (bool, error) {
+		w.d.Logger.Info("summarize worker: in-depth retry dropped", append([]any{"video_id", id, "reason", reason}, attrs...)...)
+		return false, w.d.Videos.ClearInDepthRetry(id)
+	}
 	video, err := w.d.Videos.Get(id)
 	if err != nil {
 		w.deferInDepth(id, attempts, err)
 		return false, nil
-	}
-	drop := func(reason string) (bool, error) {
-		w.d.Logger.Info("summarize worker: in-depth retry dropped", "video_id", id, "reason", reason)
-		return false, w.d.Videos.ClearInDepthRetry(id)
 	}
 	// A wiped summary means a re-analysis owns the video now; its own in-depth
 	// step queues it again if that fails too.
@@ -85,6 +90,16 @@ func (w *Worker) inDepthOne(ctx context.Context) (did bool, err error) {
 	}
 	if video.SummaryStatus != videos.SummaryDone || video.Summary == "" {
 		return drop("no summary")
+	}
+	// Ignored by the user and kept only for search: not worth a call a day
+	// forever (the backfill leaves these out for the same reason).
+	ignored, err := w.d.Videos.IgnoredRead(id)
+	if err != nil {
+		w.deferInDepth(id, attempts, err)
+		return false, nil
+	}
+	if ignored {
+		return drop("ignored")
 	}
 	transcript, err := w.d.Videos.GetTranscript(id)
 	if err != nil {
@@ -99,10 +114,11 @@ func (w *Worker) inDepthOne(ctx context.Context) (did bool, err error) {
 		w.deferInDepth(id, attempts, err)
 		return false, nil
 	}
-	// Nothing missing (a later job wrote it all): done without parsing.
+	// Text already there: index it if that is still missing, else done
+	// without parsing anything.
+	need := false
 	if text != "" {
-		need, err := w.inDepthNeedsIndex(ctx, video, transcript.Source, text)
-		if err != nil {
+		if need, err = w.inDepthNeedsIndex(ctx, video, transcript.Source, text); err != nil {
 			w.deferInDepth(id, attempts, err)
 			return false, nil
 		}
@@ -112,8 +128,7 @@ func (w *Worker) inDepthOne(ctx context.Context) (did bool, err error) {
 	}
 	prep, err := w.prepareTranscript(video, transcript.VTT)
 	if err != nil {
-		w.d.Logger.Info("summarize worker: in-depth retry dropped", "video_id", id, "err", err)
-		return false, w.d.Videos.ClearInDepthRetry(id)
+		return drop("unparsable transcript", "err", err)
 	}
 	if prep.empty != "" {
 		return drop(prep.empty)
@@ -147,22 +162,37 @@ func (w *Worker) inDepthOne(ctx context.Context) (did bool, err error) {
 	wrote := false
 	if text == "" {
 		text, err = w.d.Summarizer.InDepth(cctx, video.Title, int(video.DurationSeconds), prep.forSummary.Cues)
-		if err == nil {
-			err = w.d.Videos.SetInDepth(id, text)
-		}
 		if err != nil {
 			return fail("indepth", err)
 		}
+		// Only beside the summary it was written from: the call takes minutes,
+		// and a reprocess in between owns the video now.
+		stored, err := w.d.Videos.SetInDepthIfSummary(id, text, video.Summary)
+		if err != nil {
+			return fail("indepth", err)
+		}
+		if !stored {
+			return drop("summary changed during the call")
+		}
 		wrote = true
 		w.emit(id, videos.SummaryDone, "")
+		// Re-read: the index is built from the row as it is now, not as it
+		// was before the call (a stale summary or embed_rev would be written
+		// back over a reprocess).
+		if video, err = w.d.Videos.Get(id); err != nil || video == nil || video.Summary == "" {
+			if err != nil {
+				w.deferInDepth(id, attempts, err)
+				return true, nil
+			}
+			return true, w.d.Videos.ClearInDepthRetry(id)
+		}
+		if need, err = w.inDepthNeedsIndex(cctx, video, transcript.Source, text); err != nil {
+			w.deferInDepth(id, attempts, err)
+			return true, nil
+		}
 	}
 
-	indexed, err := w.inDepthNeedsIndex(cctx, video, transcript.Source, text)
-	if err != nil {
-		w.deferInDepth(id, attempts, err)
-		return wrote, nil
-	}
-	if indexed {
+	if need {
 		inbox := isInboxRead(video, transcript.Source)
 		var chapters []Chapter
 		if !inbox {
@@ -181,12 +211,12 @@ func (w *Worker) inDepthOne(ctx context.Context) (did bool, err error) {
 		}
 	}
 	if err := w.d.Videos.ClearInDepthRetry(id); err != nil {
-		return wrote || indexed, err
+		return wrote || need, err
 	}
-	attrs := append(ident, "attempts", attempts, "written", wrote, "indexed", indexed,
+	attrs := append(ident, "attempts", attempts, "written", wrote, "indexed", need,
 		"words", len(strings.Fields(text)), "duration_ms", time.Since(started).Milliseconds())
 	w.d.Logger.Info("summarize worker: in-depth retry done", append(attrs, totals.Snapshot().LogAttrs()...)...)
-	return wrote || indexed, nil
+	return wrote || need, nil
 }
 
 // inDepthNeedsIndex reports whether the video's index lacks the in-depth

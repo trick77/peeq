@@ -58,6 +58,18 @@ ORDER BY next_at, video_id LIMIT 1`, store.FormatTime(now)).Scan(&id, &attempts)
 	return id, attempts, nil
 }
 
+// IgnoredRead reports whether the video is an inbox read the user ignored
+// (ledger state 'ignored'), kept only because it is indexed.
+func (s *Store) IgnoredRead(id string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT EXISTS(SELECT 1 FROM channel_videos WHERE video_id = ? AND state = 'ignored')`, id).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("video %s ignored read: %w", id, err)
+	}
+	return n != 0, nil
+}
+
 // ClearInDepthRetry drops the video's retry: done, or nothing left to do.
 func (s *Store) ClearInDepthRetry(id string) error {
 	if _, err := s.db.ExecContext(context.Background(),

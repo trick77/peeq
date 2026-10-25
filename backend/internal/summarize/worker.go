@@ -59,6 +59,10 @@ type Worker struct {
 	// Process-lifetime only: a restart gives every video another chance, which
 	// is the right bound for a transient LLM outage.
 	classifyFailed map[string]bool
+	// inDepthPausedUntil holds in-depth retries off after a retry could not be
+	// re-queued: its row keeps a past-due next_at, and without this the next
+	// idle turn would repeat the call with no backoff at all.
+	inDepthPausedUntil time.Time
 }
 
 // NewWorker builds a Worker, filling in defaults for the optional deps.
@@ -637,6 +641,11 @@ func (w *Worker) inDepthStep(video *videos.Video, run *analysisRun, cues []subti
 		err = w.d.Videos.SetInDepth(video.ID, text)
 	}
 	if err != nil {
+		// A shutdown is not a failed attempt: the orphaned job runs the step
+		// again at the next boot.
+		if ictx.Err() != nil {
+			return
+		}
 		w.d.Logger.Warn("summarize worker: in-depth failed", append(run.ident(), "duration_ms", run.stepElapsedMs(), "err", err)...)
 		w.deferInDepthFromJob(video.ID, err)
 		return

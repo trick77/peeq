@@ -490,12 +490,15 @@ func TestInDepthRetry_aPanicIsRecoveredAndBackedOff(t *testing.T) {
 	}
 }
 
-// A job whose in-depth call fails again keeps the retry's count and backoff
-// instead of starting over at attempt 1.
+// A requeued job (its summary already stored) whose in-depth call fails again
+// keeps the retry's count and backoff instead of starting over at attempt 1.
 func TestInDepthRetry_aJobFailureKeepsTheCount(t *testing.T) {
 	h := newWorkerHarness(t)
 	seedDownloaded(t, h, "d1")
 	clock := newRetryClock()
+	if err := h.videos.SetSummaryText("d1", "Overall prose summary."); err != nil {
+		t.Fatalf("summary: %v", err)
+	}
 	if err := h.videos.DeferInDepthRetry("d1", "earlier", 4, clock.after(time.Hour)); err != nil {
 		t.Fatalf("queue: %v", err)
 	}
@@ -551,4 +554,92 @@ func TestInDepthRetry_keepReadsSwitchedOffMidEmbedDropsTheIndex(t *testing.T) {
 		t.Fatalf("indexed=%v (err %v), want the index dropped after the switch-off", indexed, err)
 	}
 	wantInDepth(t, h, "i1", inDepthReply)
+}
+
+// A reprocess clicked during the retry's chat call owns the video: the old
+// analysis's text must not land (the new job would skip its own step for
+// good), and the index must not be rebuilt from the stale row.
+func TestInDepthRetry_reprocessDuringTheCallWins(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedDownloaded(t, h, "d1")
+	clock := newRetryClock()
+	c := &hookCompleter{inDepthCompleter: inDepthCompleter{failInDepth: 1}}
+	emb := &countingEmbedder{dim: 1536}
+	w := newHookWorker(h, c, clock, emb)
+	mustProcess(t, w)
+	calls := emb.calls
+
+	c.hook = func(context.Context) (string, error) {
+		if _, err := h.videos.ResetAndEnqueueSummary("d1"); err != nil {
+			t.Errorf("reprocess: %v", err)
+		}
+		return inDepthReply, nil
+	}
+	clock.advance(2 * time.Minute)
+	mustProcess(t, w)
+	wantInDepth(t, h, "d1", "")
+	if emb.calls != calls {
+		t.Fatalf("embed calls %d→%d, want no index rebuilt from the stale row", calls, emb.calls)
+	}
+	if v, err := h.videos.Get("d1"); err != nil || v.EmbedRev != 0 {
+		t.Fatalf("embed_rev = %d, %v; want the reprocess's 0 kept", v.EmbedRev, err)
+	}
+}
+
+// A shutdown during the job's own in-depth call queues nothing: the orphaned
+// job runs the step again at the next boot.
+func TestInDepthRetry_shutdownDuringTheJobStepQueuesNothing(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedDownloaded(t, h, "d1")
+	ctx, cancel := context.WithCancel(t.Context())
+	c := &hookCompleter{hook: func(context.Context) (string, error) { cancel(); return "", ctx.Err() }}
+	_, _ = newHookWorker(h, c, newRetryClock(), nil).processOne(ctx)
+	if _, _, _, ok := retryRow(t, h, "d1"); ok {
+		t.Fatal("a shutdown queued a retry")
+	}
+}
+
+func TestInDepthRetry_dropsAnIgnoredRead(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedDownloaded(t, h, "d1")
+	c := &inDepthCompleter{failInDepth: 1}
+	clock := newRetryClock()
+	w := newRetryWorker(h, c, clock, retryWorkerOpts{})
+	mustProcess(t, w)
+	seedChannel(t, h, "UCx", "d1", true)
+	if _, err := h.db.Exec(`INSERT INTO channel_videos (video_id, channel_id, state) VALUES ('d1', 'UCx', 'ignored')`); err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	clock.advance(2 * time.Minute)
+	if mustProcess(t, w) {
+		t.Fatal("made a call for an ignored read")
+	}
+	if _, _, _, ok := retryRow(t, h, "d1"); ok {
+		t.Fatal("retry row kept for an ignored read")
+	}
+}
+
+// A retry that cannot be re-queued keeps a past-due row; the worker holds
+// retries off for the backoff instead of repeating the call every turn.
+func TestInDepthRetry_aFailedRequeuePausesRetries(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedDownloaded(t, h, "d1")
+	c := &inDepthCompleter{failInDepth: 2}
+	clock := newRetryClock()
+	w := newRetryWorker(h, c, clock, retryWorkerOpts{})
+	mustProcess(t, w)
+	if _, err := h.db.Exec(`CREATE TRIGGER full_disk BEFORE UPDATE ON in_depth_retry BEGIN SELECT RAISE(ABORT, 'disk full'); END`); err != nil {
+		t.Fatalf("trigger: %v", err)
+	}
+	clock.advance(2 * time.Minute)
+	mustProcess(t, w)
+	if mustProcess(t, w) || c.calls["indepth"] != 2 {
+		t.Fatalf("in-depth calls = %d, want the retry held off after the failed requeue", c.calls["indepth"])
+	}
+	if _, err := h.db.Exec(`DROP TRIGGER full_disk`); err != nil {
+		t.Fatalf("drop trigger: %v", err)
+	}
+	clock.advance(10 * time.Minute)
+	mustProcess(t, w)
+	wantInDepth(t, h, "d1", inDepthReply)
 }
