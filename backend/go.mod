@@ -8,9 +8,9 @@ require (
 	github.com/trick77/llmwire v0.1.7
 	github.com/trick77/ship/kit v0.17.4
 	github.com/trick77/ship/kit/auth v0.3.0
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/image v0.47.0
 	golang.org/x/oauth2 v0.37.0
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -21,4 +21,5 @@ require (
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

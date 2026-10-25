@@ -16,6 +16,8 @@ github.com/trick77/ship/kit v0.17.4 h1:p9fEZu+n99b94zYNUufAWegWsJoCNqlDHQhoqcSpX
 github.com/trick77/ship/kit v0.17.4/go.mod h1:cE+kQhN2nb5j2ML174YKdGrC41M2GxnILzQLqFupsHE=
 github.com/trick77/ship/kit/auth v0.3.0 h1:YslIu5e44IOhHr64SdWyy2lGEltRtfAMAo3yCza76Fo=
 github.com/trick77/ship/kit/auth v0.3.0/go.mod h1:HaCfFgEvLpWdzDX+K9WbTCGY1FEucjSiZUXBze+8mvY=
+go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
+go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
 golang.org/x/crypto v0.57.0 h1:3ZVCjf8Ggz7zneR/EHRVx68Ctf+2pmIMP2UFhh9cC6M=
 golang.org/x/crypto v0.57.0/go.mod h1:Fdz0i5U6CoizGwLda9DttjSk6qlZo25zYNtR+ycvuZA=
 golang.org/x/image v0.47.0 h1:za/8gVz++PPZqmZJBNSISICN5Rrj5zixP/8K++fgmqo=
