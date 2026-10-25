@@ -3,7 +3,9 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -196,7 +198,7 @@ func load(lookup func(string) string) (Config, error) {
 		ChatStreamIdleTimeout: nonNegative(r, "BACKEND_CHAT_STREAM_IDLE_TIMEOUT", 90*time.Second),
 		ChatCallTimeout:       nonNegative(r, "BACKEND_CHAT_CALL_TIMEOUT", 15*time.Minute),
 	}
-	cfg.PublicURL = publicURL(r, cfg)
+	cfg.PublicURL = publicURL(r, lookup, cfg)
 	// 0 is the summarizer's default, so only an unset variable may yield it.
 	cfg.SummaryChunkTokens = r.Int("BACKEND_SUMMARIZE_SUMMARY_TOKENS", 0)
 	if cfg.SummaryChunkTokens < 0 || (cfg.SummaryChunkTokens == 0 && strings.TrimSpace(lookup("BACKEND_SUMMARIZE_SUMMARY_TOKENS")) != "") {
@@ -207,10 +209,6 @@ func load(lookup func(string) string) (Config, error) {
 		// No client can present such a token (httpx.Bearer refuses whitespace,
 		// a header refuses control characters): /mcp would 401 everything.
 		r.Fail("BACKEND_MCP_TOKEN must not contain whitespace or control characters")
-	}
-	if cfg.MCPToken != "" && cfg.PublicURL == "" {
-		// MCP results cite peeq links; relative ones mean nothing to the client.
-		r.Fail("BACKEND_MCP_TOKEN is set but PUBLIC_FQDN is empty; MCP results link to peeq and need the public URL")
 	}
 
 	switch cfg.AuthMode {
@@ -266,25 +264,42 @@ func nonNegative(r *env.Reader, name string, def time.Duration) time.Duration {
 }
 
 // publicURL derives the externally reachable base URL. Dev auth is reached on
-// its loopback listen address, so PUBLIC_FQDN is ignored there (compose.dev.yaml
-// loads the production .env whole); otherwise it is PUBLIC_FQDN behind TLS, the same
-// name compose's Traefik rule routes on, or empty when PUBLIC_FQDN is unset.
-func publicURL(r *env.Reader, cfg Config) string {
+// its loopback listen address, so PUBLIC_FQDN is ignored there, unvalidated
+// (compose.dev.yaml loads the production .env whole); otherwise it is
+// PUBLIC_FQDN behind TLS, the same name compose's Traefik rule routes on.
+// oidc needs it: without it the session cookie loses Secure and share and MCP
+// links go relative.
+func publicURL(r *env.Reader, lookup func(string) string, cfg Config) string {
+	if strings.TrimSpace(lookup("BACKEND_PUBLIC_URL")) != "" {
+		slog.Warn("BACKEND_PUBLIC_URL is no longer read; the public URL is https://<PUBLIC_FQDN>, delete the line")
+	}
 	if cfg.AuthMode == AuthModeDev {
 		if !isLoopbackAddr(cfg.Addr) {
 			return "" // refused by validateDevAuthLocalOnly
 		}
 		return "http://" + cfg.Addr
 	}
-	fqdn := r.String("PUBLIC_FQDN", "")
-	if fqdn == "" {
+	// Raw, not r.String: kit trims, but Traefik's Host rule gets the value as
+	// written, so stray whitespace has to fail isBareHost here.
+	fqdn := lookup("PUBLIC_FQDN")
+	switch {
+	case fqdn == "":
+		if cfg.AuthMode == AuthModeOIDC {
+			r.Fail("PUBLIC_FQDN is required when BACKEND_AUTH_MODE=oidc, the hostname peeq is reached on")
+		}
 		return ""
-	}
-	if strings.ContainsAny(fqdn, "/: \t") {
+	case !isBareHost(fqdn):
 		r.Fail("PUBLIC_FQDN must be a bare hostname such as peeq.example.com, got %q", fqdn)
 		return ""
 	}
 	return "https://" + fqdn
+}
+
+// isBareHost reports whether v is a hostname and nothing else: no scheme,
+// port, userinfo, path, query or fragment.
+func isBareHost(v string) bool {
+	u, err := url.Parse("https://" + v)
+	return err == nil && u.Host == v && u.Hostname() == v
 }
 
 // validateDevAuthLocalOnly ensures dev auth can only be enabled when the

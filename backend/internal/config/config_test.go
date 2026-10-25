@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -258,6 +260,7 @@ func TestLoad_session(t *testing.T) {
 	t.Setenv("BACKEND_OIDC_CLIENT_ID", "client")
 	t.Setenv("BACKEND_OIDC_CLIENT_SECRET", "secret")
 	t.Setenv("BACKEND_OIDC_REDIRECT_URL", "https://peeq.example/api/auth/callback")
+	t.Setenv("PUBLIC_FQDN", "peeq.example")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "BACKEND_SESSION_SECRET is required") {
 		t.Errorf("oidc without a secret: err = %v", err)
 	}
@@ -477,22 +480,6 @@ func oidcEnv(t *testing.T) {
 	t.Setenv("PUBLIC_FQDN", "")
 }
 
-// MCP results link back into peeq; without a public URL every link would be
-// relative and useless to the client citing it.
-func TestLoad_mcpTokenNeedsAPublicURL(t *testing.T) {
-	oidcEnv(t)
-	t.Setenv("BACKEND_MCP_TOKEN", "abc123")
-	_, err := Load()
-	if err == nil {
-		t.Fatal("a token without a public URL must not boot")
-	}
-	for _, v := range []string{"BACKEND_MCP_TOKEN", "PUBLIC_FQDN"} {
-		if !strings.Contains(err.Error(), v) {
-			t.Errorf("error %q does not name %s", err, v)
-		}
-	}
-}
-
 // The public URL is the hostname compose routes on, so it is PUBLIC_FQDN with the
 // scheme TLS termination gives it; .env never repeats the host.
 func TestLoad_publicURLFromFQDN(t *testing.T) {
@@ -505,18 +492,48 @@ func TestLoad_publicURLFromFQDN(t *testing.T) {
 	if cfg.PublicURL != "https://peeq.example.com" {
 		t.Fatalf("PublicURL = %q, want https://peeq.example.com", cfg.PublicURL)
 	}
+}
 
-	t.Setenv("PUBLIC_FQDN", "")
-	if cfg, err = Load(); err != nil || cfg.PublicURL != "" {
-		t.Fatalf("no PUBLIC_FQDN: PublicURL = %q, err = %v; want empty, no error", cfg.PublicURL, err)
+// Without a public URL the session cookie loses Secure and share/MCP links go
+// relative: oidc refuses to boot instead.
+func TestLoad_oidcRequiresPublicFQDN(t *testing.T) {
+	oidcEnv(t)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PUBLIC_FQDN") {
+		t.Fatalf("oidc without PUBLIC_FQDN: err = %v, want one naming PUBLIC_FQDN", err)
 	}
 }
 
-// PUBLIC_FQDN is a bare hostname: a scheme or a path in it would build a URL nobody
-// can reach, so boot refuses and names the variable.
+// BACKEND_PUBLIC_URL is gone; a deployment still setting it boots, and the log
+// says what replaced it.
+func TestLoad_staleBackendPublicURLWarns(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	oidcEnv(t)
+	t.Setenv("PUBLIC_FQDN", "peeq.example.com")
+	t.Setenv("BACKEND_PUBLIC_URL", "https://peeq.example.com")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !strings.Contains(buf.String(), "BACKEND_PUBLIC_URL") || !strings.Contains(buf.String(), "PUBLIC_FQDN") {
+		t.Fatalf("log = %q, want a warning naming BACKEND_PUBLIC_URL and PUBLIC_FQDN", buf.String())
+	}
+}
+
+// PUBLIC_FQDN is a bare hostname: a scheme, port, userinfo, query, fragment or
+// path in it would build a URL nobody can reach, so boot refuses and names the
+// variable.
 func TestLoad_fqdnMustBeABareHost(t *testing.T) {
 	oidcEnv(t)
-	for _, bad := range []string{"https://peeq.example.com", "peeq.example.com/peeq", "peeq example.com"} {
+	for _, bad := range []string{
+		"https://peeq.example.com", "peeq.example.com/peeq", "peeq example.com",
+		"peeq.example.com:443", "user@peeq.example.com", "peeq.example.com?x", "peeq.example.com#x",
+		// Traefik's Host rule gets the raw value, so whitespace must fail here
+		// rather than be trimmed into a name the router never matches.
+		"peeq.example.com ", " peeq.example.com", "   ",
+	} {
 		t.Setenv("PUBLIC_FQDN", bad)
 		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PUBLIC_FQDN") {
 			t.Errorf("PUBLIC_FQDN=%q: err = %v, want one naming PUBLIC_FQDN", bad, err)
@@ -530,12 +547,14 @@ func TestLoad_fqdnMustBeABareHost(t *testing.T) {
 func TestLoad_devPublicURLIsTheLoopbackAddr(t *testing.T) {
 	t.Setenv("BACKEND_AUTH_MODE", "dev")
 	t.Setenv("BACKEND_ADDR", "127.0.0.1:8080")
-	t.Setenv("PUBLIC_FQDN", "peeq.example.com")
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.PublicURL != "http://127.0.0.1:8080" {
-		t.Fatalf("PublicURL = %q, want http://127.0.0.1:8080", cfg.PublicURL)
+	for _, fqdn := range []string{"peeq.example.com", "https://not-validated-in-dev"} {
+		t.Setenv("PUBLIC_FQDN", fqdn)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("PUBLIC_FQDN=%q: Load: %v", fqdn, err)
+		}
+		if cfg.PublicURL != "http://127.0.0.1:8080" {
+			t.Fatalf("PUBLIC_FQDN=%q: PublicURL = %q, want http://127.0.0.1:8080", fqdn, cfg.PublicURL)
+		}
 	}
 }

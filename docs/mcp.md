@@ -26,7 +26,7 @@ plus reading one video or its transcript. Read-only.
 
 ## Token
 
-`BACKEND_MCP_TOKEN` is the bearer secret. Unset → `/mcp` is not mounted (`404`). Set, it requires `PUBLIC_FQDN` outside dev mode (links in results are absolute); boot refuses otherwise.
+`BACKEND_MCP_TOKEN` is the bearer secret. Unset → `/mcp` is not mounted (`404`). Links in results are absolute, built on peeq's public URL (oidc mode refuses to boot without `PUBLIC_FQDN`).
 It is deliberately **not** the extension's API token from Settings: that token
 may only write a cookie, this one reads the library.
 
