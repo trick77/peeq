@@ -241,7 +241,7 @@ func buildMeta(ogType, title, desc, img, url string, imgW, imgH int) string {
 
 // externalBase is the absolute origin the card and canonical URL are advertised
 // under. Relative URLs never unfurl, so this prefers the configured external
-// base (BACKEND_PUBLIC_URL — the same source shareURL copies into the popover)
+// base (https://<PUBLIC_FQDN> — the same source shareURL copies into the popover)
 // and only reconstructs the origin from the request when none is set, honoring a
 // reverse proxy's X-Forwarded-Proto.
 func (s *server) externalBase(r *http.Request) string {

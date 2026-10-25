@@ -2,7 +2,7 @@
 # proxy that terminates TLS. Requires an external "traefik" network
 # (`docker network create traefik`) shared with your Traefik instance.
 #
-#   cp .env.example .env   # fill in the values, especially FQDN and the OIDC block
+#   cp .env.example .env   # fill in the values, especially PUBLIC_FQDN and the OIDC block
 #   mkdir -p data/media && sudo chown -R 1000:1000 data   # or MEDIA_HOST_DIR, if set elsewhere
 #   docker compose up -d
 services:
@@ -98,7 +98,7 @@ services:
     labels:
       traefik.enable: "true"
       traefik.docker.network: traefik
-      traefik.http.routers.peeq.rule: Host(`${FQDN:?set FQDN in .env, the hostname Traefik routes peeq on}`)
+      traefik.http.routers.peeq.rule: Host(`${PUBLIC_FQDN:?set PUBLIC_FQDN in .env, the hostname Traefik routes peeq on}`)
       traefik.http.routers.peeq.entrypoints: websecure
       traefik.http.routers.peeq.tls: "true"
       # peeq compresses nothing itself, so without this the SPA bundle and every

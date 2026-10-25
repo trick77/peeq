@@ -4,7 +4,6 @@ package config
 import (
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -38,7 +37,7 @@ const (
 // Config holds all runtime settings. Secrets come from ENV only.
 type Config struct {
 	Addr      string // HTTP listen address
-	PublicURL string // externally reachable base URL
+	PublicURL string // externally reachable base URL, derived by publicURL
 	DBPath    string // path to the SQLite file
 	MediaDir  string // root for downloaded media
 	YtdlpDir  string // directory holding the yt-dlp binary
@@ -161,7 +160,6 @@ func load(lookup func(string) string) (Config, error) {
 	r := env.New(lookup)
 	cfg := Config{
 		Addr:       r.String("BACKEND_ADDR", ":8080"),
-		PublicURL:  r.String("BACKEND_PUBLIC_URL", ""),
 		DBPath:     r.String("BACKEND_DB_PATH", "/data/peeq.db"),
 		MediaDir:   r.String("BACKEND_MEDIA_DIR", "/data/media"),
 		YtdlpDir:   r.String("BACKEND_YTDLP_DIR", "/data/bin"),
@@ -198,6 +196,7 @@ func load(lookup func(string) string) (Config, error) {
 		ChatStreamIdleTimeout: nonNegative(r, "BACKEND_CHAT_STREAM_IDLE_TIMEOUT", 90*time.Second),
 		ChatCallTimeout:       nonNegative(r, "BACKEND_CHAT_CALL_TIMEOUT", 15*time.Minute),
 	}
+	cfg.PublicURL = publicURL(r, cfg)
 	// 0 is the summarizer's default, so only an unset variable may yield it.
 	cfg.SummaryChunkTokens = r.Int("BACKEND_SUMMARIZE_SUMMARY_TOKENS", 0)
 	if cfg.SummaryChunkTokens < 0 || (cfg.SummaryChunkTokens == 0 && strings.TrimSpace(lookup("BACKEND_SUMMARIZE_SUMMARY_TOKENS")) != "") {
@@ -211,7 +210,7 @@ func load(lookup func(string) string) (Config, error) {
 	}
 	if cfg.MCPToken != "" && cfg.PublicURL == "" {
 		// MCP results cite peeq links; relative ones mean nothing to the client.
-		r.Fail("BACKEND_MCP_TOKEN is set but BACKEND_PUBLIC_URL is empty; MCP results link to peeq and need the public URL")
+		r.Fail("BACKEND_MCP_TOKEN is set but PUBLIC_FQDN is empty; MCP results link to peeq and need the public URL")
 	}
 
 	switch cfg.AuthMode {
@@ -266,15 +265,34 @@ func nonNegative(r *env.Reader, name string, def time.Duration) time.Duration {
 	return d
 }
 
+// publicURL derives the externally reachable base URL. Dev auth is reached on
+// its loopback listen address, so PUBLIC_FQDN is ignored there (compose.dev.yaml
+// loads the production .env whole); otherwise it is PUBLIC_FQDN behind TLS, the same
+// name compose's Traefik rule routes on, or empty when PUBLIC_FQDN is unset.
+func publicURL(r *env.Reader, cfg Config) string {
+	if cfg.AuthMode == AuthModeDev {
+		if !isLoopbackAddr(cfg.Addr) {
+			return "" // refused by validateDevAuthLocalOnly
+		}
+		return "http://" + cfg.Addr
+	}
+	fqdn := r.String("PUBLIC_FQDN", "")
+	if fqdn == "" {
+		return ""
+	}
+	if strings.ContainsAny(fqdn, "/: \t") {
+		r.Fail("PUBLIC_FQDN must be a bare hostname such as peeq.example.com, got %q", fqdn)
+		return ""
+	}
+	return "https://" + fqdn
+}
+
 // validateDevAuthLocalOnly ensures dev auth can only be enabled when the
 // server is bound to a loopback address, preventing the unauthenticated
 // dev-login shortcut from ever being reachable from the network.
 func validateDevAuthLocalOnly(cfg Config) error {
 	if !isLoopbackAddr(cfg.Addr) {
 		return fmt.Errorf("BACKEND_AUTH_MODE=dev requires BACKEND_ADDR to bind to localhost or a loopback address")
-	}
-	if cfg.PublicURL != "" && !isLoopbackPublicURL(cfg.PublicURL) {
-		return fmt.Errorf("BACKEND_AUTH_MODE=dev requires BACKEND_PUBLIC_URL to be empty or loopback")
 	}
 	return nil
 }
@@ -285,14 +303,6 @@ func isLoopbackAddr(addr string) bool {
 		return false
 	}
 	return isLoopbackHost(host)
-}
-
-func isLoopbackPublicURL(raw string) bool {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	return isLoopbackHost(parsed.Hostname())
 }
 
 func isLoopbackHost(host string) bool {

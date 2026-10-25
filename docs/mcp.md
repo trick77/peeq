@@ -21,12 +21,12 @@ plus reading one video or its transcript. Read-only.
   answers a normal result with `isError: true` and a readable message.
 - Request body limit 1 MiB. Each tool's text is capped at 24 KB; a tool call is
   bounded at 25 s.
-- A request with an `Origin` header other than `BACKEND_PUBLIC_URL`'s origin → `403`.
+- A request with an `Origin` header other than peeq's public origin (`https://<PUBLIC_FQDN>`; `http://<BACKEND_ADDR>` in dev mode) → `403`.
   Server-to-server calls send none.
 
 ## Token
 
-`BACKEND_MCP_TOKEN` is the bearer secret. Unset → `/mcp` is not mounted (`404`). Set, it requires `BACKEND_PUBLIC_URL` (links in results are absolute); boot refuses otherwise.
+`BACKEND_MCP_TOKEN` is the bearer secret. Unset → `/mcp` is not mounted (`404`). Set, it requires `PUBLIC_FQDN` outside dev mode (links in results are absolute); boot refuses otherwise.
 It is deliberately **not** the extension's API token from Settings: that token
 may only write a cookie, this one reads the library.
 
