@@ -5,7 +5,7 @@ go 1.27.2
 require (
 	github.com/asg017/sqlite-vec-go-bindings v0.1.7-alpha.2
 	github.com/ncruces/go-sqlite3 v0.23.3
-	github.com/trick77/llmwire v0.1.7
+	github.com/trick77/llmwire v0.1.8
 	github.com/trick77/ship/kit v0.17.4
 	github.com/trick77/ship/kit/auth v0.3.0
 	go.yaml.in/yaml/v3 v3.0.5
@@ -21,5 +21,4 @@ require (
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
