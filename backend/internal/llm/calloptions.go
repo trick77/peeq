@@ -167,3 +167,25 @@ func failOnEarlyFinishFrom(ctx context.Context) bool {
 	v, ok := ctx.Value(failEarlyKey{}).(bool)
 	return ok && v
 }
+
+type failCutKey struct{}
+
+// FailOnCut is FailOnEarlyFinish that also refuses a "length" cut. That cut
+// is not deterministic on a reasoning model: whether a call takes a deep pass
+// varies per call, and a pass that eats the budget leaves a fragment the next
+// attempt would not. Measured: the in-depth step stored a 22-word "summary"
+// cut this way. For a caller with a retry path behind it, where a fragment
+// stored as a finished text is worse than another attempt. It implies
+// FailOnEarlyFinish.
+func FailOnCut(ctx context.Context) context.Context {
+	return context.WithValue(FailOnEarlyFinish(ctx), failCutKey{}, true)
+}
+
+// FailOnCutFrom reports whether ctx asks for FailOnCut (exported for the
+// same reason as FailOnEarlyFinishFrom).
+func FailOnCutFrom(ctx context.Context) bool { return failOnCutFrom(ctx) }
+
+func failOnCutFrom(ctx context.Context) bool {
+	v, ok := ctx.Value(failCutKey{}).(bool)
+	return ok && v
+}

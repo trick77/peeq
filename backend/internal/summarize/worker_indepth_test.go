@@ -16,9 +16,11 @@ import (
 const inDepthReply = "Lead.\n\n### A point [0:00]\n\nBody."
 
 // inDepthCompleter answers every step, counts each, and fails the in-depth
-// call as many times as failInDepth says before answering it.
+// call as many times as failInDepth says before answering it, with reply when
+// set, else inDepthReply.
 type inDepthCompleter struct {
 	failInDepth int
+	reply       string
 	calls       map[string]int
 }
 
@@ -41,6 +43,9 @@ func (c *inDepthCompleter) Complete(_ context.Context, m []llm.Message) (string,
 		c.calls["indepth"]++
 		if c.calls["indepth"] <= c.failInDepth {
 			return "", errors.New("in-depth timeout")
+		}
+		if c.reply != "" {
+			return c.reply, nil
 		}
 		return inDepthReply, nil
 	}
@@ -118,7 +123,7 @@ func TestWorker_writesTheInDepthSummary(t *testing.T) {
 
 // The in-depth text is an extra, so its failure must not cost the video its
 // core analysis: the job carries on to key points and the index and finishes
-// done, with the card simply absent.
+// done, with the card absent until the in-depth retry writes it.
 func TestWorker_inDepthFailureIsBestEffort(t *testing.T) {
 	h := newWorkerHarness(t)
 	seedDownloaded(t, h, "d2")
