@@ -28,12 +28,12 @@ type flakyEmbedder struct {
 	fail int
 }
 
-func (f *flakyEmbedder) EmbedBatched(ctx context.Context, inputs []string, gap time.Duration) ([][]float32, error) {
+func (f *flakyEmbedder) EmbedBatched(ctx context.Context, inputs []string) ([][]float32, error) {
 	if f.fail > 0 {
 		f.fail--
 		return nil, errors.New("embedder down")
 	}
-	return f.countingEmbedder.EmbedBatched(ctx, inputs, gap)
+	return f.countingEmbedder.EmbedBatched(ctx, inputs)
 }
 
 type retryWorkerOpts struct {
@@ -514,12 +514,12 @@ type hookEmbedder struct {
 	hook func()
 }
 
-func (e *hookEmbedder) EmbedBatched(ctx context.Context, inputs []string, gap time.Duration) ([][]float32, error) {
+func (e *hookEmbedder) EmbedBatched(ctx context.Context, inputs []string) ([][]float32, error) {
 	if e.hook != nil {
 		e.hook()
 		e.hook = nil
 	}
-	return e.countingEmbedder.EmbedBatched(ctx, inputs, gap)
+	return e.countingEmbedder.EmbedBatched(ctx, inputs)
 }
 
 // keep_reads switched off while the retry's embed is in flight: the switch-off
