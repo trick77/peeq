@@ -64,7 +64,7 @@ func (s *Store) ClearSummary(id string) error {
 		`UPDATE videos SET summary='', chapters='', key_points='', summary_error='' WHERE id=?`, id); err != nil {
 		return fmt.Errorf("clear video %s summary: %w", id, err)
 	}
-	if _, err := tx.ExecContext(ctx, deleteInDepthSQL, id); err != nil {
+	if err := dropInDepthTx(ctx, tx, id); err != nil {
 		return fmt.Errorf("clear video %s in-depth summary: %w", id, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -93,7 +93,7 @@ func (s *Store) SetSummaryText(id, summary string) error {
 		`UPDATE videos SET summary=?, summary_error='' WHERE id=?`, summary, id); err != nil {
 		return fmt.Errorf("set video %s summary text: %w", id, err)
 	}
-	if _, err := tx.ExecContext(ctx, deleteInDepthSQL, id); err != nil {
+	if err := dropInDepthTx(ctx, tx, id); err != nil {
 		return fmt.Errorf("set video %s summary text: drop in-depth summary: %w", id, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -205,7 +205,7 @@ UPDATE videos
 	} else if n == 0 {
 		return fmt.Errorf("reset video %s for reprocess: %w", id, ErrNotFound)
 	}
-	if _, err := x.ExecContext(ctx, deleteInDepthSQL, id); err != nil {
+	if err := dropInDepthTx(ctx, x, id); err != nil {
 		return fmt.Errorf("reset video %s for reprocess: in-depth summary: %w", id, err)
 	}
 	return nil

@@ -1,0 +1,80 @@
+package videos
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/trick77/peeq/internal/store"
+)
+
+// DeferInDepthRetry records that the video's in-depth summary is still owed:
+// attempts so far, the error that last stopped it, and when to try again
+// (migration 0044). It replaces any row the video already has.
+func (s *Store) DeferInDepthRetry(id, lastErr string, attempts int, next time.Time) error {
+	_, err := s.db.ExecContext(context.Background(), `
+INSERT INTO in_depth_retry (video_id, attempts, next_at, last_error)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(video_id) DO UPDATE SET
+	attempts   = excluded.attempts,
+	next_at    = excluded.next_at,
+	last_error = excluded.last_error`, id, attempts, store.FormatTime(next), lastErr)
+	if err != nil {
+		return fmt.Errorf("defer video %s in-depth retry: %w", id, err)
+	}
+	return nil
+}
+
+// InDepthRetryAttempts returns the attempts the video's queued retry has made,
+// 0 when none is queued.
+func (s *Store) InDepthRetryAttempts(id string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT attempts FROM in_depth_retry WHERE video_id = ?`, id).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("video %s in-depth retry attempts: %w", id, err)
+	}
+	return n, nil
+}
+
+// NextInDepthRetry returns the video whose retry has waited longest past its
+// time, with its attempts so far, or "" when none is due.
+func (s *Store) NextInDepthRetry(now time.Time) (id string, attempts int, err error) {
+	err = s.db.QueryRowContext(context.Background(), `
+SELECT video_id, attempts FROM in_depth_retry
+WHERE next_at <= ?
+ORDER BY next_at, video_id LIMIT 1`, store.FormatTime(now)).Scan(&id, &attempts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", 0, nil
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("next in-depth retry: %w", err)
+	}
+	return id, attempts, nil
+}
+
+// IgnoredRead reports whether the video is an inbox read the user ignored
+// (ledger state 'ignored'), kept only because it is indexed.
+func (s *Store) IgnoredRead(id string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT EXISTS(SELECT 1 FROM channel_videos WHERE video_id = ? AND state = 'ignored')`, id).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("video %s ignored read: %w", id, err)
+	}
+	return n != 0, nil
+}
+
+// ClearInDepthRetry drops the video's retry: done, or nothing left to do.
+func (s *Store) ClearInDepthRetry(id string) error {
+	if _, err := s.db.ExecContext(context.Background(),
+		`DELETE FROM in_depth_retry WHERE video_id = ?`, id); err != nil {
+		return fmt.Errorf("clear video %s in-depth retry: %w", id, err)
+	}
+	return nil
+}

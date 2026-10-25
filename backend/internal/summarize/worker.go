@@ -46,6 +46,8 @@ type WorkerDeps struct {
 	OnPhase func(videoID, status, phase string)
 	// Activity, when set, records each terminal summary for the Activity feed.
 	Activity activity.Recorder
+	// Now is the clock the in-depth retry backoff reads (defaults to time.Now).
+	Now func() time.Time
 }
 
 // Worker is the single-concurrency summarization+embedding loop: the twin of
@@ -57,6 +59,10 @@ type Worker struct {
 	// Process-lifetime only: a restart gives every video another chance, which
 	// is the right bound for a transient LLM outage.
 	classifyFailed map[string]bool
+	// inDepthPausedUntil holds in-depth retries off after a retry could not be
+	// re-queued: its row keeps a past-due next_at, and without this the next
+	// idle turn would repeat the call with no backoff at all.
+	inDepthPausedUntil time.Time
 }
 
 // NewWorker builds a Worker, filling in defaults for the optional deps.
@@ -66,6 +72,9 @@ func NewWorker(d WorkerDeps) *Worker {
 	}
 	if d.Logger == nil {
 		d.Logger = slog.Default()
+	}
+	if d.Now == nil {
+		d.Now = time.Now
 	}
 	return &Worker{d: d, classifyFailed: map[string]bool{}}
 }
@@ -86,6 +95,7 @@ func (w *Worker) Run(ctx context.Context) {
 	} else if n > 0 {
 		w.d.Logger.Info("summarize worker: backfilled summary jobs", "count", n)
 	}
+	w.backfillInDepth() // BACKFILL(in-depth): remove with backfill_indepth.go
 	for {
 		if ctx.Err() != nil {
 			return
@@ -109,9 +119,9 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 // processOne claims and processes a single job. When the queue is empty it
-// spends the turn on the classification backlog instead, and returns false
-// only when there is nothing left to do at all. Panics are recovered so one bad
-// job never kills the loop. This is the test seam: tests call it directly to
+// spends the turn on the classification backlog, then on a due in-depth retry,
+// and returns false only when there is nothing left to do at all. Panics are
+// recovered so one bad job never kills the loop. This is the test seam: tests call it directly to
 // drive one job deterministically, without goroutine/ticker timing.
 func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	job, err := w.d.Jobs.ClaimNext()
@@ -119,7 +129,10 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		return false, err
 	}
 	if job == nil {
-		return w.classifyOne(ctx)
+		if did, err := w.classifyOne(ctx); did || err != nil {
+			return did, err
+		}
+		return w.inDepthOne(ctx)
 	}
 	// Declared before the recover so a panic mid-analysis still gets a terminal
 	// line with the tokens that video had already spent.
@@ -174,48 +187,16 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		w.emit(video.ID, videos.SummaryRunning, PhaseSummarizing)
 	}
 
-	parsed, perr := subtitles.ParseVTT(strings.NewReader(transcript.VTT))
+	prep, perr := w.prepareTranscript(video, transcript.VTT)
 	if perr != nil {
-		return true, w.failJob(ctx, job, video, run, "parse vtt: "+perr.Error())
+		return true, w.failJob(ctx, job, video, run, perr.Error())
 	}
-	if parsed.Transcript == "" {
+	if prep.empty != "" {
 		w.discardStaleAnalysis(ctx, video)
-		w.finishNoTranscript(job, video, "empty transcript")
+		w.finishNoTranscript(job, video, prep.empty)
 		return true, nil
 	}
-	// Captions that are just music/ambience with the odd lyric fragment are not
-	// speech. Summarizing them produces a confident description of a video that
-	// says nothing, so treat them like a missing transcript. Checked here, before
-	// startRun, so a music video never opens an analysis log line either.
-	if parsed.IsNonSpeech(int(video.DurationSeconds)) {
-		w.discardStaleAnalysis(ctx, video)
-		w.finishNoTranscript(job, video, "no speech (music only)")
-		return true, nil
-	}
-
-	// Sponsor reads and the other off-topic segments are taken out of what the
-	// summarizer reads, so no chapter, key point or summary sentence can be drawn
-	// from one. See sponsor.go for why this is done to the INPUT rather than only
-	// to the results, and why "intro" is not among them.
-	//
-	// Deliberately applied to a copy: `parsed` stays whole for embedAndStore, so
-	// this narrows what the Player captions without narrowing what search finds.
-	sponsorSpans := suppressedSpans(video.SponsorblockSegments)
-	forSummary, spansUnusable := stripCues(parsed, sponsorSpans)
-	if spansUnusable {
-		// The spans covered every cue. The transcript falls back to the
-		// unfiltered parse (see stripCues), and the spans have to be dropped
-		// here too: leaving them in place would let the same bad data strip
-		// every chapter and key point in the backstop below, which is the
-		// failure the fallback exists to prevent.
-		w.d.Logger.Warn("summarize worker: sponsor segments cover the whole transcript, filter skipped",
-			"video_id", video.ID, "spans", len(sponsorSpans))
-		sponsorSpans = nil
-	}
-	if n := len(parsed.Cues) - len(forSummary.Cues); n > 0 {
-		w.d.Logger.Debug("summarize worker: sponsor segments withheld from summarizer",
-			"video_id", video.ID, "cues_dropped", n, "spans", len(sponsorSpans))
-	}
+	parsed, forSummary, sponsorSpans := prep.parsed, prep.forSummary, prep.spans
 
 	// There is real work to do: everything from here on is logged against this
 	// video — one identity, one token accumulator, one wall clock.
@@ -570,8 +551,8 @@ func (w *Worker) emit(videoID, status, phase string) {
 // replaces its index. The chunk recipe itself lives in rag.BuildVideoChunks.
 //
 // The in-depth text is read here rather than passed in: every caller runs
-// after the in-depth step, and a video whose step failed simply indexes no
-// sections until a reprocess writes them. It stays best-effort here too: a
+// after the in-depth step, and a video whose step failed indexes no sections
+// until its in-depth retry writes and adds them. It stays best-effort here too: a
 // failed read indexes without sections rather than failing the core index.
 func (w *Worker) embedAndStore(ctx context.Context, video *videos.Video, parsed subtitles.Parsed, summaryText string, chapters []Chapter) error {
 	videoID := video.ID
@@ -639,15 +620,14 @@ func toRagChapters(chapters []Chapter) []rag.Chapter {
 // is what makes a retried job, or the job a download queues after an inbox
 // read, skip it.
 //
-// Best-effort, like classify: a failure is logged and the job carries on. The
-// text is an extra on top of the analysis, and requeuing on it would hold back
-// key points and the index — the core of the video — on the one step the
-// video can do without. A video whose call failed simply has no card; a later
-// re-analysis writes one.
+// The job never fails on it: requeuing would hold back key points and the
+// index, the core of the video, on this one step. A failure queues an in-depth
+// retry instead (indepth_retry.go), which writes and indexes the text later.
 func (w *Worker) inDepthStep(video *videos.Video, run *analysisRun, cues []subtitles.Cue) {
 	have, err := w.d.Videos.InDepth(video.ID)
 	if err != nil {
 		w.d.Logger.Warn("summarize worker: read in-depth summary failed", append(run.ident(), "err", err)...)
+		w.deferInDepthFromJob(video.ID, err)
 		return
 	}
 	if have != "" {
@@ -661,7 +641,13 @@ func (w *Worker) inDepthStep(video *videos.Video, run *analysisRun, cues []subti
 		err = w.d.Videos.SetInDepth(video.ID, text)
 	}
 	if err != nil {
+		// A shutdown is not a failed attempt: the orphaned job runs the step
+		// again at the next boot.
+		if ictx.Err() != nil {
+			return
+		}
 		w.d.Logger.Warn("summarize worker: in-depth failed", append(run.ident(), "duration_ms", run.stepElapsedMs(), "err", err)...)
+		w.deferInDepthFromJob(video.ID, err)
 		return
 	}
 	done("words", len(strings.Fields(text)))
