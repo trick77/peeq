@@ -21,8 +21,8 @@ ON CONFLICT(video_id) DO UPDATE SET
 	return nil
 }
 
-// InDepth returns a video's in-depth summary, or "" when it has none: a video
-// analysed before the step existed, or one whose step failed for good.
+// InDepth returns a video's in-depth summary, or "" when it has none yet: its
+// step has not run, or failed and waits in in_depth_retry.
 func (s *Store) InDepth(id string) (string, error) { return s.InDepthCtx(context.Background(), id) }
 
 // InDepthCtx is InDepth bounded by ctx.

@@ -81,6 +81,26 @@ func applyLegacy(t *testing.T, db *sql.DB, stopAt string) {
 	}
 }
 
+// applySince applies the files added after the switch (those legacyNames does
+// not map to) in kit's order: what an old database gains on top of applyLegacy
+// once the new build boots on it.
+func applySince(t *testing.T, db *sql.DB) {
+	t.Helper()
+	files, err := migrate.Files(migrations())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range files[len(legacyNames):] {
+		body, err := fs.ReadFile(migrations(), m.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(string(body)); err != nil {
+			t.Fatalf("apply %s: %v", m.Name, err)
+		}
+	}
+}
+
 // schemaOf is every object's DDL except the bookkeeping tables and what hangs
 // off them, whose shape is the one thing the switch changes on purpose.
 func schemaOf(t *testing.T, db *sql.DB) string {
@@ -266,6 +286,7 @@ func TestMigrate_freshSchemaMatchesTheOldRunner(t *testing.T) {
 	// Given: one database built by the old runner, one by kit's.
 	legacy := openTemp(t)
 	applyLegacy(t, legacy, "")
+	applySince(t, legacy)
 	fresh := openTemp(t)
 
 	// When: the new build migrates the fresh one.
@@ -306,7 +327,10 @@ func TestMigrate_adoptsAFullyMigratedOldDatabase(t *testing.T) {
 	// Given: a database the old runner took all the way.
 	db := openTemp(t)
 	applyLegacy(t, db, "")
-	want := schemaOf(t, db)
+	ref := openTemp(t)
+	applyLegacy(t, ref, "")
+	applySince(t, ref)
+	want := schemaOf(t, ref)
 
 	// When: the new build boots twice.
 	for i := range 2 {
@@ -315,14 +339,19 @@ func TestMigrate_adoptsAFullyMigratedOldDatabase(t *testing.T) {
 		}
 	}
 
-	// Then: nothing ran, nothing is pending, and the rows carry today's names.
+	// Then: only the files added since ran, nothing is pending, and the rows
+	// carry today's names.
 	if got := schemaOf(t, db); got != want {
-		t.Fatalf("adopting changed the schema\n--- after\n%s\n--- before\n%s", got, want)
+		t.Fatalf("adopting changed the schema\n--- after\n%s\n--- want\n%s", got, want)
 	}
 	assertNothingPending(t, db)
+	files, err := migrate.Files(migrations())
+	if err != nil {
+		t.Fatal(err)
+	}
 	applied := appliedNames(t, db)
-	if len(applied) != len(legacyNames) {
-		t.Fatalf("%d rows recorded, want %d", len(applied), len(legacyNames))
+	if len(applied) != len(files) {
+		t.Fatalf("%d rows recorded, want %d", len(applied), len(files))
 	}
 	// And: the old runner's version column stays, holding the old names.
 	if cols := columnsOf(t, db, "schema_migrations"); !slices.Equal(cols, []string{"version", "applied_at", "name"}) {
