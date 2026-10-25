@@ -12,7 +12,9 @@ import (
 // inDepthMaxAnswerTokens bounds the in-depth calls: the single pass, each map
 // part and the merge. The longest target is 900 words, about 1,200 tokens of
 // English and more in a wordier language, so this is a backstop several times
-// that. A cut here keeps every finished section (see inDepthRules).
+// that. A cut at it is refused (llm.FailOnCut), never stored: on a reasoning
+// model the cut is a deep pass that ate the budget, the text is a fragment,
+// and the in-depth retry gets a whole one on a later attempt.
 const inDepthMaxAnswerTokens = 4096
 
 // inDepthRules is the shape and voice shared by the single pass and the merge,
@@ -77,7 +79,7 @@ func (s *Summarizer) InDepth(ctx context.Context, title string, durationSeconds 
 	if len(chunks) == 0 {
 		return "", fmt.Errorf("in-depth: empty transcript")
 	}
-	callCtx := llm.WithMaxAnswerTokens(llm.FailOnEarlyFinish(ctx), inDepthMaxAnswerTokens)
+	callCtx := llm.WithMaxAnswerTokens(llm.FailOnCut(ctx), inDepthMaxAnswerTokens)
 
 	if len(chunks) == 1 {
 		out, err := s.c.Complete(callCtx, []llm.Message{

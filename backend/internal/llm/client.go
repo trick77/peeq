@@ -374,10 +374,13 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	// tolerated: "length" is our own cap, and a context-window finish is the
 	// prompt itself being too big — both come back identical on every attempt, so an error here would only walk the
 	// job down its backoff ladder to the same partial answer. The warn line above
-	// still says the answer is partial.
-	if failOnEarlyFinishFrom(ctx) && res.wire.FinishReason != "" &&
-		res.wire.FinishReason != "stop" && !deterministicCut(res.wire.FinishReason) {
-		return "", fmt.Errorf("chat ended early: finish_reason=%s", res.wire.FinishReason)
+	// still says the answer is partial. FailOnCut drops the tolerance for
+	// "length" (see its doc); a context-window finish stays tolerated.
+	fr := res.wire.FinishReason
+	cutRefused := failOnCutFrom(ctx) && fr == "length"
+	if (failOnEarlyFinishFrom(ctx) || failOnCutFrom(ctx)) && fr != "" && fr != "stop" &&
+		(!deterministicCut(fr) || cutRefused) {
+		return "", fmt.Errorf("chat ended early: finish_reason=%s", fr)
 	}
 	return res.wire.Content, nil
 }

@@ -12,11 +12,14 @@ import (
 	"github.com/trick77/peeq/internal/videos"
 )
 
-// retryClock is a settable WorkerDeps.Now.
+// retryClock is a settable WorkerDeps.Now. It starts at the real time (to the
+// second, as stamps are stored): rows the store stamps with datetime('now'),
+// the backfill's, must be due on it, which a fixed date is only until the
+// wall clock passes it.
 type retryClock struct{ t time.Time }
 
 func newRetryClock() *retryClock {
-	return &retryClock{t: time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)}
+	return &retryClock{t: time.Now().UTC().Truncate(time.Second)}
 }
 func (c *retryClock) now() time.Time                  { return c.t }
 func (c *retryClock) advance(d time.Duration)         { c.t = c.t.Add(d) }

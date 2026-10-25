@@ -141,6 +141,38 @@ func TestSummarizeVideo_longVideoFallsBackToTheCoarsePath(t *testing.T) {
 
 // Past the budget: a map over the parts writing notes in the same format, then
 // one merge call that writes the reader's text from them.
+// Every in-depth call refuses a cut at the cap: a reasoning model that spent
+// the budget thinking leaves a fragment, and stored as the finished text it
+// never gets fixed. Failing hands it to the in-depth retry instead.
+func TestInDepth_everyCallRefusesACut(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		duration int
+		cues     int
+		opts     []Option
+	}{
+		{"single pass", 600, 20, nil},
+		{"map and merge", 7200, 400, []Option{WithSummaryChunkTokens(300)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls, refusing int
+			s := New(completerFunc(func(ctx context.Context, _ []llm.Message) (string, error) {
+				calls++
+				if llm.FailOnCutFrom(ctx) {
+					refusing++
+				}
+				return "### A point [0:00]\n\nBody.", nil
+			}), tc.opts...)
+			if _, err := s.InDepth(context.Background(), "T", tc.duration, manyCues(tc.cues)); err != nil {
+				t.Fatal(err)
+			}
+			if calls == 0 || refusing != calls {
+				t.Fatalf("%d of %d calls asked for FailOnCut, want all", refusing, calls)
+			}
+		})
+	}
+}
+
 func TestInDepth_longVideoMapsThenMerges(t *testing.T) {
 	var maps int
 	var mergeInput string
