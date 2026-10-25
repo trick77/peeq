@@ -37,14 +37,25 @@ func TestQueueMissingInDepth_queuesOnlyUnwatchedSummarizedVideosWithoutOne(t *te
 	if err := s.SetInDepth("has-one", "text"); err != nil {
 		t.Fatalf("in-depth: %v", err)
 	}
+	if _, err := s.db.Exec(`INSERT INTO channels (id) VALUES ('UCx')`); err != nil {
+		t.Fatalf("channel: %v", err)
+	}
+	seed("ignored-kept-read", StatusNew, false, "s")
+	if _, err := s.db.Exec(`INSERT INTO channel_videos (video_id, channel_id, state) VALUES ('ignored-kept-read', 'UCx', 'ignored')`); err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	seed("pending-read", StatusNew, false, "s")
+	if _, err := s.db.Exec(`INSERT INTO channel_videos (video_id, channel_id, state) VALUES ('pending-read', 'UCx', 'pending')`); err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
 	seed("no-transcript", StatusDownloaded, false, "s")
 	if _, err := s.db.Exec(`DELETE FROM video_transcripts WHERE video_id = 'no-transcript'`); err != nil {
 		t.Fatalf("drop transcript: %v", err)
 	}
 
 	n, err := s.QueueMissingInDepth()
-	if err != nil || n != 3 {
-		t.Fatalf("queued %d, %v; want 3", n, err)
+	if err != nil || n != 4 {
+		t.Fatalf("queued %d, %v; want 4", n, err)
 	}
 	got := map[string]bool{}
 	for {
@@ -60,8 +71,8 @@ func TestQueueMissingInDepth_queuesOnlyUnwatchedSummarizedVideosWithoutOne(t *te
 			t.Fatalf("clear: %v", err)
 		}
 	}
-	if len(got) != 3 || !got["inbox"] || !got["library"] || !got["partial"] {
-		t.Fatalf("queued %v; want inbox, library, partial", got)
+	if len(got) != 4 || !got["inbox"] || !got["library"] || !got["partial"] || !got["pending-read"] {
+		t.Fatalf("queued %v; want inbox, library, partial, pending-read", got)
 	}
 }
 

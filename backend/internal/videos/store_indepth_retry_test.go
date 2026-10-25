@@ -24,6 +24,12 @@ func TestInDepthRetry_dueOnlyFromItsNextAt(t *testing.T) {
 	if err != nil || id != "v1" || attempts != 1 {
 		t.Fatalf("at next_at: %q attempts=%d, %v; want v1 attempts=1", id, attempts, err)
 	}
+	if n, err := s.InDepthRetryAttempts("v1"); err != nil || n != 1 {
+		t.Fatalf("attempts = %d, %v; want 1", n, err)
+	}
+	if n, err := s.InDepthRetryAttempts("none"); err != nil || n != 0 {
+		t.Fatalf("attempts of an unqueued video = %d, %v; want 0", n, err)
+	}
 }
 
 // A second failure replaces the row's attempt count, error and time rather
@@ -98,6 +104,9 @@ func TestInDepthRetry_storeErrorsAreReturned(t *testing.T) {
 	}
 	if _, _, err := s.NextInDepthRetry(retryNow); err == nil {
 		t.Error("next: want an error")
+	}
+	if _, err := s.InDepthRetryAttempts("v1"); err == nil {
+		t.Error("attempts: want an error")
 	}
 	if err := s.ClearInDepthRetry("v1"); err == nil {
 		t.Error("clear: want an error")

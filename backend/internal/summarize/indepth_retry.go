@@ -2,6 +2,7 @@ package summarize
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -36,18 +37,38 @@ func (w *Worker) deferInDepth(id string, attempts int, err error) {
 	}
 }
 
+// deferInDepthFromJob is deferInDepth for a job's own in-depth step: it carries
+// on from a retry already queued (a requeued job runs the step again), so its
+// count and backoff keep growing instead of starting over.
+func (w *Worker) deferInDepthFromJob(id string, err error) {
+	attempts, aerr := w.d.Videos.InDepthRetryAttempts(id)
+	if aerr != nil {
+		w.d.Logger.Warn("summarize worker: read in-depth retry attempts failed", "video_id", id, "err", aerr)
+	}
+	w.deferInDepth(id, attempts, err)
+}
+
 // inDepthOne works one due in-depth retry: writes the text if it is still
 // missing, then adds its sections to the video's index if it has one. Each
 // half checks the database, so a retry after a failed embed goes straight to
 // the embed without paying for the chat call again.
 //
-// Runs only on an idle turn, after the classify backlog. did is true only when
-// a chat or embed call was made, so a dropped row does not skip the poll gap.
-func (w *Worker) inDepthOne(ctx context.Context) (bool, error) {
+// Runs only on an idle turn, after the classify backlog, and outside the job
+// path's recover, so it carries its own: the row is persisted, and a panic
+// escaping here would kill the process again on every boot. did is true only
+// when a chat or embed call was made, so a dropped row keeps the poll gap.
+func (w *Worker) inDepthOne(ctx context.Context) (did bool, err error) {
 	id, attempts, err := w.d.Videos.NextInDepthRetry(w.d.Now())
 	if err != nil || id == "" {
 		return false, err
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			w.d.Logger.Error("summarize worker: in-depth retry recovered", "video_id", id, "panic", r)
+			w.deferInDepth(id, attempts, fmt.Errorf("panic: %v", r))
+			did, err = true, nil
+		}
+	}()
 	video, err := w.d.Videos.Get(id)
 	if err != nil {
 		w.deferInDepth(id, attempts, err)
@@ -73,9 +94,26 @@ func (w *Worker) inDepthOne(ctx context.Context) (bool, error) {
 	if transcript == nil {
 		return drop("no transcript")
 	}
+	text, err := w.d.Videos.InDepth(id)
+	if err != nil {
+		w.deferInDepth(id, attempts, err)
+		return false, nil
+	}
+	// Nothing missing (a later job wrote it all): done without parsing.
+	if text != "" {
+		need, err := w.inDepthNeedsIndex(ctx, video, transcript.Source, text)
+		if err != nil {
+			w.deferInDepth(id, attempts, err)
+			return false, nil
+		}
+		if !need {
+			return false, w.d.Videos.ClearInDepthRetry(id)
+		}
+	}
 	prep, err := w.prepareTranscript(video, transcript.VTT)
 	if err != nil {
-		return drop(err.Error())
+		w.d.Logger.Info("summarize worker: in-depth retry dropped", "video_id", id, "err", err)
+		return false, w.d.Videos.ClearInDepthRetry(id)
 	}
 	if prep.empty != "" {
 		return drop(prep.empty)
@@ -89,6 +127,13 @@ func (w *Worker) inDepthOne(ctx context.Context) (bool, error) {
 	}), totals)
 	started := time.Now()
 	fail := func(stage string, err error) (bool, error) {
+		// A shutdown is not a failure: the row stays as it was, due again at
+		// the next boot. Returned like the job path's interrupted: Run does
+		// not log an error once ctx is done.
+		if cerr := ctx.Err(); cerr != nil {
+			w.d.Logger.Debug("summarize worker: in-depth retry interrupted", append(ident, "stage", stage, "err", err)...)
+			return true, cerr
+		}
 		level := slog.LevelWarn
 		if attempts+1 >= inDepthLoudAfter {
 			level = slog.LevelError
@@ -99,11 +144,6 @@ func (w *Worker) inDepthOne(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
-	text, err := w.d.Videos.InDepth(id)
-	if err != nil {
-		w.deferInDepth(id, attempts, err)
-		return false, nil
-	}
 	wrote := false
 	if text == "" {
 		text, err = w.d.Summarizer.InDepth(cctx, video.Title, int(video.DurationSeconds), prep.forSummary.Cues)
@@ -123,12 +163,21 @@ func (w *Worker) inDepthOne(ctx context.Context) (bool, error) {
 		return wrote, nil
 	}
 	if indexed {
+		inbox := isInboxRead(video, transcript.Source)
 		var chapters []Chapter
-		if !isInboxRead(video, transcript.Source) {
+		if !inbox {
 			chapters = decodeChapters(video.Chapters)
 		}
 		if err := w.embedAndStore(cctx, video, prep.parsed, video.Summary, chapters); err != nil {
 			return fail("embedding", err)
+		}
+		// Asked again after the embed, as the job does: a switch-off during
+		// the call has already purged the channel's kept reads, and the embed
+		// just wrote this one back.
+		if inbox && !w.channelKeepsReads(id) {
+			if err := w.d.Videos.DropIndex(id); err != nil {
+				w.d.Logger.Warn("summarize worker: drop index after switch-off failed", "video_id", id, "err", err)
+			}
 		}
 	}
 	if err := w.d.Videos.ClearInDepthRetry(id); err != nil {

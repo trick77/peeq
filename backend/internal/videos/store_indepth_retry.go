@@ -6,11 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"time"
-)
 
-// sqliteTime is datetime('now')'s format, so a stamp written from Go compares
-// as text against the column default.
-const sqliteTime = "2006-01-02 15:04:05"
+	"github.com/trick77/peeq/internal/store"
+)
 
 // DeferInDepthRetry records that the video's in-depth summary is still owed:
 // attempts so far, the error that last stopped it, and when to try again
@@ -22,11 +20,26 @@ VALUES (?, ?, ?, ?)
 ON CONFLICT(video_id) DO UPDATE SET
 	attempts   = excluded.attempts,
 	next_at    = excluded.next_at,
-	last_error = excluded.last_error`, id, attempts, next.UTC().Format(sqliteTime), lastErr)
+	last_error = excluded.last_error`, id, attempts, store.FormatTime(next), lastErr)
 	if err != nil {
 		return fmt.Errorf("defer video %s in-depth retry: %w", id, err)
 	}
 	return nil
+}
+
+// InDepthRetryAttempts returns the attempts the video's queued retry has made,
+// 0 when none is queued.
+func (s *Store) InDepthRetryAttempts(id string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT attempts FROM in_depth_retry WHERE video_id = ?`, id).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("video %s in-depth retry attempts: %w", id, err)
+	}
+	return n, nil
 }
 
 // NextInDepthRetry returns the video whose retry has waited longest past its
@@ -35,7 +48,7 @@ func (s *Store) NextInDepthRetry(now time.Time) (id string, attempts int, err er
 	err = s.db.QueryRowContext(context.Background(), `
 SELECT video_id, attempts FROM in_depth_retry
 WHERE next_at <= ?
-ORDER BY next_at, video_id LIMIT 1`, now.UTC().Format(sqliteTime)).Scan(&id, &attempts)
+ORDER BY next_at, video_id LIMIT 1`, store.FormatTime(now)).Scan(&id, &attempts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", 0, nil
 	}

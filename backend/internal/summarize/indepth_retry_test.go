@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trick77/peeq/internal/llm"
+	"github.com/trick77/peeq/internal/store"
 	"github.com/trick77/peeq/internal/videos"
 )
 
@@ -75,7 +77,7 @@ func retryRow(t *testing.T, h *workerHarness, id string) (attempts int, nextAt, 
 	return attempts, nextAt, lastErr, true
 }
 
-func sqlTime(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05") }
+func sqlTime(t time.Time) string { return store.FormatTime(t) }
 
 // The bug this exists for: a job whose in-depth call failed finished done and
 // nothing ever asked again. Now the failure is queued with its cause, and an
@@ -423,4 +425,130 @@ func TestInDepthRetry_storeErrorsKeepTheRow(t *testing.T) {
 	if attempts, _, lastErr, ok := retryRow(t, h, "d1"); !ok || attempts != 2 || lastErr == "" {
 		t.Fatalf("retry row = %v attempts=%d last_error=%q; want kept, 2, the error", ok, attempts, lastErr)
 	}
+}
+
+// hookCompleter runs hook on the in-depth call instead of answering it.
+type hookCompleter struct {
+	inDepthCompleter
+	hook func(ctx context.Context) (string, error)
+}
+
+func (c *hookCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	if c.hook != nil && strings.Contains(promptText(m), "in-depth summary") {
+		return c.hook(ctx)
+	}
+	return c.inDepthCompleter.Complete(ctx, m)
+}
+
+func newHookWorker(h *workerHarness, c *hookCompleter, clock *retryClock, emb Embedder) *Worker {
+	if emb == nil {
+		emb = &countingEmbedder{dim: 1536}
+	}
+	return NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(c), Embedder: emb,
+		EmbedModel: "test-model", EmbedDim: 1536, Now: clock.now})
+}
+
+// A shutdown mid-call is not a failure: no attempt burned, no backoff added.
+func TestInDepthRetry_shutdownMidCallKeepsTheRowAsItWas(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedDownloaded(t, h, "d1")
+	clock := newRetryClock()
+	c := &hookCompleter{inDepthCompleter: inDepthCompleter{failInDepth: 1}}
+	w := newHookWorker(h, c, clock, nil)
+	mustProcess(t, w)
+	_, nextBefore, _, _ := retryRow(t, h, "d1")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	c.hook = func(context.Context) (string, error) { cancel(); return "", ctx.Err() }
+	clock.advance(2 * time.Minute)
+	if _, err := w.processOne(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("processOne: %v, want the shutdown reported", err)
+	}
+	if attempts, nextAt, _, ok := retryRow(t, h, "d1"); !ok || attempts != 1 || nextAt != nextBefore {
+		t.Fatalf("retry row = %v attempts=%d next_at=%s; want untouched (1, %s)", ok, attempts, nextAt, nextBefore)
+	}
+}
+
+// A panic in the retry must not kill the worker: the job path recovers its
+// own, and a persisted due row would otherwise crash every boot.
+func TestInDepthRetry_aPanicIsRecoveredAndBackedOff(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedDownloaded(t, h, "d1")
+	clock := newRetryClock()
+	c := &hookCompleter{inDepthCompleter: inDepthCompleter{failInDepth: 1}}
+	w := newHookWorker(h, c, clock, nil)
+	mustProcess(t, w)
+
+	c.hook = func(context.Context) (string, error) { panic("boom") }
+	clock.advance(2 * time.Minute)
+	mustProcess(t, w)
+	attempts, nextAt, lastErr, ok := retryRow(t, h, "d1")
+	if !ok || attempts != 2 || nextAt != sqlTime(clock.after(10*time.Minute)) || !strings.Contains(lastErr, "boom") {
+		t.Fatalf("retry row = %v attempts=%d next_at=%s last_error=%q; want 2, +10m, the panic", ok, attempts, nextAt, lastErr)
+	}
+}
+
+// A job whose in-depth call fails again keeps the retry's count and backoff
+// instead of starting over at attempt 1.
+func TestInDepthRetry_aJobFailureKeepsTheCount(t *testing.T) {
+	h := newWorkerHarness(t)
+	seedDownloaded(t, h, "d1")
+	clock := newRetryClock()
+	if err := h.videos.DeferInDepthRetry("d1", "earlier", 4, clock.after(time.Hour)); err != nil {
+		t.Fatalf("queue: %v", err)
+	}
+	mustProcess(t, newRetryWorker(h, &inDepthCompleter{failInDepth: 1}, clock, retryWorkerOpts{}))
+	if attempts, nextAt, _, ok := retryRow(t, h, "d1"); !ok || attempts != 5 || nextAt != sqlTime(clock.after(24*time.Hour)) {
+		t.Fatalf("retry row = %v attempts=%d next_at=%s; want 5, +24h", ok, attempts, nextAt)
+	}
+}
+
+// hookEmbedder runs hook before embedding, once.
+type hookEmbedder struct {
+	countingEmbedder
+	hook func()
+}
+
+func (e *hookEmbedder) EmbedBatched(ctx context.Context, inputs []string, gap time.Duration) ([][]float32, error) {
+	if e.hook != nil {
+		e.hook()
+		e.hook = nil
+	}
+	return e.countingEmbedder.EmbedBatched(ctx, inputs, gap)
+}
+
+// keep_reads switched off while the retry's embed is in flight: the switch-off
+// purge has run, so the index the embed writes back must go again.
+func TestInDepthRetry_keepReadsSwitchedOffMidEmbedDropsTheIndex(t *testing.T) {
+	h := newWorkerHarness(t)
+	rel := writeInboxCaption(t, h, "i1")
+	if err := h.videos.Upsert(videos.Video{ID: "i1", URL: "https://youtu.be/i1"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	seedTranscript(t, h, "i1", rel)
+	if err := h.videos.SetStatus("i1", videos.StatusNew, ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	seedChannel(t, h, "UCx", "i1", true)
+	if _, err := h.jobs.Enqueue("i1"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	clock := newRetryClock()
+	emb := &hookEmbedder{countingEmbedder: countingEmbedder{dim: 1536}}
+	w := newRetryWorker(h, &inDepthCompleter{failInDepth: 1}, clock, retryWorkerOpts{emb: emb})
+	mustProcess(t, w)
+
+	emb.hook = func() {
+		if _, err := h.db.Exec(`UPDATE channels SET keep_reads = 0 WHERE id = 'UCx'`); err != nil {
+			t.Errorf("switch off: %v", err)
+		}
+	}
+	clock.advance(2 * time.Minute)
+	mustProcess(t, w)
+	if indexed, err := h.rag.HasChunks(t.Context(), "i1"); err != nil || indexed {
+		t.Fatalf("indexed=%v (err %v), want the index dropped after the switch-off", indexed, err)
+	}
+	wantInDepth(t, h, "i1", inDepthReply)
 }

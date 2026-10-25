@@ -623,7 +623,7 @@ func (w *Worker) inDepthStep(video *videos.Video, run *analysisRun, cues []subti
 	have, err := w.d.Videos.InDepth(video.ID)
 	if err != nil {
 		w.d.Logger.Warn("summarize worker: read in-depth summary failed", append(run.ident(), "err", err)...)
-		w.deferInDepth(video.ID, 0, err)
+		w.deferInDepthFromJob(video.ID, err)
 		return
 	}
 	if have != "" {
@@ -638,7 +638,7 @@ func (w *Worker) inDepthStep(video *videos.Video, run *analysisRun, cues []subti
 	}
 	if err != nil {
 		w.d.Logger.Warn("summarize worker: in-depth failed", append(run.ident(), "duration_ms", run.stepElapsedMs(), "err", err)...)
-		w.deferInDepth(video.ID, 0, err)
+		w.deferInDepthFromJob(video.ID, err)
 		return
 	}
 	done("words", len(strings.Fields(text)))
