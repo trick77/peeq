@@ -208,7 +208,7 @@ const maxEmbedInputs = 64
 
 // EmbedBatched is Embed for input sets large enough that one request would be
 // unwise: it splits into requests of at most maxEmbedInputs, concatenates the
-// vectors in input order. A done ctx fails the next batch before it is sent.
+// vectors in input order, and stops before the next request once ctx is done.
 //
 // Any batch failing fails the whole call: a partial vector set cannot be stored,
 // since ReplaceVideoChunks requires one vector per row.
@@ -218,6 +218,10 @@ func (c *EmbedClient) EmbedBatched(ctx context.Context, inputs []string) ([][]fl
 	}
 	out := make([][]float32, 0, len(inputs))
 	for start := 0; start < len(inputs); start += maxEmbedInputs {
+		// A shutdown stops here, quietly, rather than send the remaining batches.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		end := min(start+maxEmbedInputs, len(inputs))
 		vecs, err := c.Embed(ctx, inputs[start:end])
 		if err != nil {

@@ -292,3 +292,29 @@ func TestEmbedBatchedStopsBetweenBatchesOnCancel(t *testing.T) {
 		t.Fatalf("requests = %d, want 1: no batch may be sent after the cancel", requests)
 	}
 }
+
+// A context already done sends nothing and returns its own error, not a
+// failed request.
+func TestEmbedBatchedSendsNothingOnADoneContext(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := mustEmbedClient(t, EmbedConfig{BaseURL: srv.URL}, srv.Client())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	inputs := make([]string, 150)
+	for i := range inputs {
+		inputs[i] = "t" + strconv.Itoa(i)
+	}
+	_, err := c.EmbedBatched(ctx, inputs)
+	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "embed batch") {
+		t.Fatalf("err = %v, want bare context.Canceled", err)
+	}
+	if requests != 0 {
+		t.Fatalf("requests = %d, want 0", requests)
+	}
+}
