@@ -177,9 +177,6 @@ func downloadReleaseFrom(ctx context.Context, url, destPath string) (string, err
 //
 // Updates are serialized: two Update clicks must not interleave their swaps.
 // A caller waiting its turn gives up when its ctx ends.
-//
-// On platforms with an unpacked build, a plain dir/yt-dlp an older peeq
-// installed is removed: it is a python zipapp nothing resolves any more.
 func UpdateLatest(ctx context.Context, dir string) (string, error) {
 	select {
 	case updateSlot <- struct{}{}:
@@ -189,9 +186,6 @@ func UpdateLatest(ctx context.Context, dir string) (string, error) {
 	defer func() { <-updateSlot }()
 
 	r := releaseFor(runtime.GOOS, runtime.GOARCH)
-	if r.unpacked() {
-		removeLegacyZipapp(filepath.Join(dir, "yt-dlp"))
-	}
 	// Ask GitHub for the latest tag (a few KB) before fetching the build
 	// (~40MB): an install that already is the latest has nothing to gain. An
 	// unanswered lookup falls through to the download, as before.
@@ -206,21 +200,6 @@ func UpdateLatest(ctx context.Context, dir string) (string, error) {
 // latestTag is the release lookup UpdateLatest compares against; a var so
 // tests never reach GitHub.
 var latestTag = LatestVersion
-
-// removeLegacyZipapp deletes the python zipapp an older self-update installed
-// at p, and nothing else: a binary someone put there themselves stays.
-func removeLegacyZipapp(p string) {
-	f, err := os.Open(p) //nolint:gosec // p is the fixed name the old self-update wrote inside the configured install dir
-	if err != nil {
-		return
-	}
-	head := make([]byte, 64)
-	n, _ := io.ReadFull(f, head)
-	_ = f.Close()
-	if strings.HasPrefix(string(head[:n]), "#!") && strings.Contains(string(head[:n]), "python") {
-		_ = os.Remove(p)
-	}
-}
 
 // updateSlot holds one token while an update runs.
 var updateSlot = make(chan struct{}, 1)

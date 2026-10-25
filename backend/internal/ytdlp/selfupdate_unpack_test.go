@@ -221,28 +221,6 @@ func TestDownloadUnpackedFrom_removesCrashLeftovers(t *testing.T) {
 	}
 }
 
-// TestRemoveLegacyZipapp_onlyPython: only the python zipapp an older
-// self-update wrote is removed; any other binary at that path stays.
-func TestRemoveLegacyZipapp_onlyPython(t *testing.T) {
-	dir := t.TempDir()
-	zipapp := filepath.Join(dir, "zipapp")
-	other := filepath.Join(dir, "other")
-	if err := os.WriteFile(zipapp, []byte("#!/usr/bin/env python3\nPK..."), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(other, []byte("\x7fELF..."), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	removeLegacyZipapp(zipapp)
-	removeLegacyZipapp(other)
-	if _, err := os.Stat(zipapp); err == nil {
-		t.Fatal("the python zipapp was kept")
-	}
-	if _, err := os.Stat(other); err != nil {
-		t.Fatalf("a non-zipapp binary was removed: %v", err)
-	}
-}
-
 // TestDownloadUnpackedFrom_refusesNonLink: nothing installs anything but the
 // link at the install path, and moving something else aside would hand it to
 // the stale-tree sweep.
