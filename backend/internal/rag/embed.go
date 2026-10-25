@@ -14,7 +14,6 @@ import (
 	// the context, the heartbeat, and the token formatting, so an embed line
 	// reads like a chat line. llm depends on nothing in peeq, so no cycle.
 	"github.com/trick77/peeq/internal/llm"
-	"github.com/trick77/ship/kit/run"
 )
 
 // The embedding model is configuration (BACKEND_EMBED_MODEL); its vector width
@@ -199,32 +198,29 @@ func embedError(err error) error {
 //
 // A whole video went in a single call before chapter chunks existed, under a
 // one-minute HTTP timeout — already the tightest thing in this package for a
-// long video. Chapter chunks roughly double the count, and the backfill sends
-// every video in the library through here, so the request has to be bounded.
+// long video. Chapter chunks roughly double the count, so the request has to be
+// bounded.
 //
 // llmwire batches at the same size internally, so a call at or under this
-// count is exactly one request; the split here exists for the gap between
-// batches, which llmwire deliberately does not model.
+// count is exactly one request. The split here still gives each batch its own
+// defaultEmbedTimeout and its own error context.
 const maxEmbedInputs = 64
 
 // EmbedBatched is Embed for input sets large enough that one request would be
 // unwise: it splits into requests of at most maxEmbedInputs, concatenates the
-// vectors in input order, and waits `gap` between requests so a library-wide
-// backfill trickles rather than bursting at the endpoint.
+// vectors in input order, and stops before the next request once ctx is done.
 //
-// A non-positive gap disables the wait. Any batch failing fails the whole call:
-// a partial vector set cannot be stored, since ReplaceVideoChunks requires one
-// vector per row.
-func (c *EmbedClient) EmbedBatched(ctx context.Context, inputs []string, gap time.Duration) ([][]float32, error) {
+// Any batch failing fails the whole call: a partial vector set cannot be stored,
+// since ReplaceVideoChunks requires one vector per row.
+func (c *EmbedClient) EmbedBatched(ctx context.Context, inputs []string) ([][]float32, error) {
 	if len(inputs) <= maxEmbedInputs {
 		return c.Embed(ctx, inputs)
 	}
 	out := make([][]float32, 0, len(inputs))
 	for start := 0; start < len(inputs); start += maxEmbedInputs {
-		// Context-aware: a shutdown mid-backfill stops here rather than sleep
-		// out the remaining batches. A non-positive gap is no wait at all.
-		if start > 0 && !run.Sleep(ctx, gap) {
-			return nil, ctx.Err()
+		// A shutdown stops here, quietly, rather than send the remaining batches.
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		end := min(start+maxEmbedInputs, len(inputs))
 		vecs, err := c.Embed(ctx, inputs[start:end])
