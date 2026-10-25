@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/trick77/llmwire"
 	"github.com/trick77/llmwire/llmwiretest"
@@ -68,7 +67,7 @@ func TestEmbedBatchedSplitsAndPreservesOrder(t *testing.T) {
 	for i := range inputs {
 		inputs[i] = "t" + strconv.Itoa(i)
 	}
-	vecs, err := c.EmbedBatched(context.Background(), inputs, 0)
+	vecs, err := c.EmbedBatched(context.Background(), inputs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +102,7 @@ func TestEmbedBatchedSingleRequestBelowThreshold(t *testing.T) {
 	defer srv.Close()
 
 	c := mustEmbedClient(t, EmbedConfig{BaseURL: srv.URL}, srv.Client())
-	if _, err := c.EmbedBatched(context.Background(), []string{"a", "b"}, 0); err != nil {
+	if _, err := c.EmbedBatched(context.Background(), []string{"a", "b"}); err != nil {
 		t.Fatal(err)
 	}
 	if requests != 1 {
@@ -138,7 +137,7 @@ func TestEmbedBatchedFailsWholeCallOnBatchError(t *testing.T) {
 	for i := range inputs {
 		inputs[i] = "t"
 	}
-	if _, err := c.EmbedBatched(context.Background(), inputs, 0); err == nil {
+	if _, err := c.EmbedBatched(context.Background(), inputs); err == nil {
 		t.Fatal("a failing batch must fail the whole call")
 	}
 }
@@ -259,8 +258,8 @@ func TestEmbed_statusErrorsKeepLlmwiresChain(t *testing.T) {
 	}
 }
 
-// TestEmbedBatchedStopsBetweenBatchesOnCancel: a shutdown during a backfill
-// stops at the next gap instead of sending the remaining batches.
+// TestEmbedBatchedStopsBetweenBatchesOnCancel: a shutdown mid-call stops
+// before the next batch instead of sending the remaining ones.
 func TestEmbedBatchedStopsBetweenBatchesOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -285,11 +284,37 @@ func TestEmbedBatchedStopsBetweenBatchesOnCancel(t *testing.T) {
 	for i := range inputs {
 		inputs[i] = "t" + strconv.Itoa(i)
 	}
-	_, err := c.EmbedBatched(ctx, inputs, time.Millisecond)
+	_, err := c.EmbedBatched(ctx, inputs)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 	if requests != 1 {
 		t.Fatalf("requests = %d, want 1: no batch may be sent after the cancel", requests)
+	}
+}
+
+// A context already done sends nothing and returns its own error, not a
+// failed request.
+func TestEmbedBatchedSendsNothingOnADoneContext(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := mustEmbedClient(t, EmbedConfig{BaseURL: srv.URL}, srv.Client())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	inputs := make([]string, 150)
+	for i := range inputs {
+		inputs[i] = "t" + strconv.Itoa(i)
+	}
+	_, err := c.EmbedBatched(ctx, inputs)
+	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "embed batch") {
+		t.Fatalf("err = %v, want bare context.Canceled", err)
+	}
+	if requests != 0 {
+		t.Fatalf("requests = %d, want 0", requests)
 	}
 }

@@ -20,7 +20,7 @@ import (
 // chapter chunks roughly doubled how many texts one video contributes and the
 // whole set used to ride in a single request under a one-minute timeout.
 type Embedder interface {
-	EmbedBatched(ctx context.Context, inputs []string, gap time.Duration) ([][]float32, error)
+	EmbedBatched(ctx context.Context, inputs []string) ([][]float32, error)
 }
 
 // WorkerDeps are the worker's collaborators and tunables. The stores,
@@ -587,7 +587,7 @@ func (w *Worker) embedAndStore(ctx context.Context, video *videos.Video, parsed 
 		fresh = append(fresh, i)
 	}
 	if len(texts) > 0 {
-		embedded, err := w.d.Embedder.EmbedBatched(ctx, texts, 0)
+		embedded, err := w.d.Embedder.EmbedBatched(ctx, texts)
 		if err != nil {
 			return err
 		}

@@ -87,10 +87,32 @@ func TestCheckEmbedModel_sameWidthDifferentModelIsRefused(t *testing.T) {
 	}
 }
 
-// A database indexed before the record existed: the model is adopted from the
-// videos whose vectors are stored, not from config, so the first boot after an
-// upgrade cannot wave a model swap through.
-func TestCheckEmbedModel_adoptsTheModelOfVectorsStoredBeforeTheRecord(t *testing.T) {
+// The documented re-index: a migration clears vec_chunks and vec_model and
+// resets embed_rev, keeping the chunk rows. The next boot must take the new
+// model, not refuse it because chunk rows from the old one remain.
+func TestCheckEmbedModel_reindexMigrationAcceptsTheNewModel(t *testing.T) {
+	db, s := vecModelDB(t)
+	if err := indexWith(t, s, "v1", "model-a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM vec_chunks; DELETE FROM vec_model; UPDATE videos SET embed_rev = 0`); err != nil {
+		t.Fatal(err)
+	}
+	var chunks int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM transcript_chunks`).Scan(&chunks); err != nil || chunks == 0 {
+		t.Fatalf("transcript_chunks = %d, %v; the re-index keeps them", chunks, err)
+	}
+	if err := s.CheckEmbedModel(context.Background(), "model-b"); err != nil {
+		t.Fatalf("re-indexed DB refused the new model: %v", err)
+	}
+	if got := recorded(t, s); got != "model-b" {
+		t.Fatalf("recorded = %q, want model-b", got)
+	}
+}
+
+// Vectors with no recorded model can only come from a migration that cleared
+// vec_model alone. Boot refuses rather than guess which space they are in.
+func TestCheckEmbedModel_vectorsWithoutARecordAreRefused(t *testing.T) {
 	db, s := vecModelDB(t)
 	if err := indexWith(t, s, "v1", "model-a"); err != nil {
 		t.Fatal(err)
@@ -98,33 +120,12 @@ func TestCheckEmbedModel_adoptsTheModelOfVectorsStoredBeforeTheRecord(t *testing
 	if _, err := db.Exec(`DELETE FROM vec_model`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CheckEmbedModel(context.Background(), "model-b"); err == nil {
-		t.Fatal("stored model-a vectors, configured model-b: want a refusal")
+	err := s.CheckEmbedModel(context.Background(), "model-a")
+	if err == nil || !strings.Contains(err.Error(), "re-index") {
+		t.Fatalf("err = %v, want a refusal naming the re-index", err)
 	}
-	if got := recorded(t, s); got != "model-a" {
-		t.Fatalf("recorded = %q, want the stored vectors' model-a", got)
-	}
-}
-
-// Vectors whose model cannot be told from the videos (none recorded, or more
-// than one): the configured model is adopted, as the brief for an unknown
-// history allows no better.
-func TestCheckEmbedModel_adoptsTheConfiguredModelWhenStoredOnesAreAmbiguous(t *testing.T) {
-	db, s := vecModelDB(t)
-	if err := indexWith(t, s, "v1", "model-a"); err != nil {
-		t.Fatal(err)
-	}
-	if err := indexWith(t, s, "v2", "model-a"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`DELETE FROM vec_model; UPDATE videos SET embed_model = 'model-x' WHERE id = 'v2'`); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CheckEmbedModel(context.Background(), "model-b"); err != nil {
-		t.Fatalf("ambiguous history refused: %v", err)
-	}
-	if got := recorded(t, s); got != "model-b" {
-		t.Fatalf("recorded = %q, want the configured model-b", got)
+	if got := recorded(t, s); got != "" {
+		t.Fatalf("a refused check recorded %q", got)
 	}
 }
 

@@ -37,17 +37,17 @@ func recordedEmbedModel(ctx context.Context, q queryer) (string, error) {
 // stored vectors came from, width notwithstanding.
 //
 // With no vectors stored there is nothing to mismatch: the configured model is
-// recorded, replacing any earlier one, so an empty library (new, or emptied by
-// deletes) may switch to another model of the same width and only a write
-// that stores vectors pins one. The width itself is fixed by the vec_chunks
-// migration and checked separately (CheckVecWidth), empty table or not. With vectors but nothing recorded it records a model first: the one the
-// indexed videos name when they all name the same one (a database indexed
-// before the record existed), otherwise the configured one (a history that
-// cannot say).
+// recorded, replacing any earlier one, so an empty library (new, emptied by
+// deletes, or re-indexed by a migration that cleared vec_chunks and vec_model)
+// may switch to another model of the same width and only a write that stores
+// vectors pins one. Vectors are counted in vec_chunks itself, never by
+// transcript_chunks: a re-index keeps the chunk rows and drops only their
+// vectors. The width is fixed by the vec_chunks migration and checked
+// separately (CheckVecWidth), empty table or not.
 func (s *Store) CheckEmbedModel(ctx context.Context, model string) error {
 	var hasVectors bool
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT EXISTS (SELECT 1 FROM transcript_chunks)`).Scan(&hasVectors); err != nil {
+		`SELECT EXISTS (SELECT 1 FROM vec_chunks_rowids)`).Scan(&hasVectors); err != nil {
 		return fmt.Errorf("rag: count stored vectors: %w", err)
 	}
 	if !hasVectors {
@@ -62,9 +62,12 @@ func (s *Store) CheckEmbedModel(ctx context.Context, model string) error {
 		return err
 	}
 	if stored == "" {
-		if stored, err = s.adoptEmbedModel(ctx, model); err != nil {
-			return err
-		}
+		// Every vector write records its model in the same transaction, so this
+		// is a migration that cleared vec_model but left the vectors. Guessing a
+		// model would let two vector spaces mix.
+		return errors.New("vec_chunks holds vectors but vec_model names no model; " +
+			"re-index: ship a migration that clears vec_chunks and vec_model and sets embed_rev = 0 " +
+			"on every video, so each is re-embedded")
 	}
 	if stored == model {
 		return nil
@@ -72,37 +75,6 @@ func (s *Store) CheckEmbedModel(ctx context.Context, model string) error {
 	return fmt.Errorf("vec_chunks holds vectors from %s, but BACKEND_EMBED_MODEL=%s; "+
 		"either set BACKEND_EMBED_MODEL back to %s, or re-index: ship a migration that clears "+
 		"vec_chunks and vec_model and sets embed_rev = 0 on every video, so each is re-embedded", stored, model, stored)
-}
-
-// adoptEmbedModel records the model for a database that has none recorded.
-func (s *Store) adoptEmbedModel(ctx context.Context, configured string) (string, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT DISTINCT embed_model FROM videos
-		WHERE embed_model != '' AND id IN (SELECT video_id FROM transcript_chunks)`)
-	if err != nil {
-		return "", fmt.Errorf("rag: read indexed models: %w", err)
-	}
-	var models []string
-	for rows.Next() {
-		var m string
-		if err := rows.Scan(&m); err != nil {
-			_ = rows.Close()
-			return "", err
-		}
-		models = append(models, m)
-	}
-	if err := rows.Close(); err != nil {
-		return "", err
-	}
-	adopted := configured
-	if len(models) == 1 {
-		adopted = models[0]
-	}
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO vec_model (id, model) VALUES (1, ?) ON CONFLICT(id) DO NOTHING`, adopted); err != nil {
-		return "", fmt.Errorf("rag: record vec_model: %w", err)
-	}
-	return s.RecordedEmbedModel(ctx)
 }
 
 // recordEmbedModelTx records model for the vectors a write adds, refusing a

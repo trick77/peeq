@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/llm"
@@ -32,7 +31,7 @@ func (f failCompleter) Complete(_ context.Context, _ []llm.Message) (string, err
 // no_transcript short-circuit never reaches the Embedder.
 type failEmbedder struct{ t *testing.T }
 
-func (f failEmbedder) EmbedBatched(_ context.Context, _ []string, _ time.Duration) ([][]float32, error) {
+func (f failEmbedder) EmbedBatched(_ context.Context, _ []string) ([][]float32, error) {
 	f.t.Fatal("Embedder.Embed should not be called for a no-transcript video")
 	return nil, nil
 }
@@ -80,14 +79,14 @@ func (classifyErrCompleter) Complete(_ context.Context, m []llm.Message) (string
 // swallowing it (regression test for the silent summarize-worker error).
 type failingEmbedder struct{}
 
-func (failingEmbedder) EmbedBatched(_ context.Context, _ []string, _ time.Duration) ([][]float32, error) {
+func (failingEmbedder) EmbedBatched(_ context.Context, _ []string) ([][]float32, error) {
 	return nil, errors.New("boom")
 }
 
 // fakeWorkerEmbedder returns a dim-length vector per input.
 type fakeWorkerEmbedder struct{ dim int }
 
-func (f fakeWorkerEmbedder) EmbedBatched(_ context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
+func (f fakeWorkerEmbedder) EmbedBatched(_ context.Context, inputs []string) ([][]float32, error) {
 	out := make([][]float32, len(inputs))
 	for i := range inputs {
 		v := make([]float32, f.dim)
@@ -792,7 +791,7 @@ type countingEmbedder struct {
 	sent  map[string]int
 }
 
-func (c *countingEmbedder) EmbedBatched(_ context.Context, inputs []string, _ time.Duration) ([][]float32, error) {
+func (c *countingEmbedder) EmbedBatched(_ context.Context, inputs []string) ([][]float32, error) {
 	c.calls++
 	if c.sent == nil {
 		c.sent = map[string]int{}
