@@ -175,9 +175,10 @@ type failCutKey struct{}
 // varies per call, and a pass that eats the budget leaves a fragment the next
 // attempt would not. Measured: the in-depth step stored a 22-word "summary"
 // cut this way. For a caller with a retry path behind it, where a fragment
-// stored as a finished text is worse than another attempt.
+// stored as a finished text is worse than another attempt. It implies
+// FailOnEarlyFinish.
 func FailOnCut(ctx context.Context) context.Context {
-	return context.WithValue(ctx, failCutKey{}, true)
+	return context.WithValue(FailOnEarlyFinish(ctx), failCutKey{}, true)
 }
 
 // FailOnCutFrom reports whether ctx asks for FailOnCut (exported for the

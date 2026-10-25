@@ -377,9 +377,8 @@ func (c *Client) CompleteStream(ctx context.Context, messages []Message, onDelta
 	// still says the answer is partial. FailOnCut drops the tolerance for
 	// "length" (see its doc); a context-window finish stays tolerated.
 	fr := res.wire.FinishReason
-	cutRefused := failOnCutFrom(ctx) && fr == "length"
-	if (failOnEarlyFinishFrom(ctx) || failOnCutFrom(ctx)) && fr != "" && fr != "stop" &&
-		(!deterministicCut(fr) || cutRefused) {
+	tolerated := deterministicCut(fr) && (fr != "length" || !failOnCutFrom(ctx))
+	if failOnEarlyFinishFrom(ctx) && fr != "" && fr != "stop" && !tolerated {
 		return "", fmt.Errorf("chat ended early: finish_reason=%s", fr)
 	}
 	return res.wire.Content, nil

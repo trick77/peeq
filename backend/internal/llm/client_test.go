@@ -295,6 +295,18 @@ func TestComplete_failOnCut(t *testing.T) {
 	if !FailOnCutFrom(FailOnCut(context.Background())) || FailOnCutFrom(context.Background()) {
 		t.Error("FailOnCutFrom does not report the option")
 	}
+	if !FailOnEarlyFinishFrom(FailOnCut(context.Background())) {
+		t.Error("FailOnCut does not imply FailOnEarlyFinish")
+	}
+	// A context-window finish stays tolerated: that prompt is too big every time.
+	cw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, sseFinish("partial", "model_context_window_exceeded"))
+	}))
+	defer cw.Close()
+	wc := mustClient(t, Config{BaseURL: cw.URL, Logger: discardLogger()}, cw.Client())
+	if out, err := wc.Complete(FailOnCut(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil || out != "partial" {
+		t.Fatalf("context-window cut under FailOnCut: out=%q err=%v, want partial/nil", out, err)
+	}
 	// A filter still fails, as under FailOnEarlyFinish.
 	cf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, sseFinish("partial", "content_filter"))

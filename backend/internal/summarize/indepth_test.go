@@ -139,12 +139,12 @@ func TestSummarizeVideo_longVideoFallsBackToTheCoarsePath(t *testing.T) {
 	}
 }
 
-// Past the budget: a map over the parts writing notes in the same format, then
-// one merge call that writes the reader's text from them.
-// Every in-depth call refuses a cut at the cap: a reasoning model that spent
-// the budget thinking leaves a fragment, and stored as the finished text it
-// never gets fixed. Failing hands it to the in-depth retry instead.
-func TestInDepth_everyCallRefusesACut(t *testing.T) {
+// The reader's text (single pass, merge) refuses a cut at the cap: a
+// reasoning model that spent the budget thinking leaves a fragment, and stored
+// as the finished text it never gets fixed. Failing hands it to the in-depth
+// retry instead. A map part keeps its cut notes (still guarded against a
+// filter): refusing one would throw away every other part.
+func TestInDepth_theReadersTextRefusesACut(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		duration int
@@ -155,23 +155,37 @@ func TestInDepth_everyCallRefusesACut(t *testing.T) {
 		{"map and merge", 7200, 400, []Option{WithSummaryChunkTokens(300)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var calls, refusing int
-			s := New(completerFunc(func(ctx context.Context, _ []llm.Message) (string, error) {
-				calls++
-				if llm.FailOnCutFrom(ctx) {
-					refusing++
+			var final, maps int
+			s := New(completerFunc(func(ctx context.Context, m []llm.Message) (string, error) {
+				if m[0].Content == inDepthSectionPrompt {
+					maps++
+					if llm.FailOnCutFrom(ctx) || !llm.FailOnEarlyFinishFrom(ctx) {
+						t.Errorf("map part: FailOnCut=%v FailOnEarlyFinish=%v, want only the filter guard",
+							llm.FailOnCutFrom(ctx), llm.FailOnEarlyFinishFrom(ctx))
+					}
+				} else {
+					final++
+					if !llm.FailOnCutFrom(ctx) {
+						t.Error("the reader's text did not ask for FailOnCut")
+					}
 				}
 				return "### A point [0:00]\n\nBody.", nil
 			}), tc.opts...)
 			if _, err := s.InDepth(context.Background(), "T", tc.duration, manyCues(tc.cues)); err != nil {
 				t.Fatal(err)
 			}
-			if calls == 0 || refusing != calls {
-				t.Fatalf("%d of %d calls asked for FailOnCut, want all", refusing, calls)
+			if final != 1 {
+				t.Fatalf("reader's-text calls = %d, want 1", final)
+			}
+			if tc.name == "map and merge" && maps < 2 {
+				t.Fatalf("map calls = %d, want several", maps)
 			}
 		})
 	}
 }
+
+// Past the budget: a map over the parts writing notes in the same format, then
+// one merge call that writes the reader's text from them.
 
 func TestInDepth_longVideoMapsThenMerges(t *testing.T) {
 	var maps int
