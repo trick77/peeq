@@ -12,16 +12,21 @@ import (
 // inDepthMaxAnswerTokens bounds the in-depth calls: the single pass, each map
 // part and the merge. The longest target is 900 words, about 1,200 tokens of
 // English and more in a wordier language, so this is a backstop several times
-// that. A cut here keeps every finished section (see inDepthRules).
+// that. A cut of the reader's text (single pass, merge) is refused
+// (llm.FailOnCut), never stored: on a reasoning model the cut is a deep pass
+// that ate the budget, the text is a fragment, and the in-depth retry gets a
+// whole one on a later attempt. A map part's cut is kept: its finished notes
+// still serve the merge, and refusing it would throw away every other part.
 const inDepthMaxAnswerTokens = 4096
 
 // inDepthRules is the shape and voice shared by the single pass and the merge,
 // so a rule added here reaches the long-video path too.
 //
-// Plain text with "### " heading lines, not JSON. A call cut at the answer cap
-// still renders every section it finished, where cut JSON parses as nothing;
-// and a reply that ignores the format renders as plain paragraphs, which is
-// the short summary's look.
+// Plain text with "### " heading lines, not JSON: a map part cut at the cap
+// still hands the merge every note it finished, where cut JSON parses as
+// nothing; and a reply that ignores the format renders as plain paragraphs,
+// which is the short summary's look. (The reader's text itself is never
+// stored cut: see inDepthMaxAnswerTokens.)
 //
 // Ordered by weight in the argument, not by timeline: the Highlights already
 // walk the video in order, so a second chronological list would repeat them.
@@ -77,7 +82,8 @@ func (s *Summarizer) InDepth(ctx context.Context, title string, durationSeconds 
 	if len(chunks) == 0 {
 		return "", fmt.Errorf("in-depth: empty transcript")
 	}
-	callCtx := llm.WithMaxAnswerTokens(llm.FailOnEarlyFinish(ctx), inDepthMaxAnswerTokens)
+	callCtx := llm.WithMaxAnswerTokens(llm.FailOnCut(ctx), inDepthMaxAnswerTokens)
+	mapCtx := llm.WithMaxAnswerTokens(llm.FailOnEarlyFinish(ctx), inDepthMaxAnswerTokens)
 
 	if len(chunks) == 1 {
 		out, err := s.c.Complete(callCtx, []llm.Message{
@@ -94,7 +100,7 @@ func (s *Summarizer) InDepth(ctx context.Context, title string, durationSeconds 
 	// otherwise write a text with that stretch of the video silently missing.
 	notes := make([]string, 0, len(chunks))
 	for i, ch := range chunks {
-		out, err := s.c.Complete(callCtx, []llm.Message{
+		out, err := s.c.Complete(mapCtx, []llm.Message{
 			{Role: "system", Content: inDepthSectionPrompt},
 			{Role: "user", Content: ch.Text},
 		})

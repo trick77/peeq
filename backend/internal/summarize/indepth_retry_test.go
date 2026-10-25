@@ -12,11 +12,16 @@ import (
 	"github.com/trick77/peeq/internal/videos"
 )
 
-// retryClock is a settable WorkerDeps.Now.
+// retryClock is a settable WorkerDeps.Now. It starts an hour past the real
+// time: rows the store stamps with datetime('now'), the backfill's, must be
+// due on it. A fixed date is only past them until the wall clock overtakes
+// it, and the real time itself can sit a second boundary before a stamp taken
+// just after. Every other row's time is set from this clock, so the offset
+// changes nothing else.
 type retryClock struct{ t time.Time }
 
 func newRetryClock() *retryClock {
-	return &retryClock{t: time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)}
+	return &retryClock{t: time.Now().UTC().Add(time.Hour).Truncate(time.Second)}
 }
 func (c *retryClock) now() time.Time                  { return c.t }
 func (c *retryClock) advance(d time.Duration)         { c.t = c.t.Add(d) }

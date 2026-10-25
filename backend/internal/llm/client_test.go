@@ -279,6 +279,54 @@ func TestComplete_failOnEarlyFinish(t *testing.T) {
 	}
 }
 
+// FailOnCut also refuses a cut at our own cap: a reasoning model that spent
+// the budget thinking does not cut the same way twice, so the caller retries
+// rather than persisting a fragment.
+func TestComplete_failOnCut(t *testing.T) {
+	ln := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, sseFinish("partial", "length"))
+	}))
+	defer ln.Close()
+	c := mustClient(t, Config{BaseURL: ln.URL, Logger: discardLogger()}, ln.Client())
+	_, err := c.Complete(FailOnCut(context.Background()), []Message{{Role: "user", Content: "hi"}})
+	if err == nil || !strings.Contains(err.Error(), "finish_reason=length") {
+		t.Fatalf("length under FailOnCut: err=%v, want an error naming the cut", err)
+	}
+	if !FailOnCutFrom(FailOnCut(context.Background())) || FailOnCutFrom(context.Background()) {
+		t.Error("FailOnCutFrom does not report the option")
+	}
+	if !FailOnEarlyFinishFrom(FailOnCut(context.Background())) {
+		t.Error("FailOnCut does not imply FailOnEarlyFinish")
+	}
+	// A context-window finish stays tolerated: that prompt is too big every time.
+	cw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, sseFinish("partial", "model_context_window_exceeded"))
+	}))
+	defer cw.Close()
+	wc := mustClient(t, Config{BaseURL: cw.URL, Logger: discardLogger()}, cw.Client())
+	if out, err := wc.Complete(FailOnCut(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil || out != "partial" {
+		t.Fatalf("context-window cut under FailOnCut: out=%q err=%v, want partial/nil", out, err)
+	}
+	// A filter still fails, as under FailOnEarlyFinish.
+	cf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, sseFinish("partial", "content_filter"))
+	}))
+	defer cf.Close()
+	cc := mustClient(t, Config{BaseURL: cf.URL, Logger: discardLogger()}, cf.Client())
+	if _, err := cc.Complete(FailOnCut(context.Background()), []Message{{Role: "user", Content: "hi"}}); err == nil {
+		t.Error("content_filter under FailOnCut: want an error")
+	}
+	// A natural stop is the answer.
+	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, sseFinish("whole", "stop"))
+	}))
+	defer ok.Close()
+	oc := mustClient(t, Config{BaseURL: ok.URL, Logger: discardLogger()}, ok.Client())
+	if out, err := oc.Complete(FailOnCut(context.Background()), []Message{{Role: "user", Content: "hi"}}); err != nil || out != "whole" {
+		t.Fatalf("stop under FailOnCut: out=%q err=%v, want whole/nil", out, err)
+	}
+}
+
 // JSON mode is opt-in and off by default: most calls here must not be
 // constrained (classify answers with a bare id, the summary and Ask answers are
 // prose), so a leak would be worse than the absence it replaces.
