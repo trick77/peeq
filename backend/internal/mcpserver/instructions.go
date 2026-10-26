@@ -34,12 +34,16 @@ const (
 
 // instructions is the server's usage hint, built per request so a newly
 // subscribed channel shows up without a restart.
+//
+// The subcategory note rides here and in the search description, not in the
+// shared channel hint, which the search description already appends.
 func (h *handler) instructions(ctx context.Context) string {
+	intro := instructionsIntro + " " + subcategoryNote
 	hint := h.channelHint(ctx)
 	if hint == "" {
-		return instructionsIntro
+		return intro
 	}
-	return instructionsIntro + "\n\n" + hint
+	return intro + "\n\n" + hint
 }
 
 // channelHint is the channel block shared by the instructions and the search
@@ -78,7 +82,8 @@ func buildChannelHint(chans []Channel) string {
 		return cmp.Compare(b.Videos, a.Videos)
 	})
 
-	budget := instructionsBudget - len(instructionsIntro) - 2 - len(autoSearchHeader) - 1 - len(explicitLine) - 1
+	budget := instructionsBudget - len(instructionsIntro) - 1 - len(subcategoryNote) - 2 -
+		len(autoSearchHeader) - 1 - len(explicitLine) - 1
 	bases := make([]string, 0, hintMaxChannels)
 	used := 0
 	for i, c := range chans {
@@ -134,6 +139,13 @@ func hintLine(c Channel) string {
 		b.WriteString(": " + cats)
 	case yt != "":
 		b.WriteString(": youtube: " + yt)
+	}
+	if len(c.Subcategories) > 0 {
+		sep := "; "
+		if cats == "" && yt == "" {
+			sep = ": "
+		}
+		b.WriteString(sep + "subcategories: " + strings.Join(c.Subcategories, ", "))
 	}
 	return b.String()
 }

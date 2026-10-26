@@ -208,6 +208,9 @@ UPDATE videos
 	if err := dropInDepthTx(ctx, x, id); err != nil {
 		return fmt.Errorf("reset video %s for reprocess: in-depth summary: %w", id, err)
 	}
+	if err := dropSubcategoriesTx(ctx, x, id); err != nil {
+		return fmt.Errorf("reset video %s for reprocess: subcategories: %w", id, err)
+	}
 	return nil
 }
 
@@ -268,12 +271,33 @@ func (s *Store) AddChatUsage(id string, u ChatUsage) error {
 // which is what hands the video back to the classifier. Anything else would
 // leave a re-summarized row flagged and permanently uncategorized, since
 // SetCategoryIfUnset refuses flagged rows.
+//
+// A real change also drops the video's subcategories: they were chosen under
+// the old category, and dropping their marker hands the video back to the
+// subcategory sweep.
 func (s *Store) SetCategory(id, category string) error {
-	_, err := s.db.ExecContext(context.Background(),
-		`UPDATE videos SET category = ?, category_manual = ? WHERE id = ?`,
-		category, boolToInt(category != UncategorizedCategory), id)
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("set video %s category: begin: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var current string
+	if err := tx.QueryRowContext(ctx, `SELECT category FROM videos WHERE id = ?`, id).Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("set video %s category: read: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE videos SET category = ?, category_manual = ? WHERE id = ?`,
+		category, boolToInt(category != UncategorizedCategory), id); err != nil {
 		return fmt.Errorf("set video %s category: %w", id, err)
+	}
+	if current != category {
+		if err := dropSubcategoriesTx(ctx, tx, id); err != nil {
+			return fmt.Errorf("set video %s category: subcategories: %w", id, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set video %s category: commit: %w", id, err)
 	}
 	return nil
 }

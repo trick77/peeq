@@ -23,6 +23,7 @@ import type { ActivityEvent, ChannelDetail } from "../api/types";
 import { ArchiveTab } from "./channel/ArchiveTab";
 import { NewTab } from "./channel/NewTab";
 import { SettingsTab } from "./channel/SettingsTab";
+import { SubcategoryRow } from "./channel/SubcategoryRow";
 
 type TabId = "archive" | "new" | "settings";
 
@@ -465,6 +466,12 @@ export function Channel({
                 <div className="l">newest</div>
               </div>
             </div>
+            <SubcategoryRow
+              channelId={detail.id}
+              subcategories={detail.subcategories ?? []}
+              manual={detail.subcategories_manual}
+              onSaved={reload}
+            />
           </div>
           <div className="chan-acts">
             {detail.added ? (

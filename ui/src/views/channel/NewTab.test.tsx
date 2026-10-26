@@ -52,6 +52,8 @@ function makeDetail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     keep_reads: false,
     autodownload: false,
     pending_count: 0,
+    subcategories: [],
+    subcategories_manual: false,
     ...overrides,
   };
 }

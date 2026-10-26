@@ -992,6 +992,11 @@ func TestProcessOneIdleSweepClassifiesBacklog(t *testing.T) {
 		t.Fatalf("category = %q, want ai — the idle sweep must classify the backlog", v.Category)
 	}
 
+	// The freshly categorized video is owed its subcategories next.
+	if did, err = w.processOne(context.Background()); err != nil || !did {
+		t.Fatalf("subcategory turn: did=%v err=%v", did, err)
+	}
+
 	// Backlog drained: nothing left to do.
 	did, err = w.processOne(context.Background())
 	if err != nil {
@@ -1056,7 +1061,12 @@ func TestIdleSweepParksFailuresAndAdvances(t *testing.T) {
 		t.Fatalf("v-b category = %q, want it left uncategorized", b.Category)
 	}
 
-	// Turn 3: both are accounted for, so the sweep is idle.
+	// Turn 3: v-a, now categorized, is owed its subcategories.
+	if did, err = w.processOne(context.Background()); err != nil || !did {
+		t.Fatalf("subcategory turn: did=%v err=%v", did, err)
+	}
+
+	// Turn 4: both are accounted for, so the sweep is idle.
 	did, err = w.processOne(context.Background())
 	if err != nil {
 		t.Fatalf("processOne: %v", err)

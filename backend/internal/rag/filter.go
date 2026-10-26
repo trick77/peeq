@@ -46,6 +46,12 @@ type Filter struct {
 	// YouTubeCategory scopes to videos whose yt_categories (YouTube's own
 	// labels, a JSON array) holds this entry, case-insensitively and exactly.
 	YouTubeCategory string
+	// Subcategory scopes to videos labelled with this key ("sports/cycling");
+	// ChannelSubcategory to videos whose channel is. Both must already satisfy
+	// videos.ValidSubcategory. The channel form is the one that reaches inbox
+	// reads, which carry no labels of their own.
+	Subcategory        string
+	ChannelSubcategory string
 }
 
 // Empty reports that this filter selects the whole library, so the caller can
@@ -55,7 +61,8 @@ func (f Filter) Empty() bool {
 	return len(f.ChannelIDs) == 0 && len(f.ChannelNames) == 0 &&
 		f.Watched == nil && f.Favorite == nil &&
 		f.Category == "" && f.After == "" && f.Before == "" &&
-		len(f.VideoIDs) == 0 && f.YouTubeCategory == ""
+		len(f.VideoIDs) == 0 && f.YouTubeCategory == "" &&
+		f.Subcategory == "" && f.ChannelSubcategory == ""
 }
 
 // predicates builds the WHERE fragments against a `videos` row aliased as alias,
@@ -131,6 +138,17 @@ func (f Filter) predicates(alias string) ([]string, []any) {
 		conds = append(conds, "EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid("+yt+") THEN "+yt+
 			" ELSE '[]' END) WHERE value = ? COLLATE NOCASE)")
 		args = append(args, f.YouTubeCategory)
+	}
+
+	// Both seek the label table by its (subcategory, id) index; the videos row
+	// is matched by id, never scanned for a label.
+	if f.Subcategory != "" {
+		conds = append(conds, col("id")+" IN (SELECT video_id FROM video_subcategories WHERE subcategory = ?)")
+		args = append(args, f.Subcategory)
+	}
+	if f.ChannelSubcategory != "" {
+		conds = append(conds, col("channel_id")+" IN (SELECT channel_id FROM channel_subcategories WHERE subcategory = ?)")
+		args = append(args, f.ChannelSubcategory)
 	}
 	return conds, args
 }

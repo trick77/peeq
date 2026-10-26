@@ -84,6 +84,19 @@ func TestParseUnderstandingFilters(t *testing.T) {
 			want: queryFilters{Category: "science"},
 		},
 		{
+			name: "a kind of channel",
+			raw:  `{"topic":"tire pressure","counting":false,"filters":{"channel_subcategory":" Sports/Cycling "}}`,
+			want: queryFilters{ChannelSubcategory: "sports/cycling"},
+		},
+		{
+			// A bare id is ambiguous across categories ('other' is everywhere),
+			// and a guessed one would shrink the search invisibly.
+			name:        "invented or bare channel subcategory is dropped",
+			raw:         `{"topic":"x","counting":false,"filters":{"channel_subcategory":"cycling"}}`,
+			want:        queryFilters{},
+			wantDropped: []string{"channel_subcategory:cycling"},
+		},
+		{
 			name:        "a date the model did not resolve is dropped",
 			raw:         `{"topic":"x","counting":false,"filters":{"after":"last week"}}`,
 			want:        queryFilters{},

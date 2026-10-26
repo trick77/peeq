@@ -55,7 +55,8 @@ var tools = map[string]tool{
 		title: "Search your video library",
 		description: "Search the user's peeq library of YouTube videos: transcripts, summaries, chapters " +
 			"and peeq's in-depth analysis. Returns the best-matching videos, each with timestamped " +
-			"moments and links that open the video at that moment; cite them.",
+			"moments and links that open the video at that moment; cite them. " +
+			subcategoryNote,
 		schema: searchSchema(),
 		run:    runSearch,
 	},
@@ -87,12 +88,18 @@ var tools = map[string]tool{
 		name:  "list_youtube_channels",
 		title: "List YouTube channels in your library",
 		description: "List the channels in peeq: subscriptions plus channels whose caption-only reads are kept, " +
-			"with description, video count and top peeq and YouTube categories. Use it to find the right " +
-			"channel name for search.",
+			"with description, video count, top peeq and YouTube categories and the channel's subcategories. " +
+			"Use it to find the right channel name, or the channel_subcategory, for search.",
 		schema: objectSchema(map[string]any{}),
 		run:    runListYouTubeChannels,
 	},
 }
+
+// subcategoryNote tells a client the subcategory filters exist and how they
+// differ. It rides in the search description and the server instructions.
+const subcategoryNote = "Videos and channels carry subcategories, category/subcategory keys such as sports/cycling " +
+	"or ai/building: filter with subcategory (the video's own) or channel_subcategory (videos from channels " +
+	"labelled with it, which also reaches videos peeq only read); list_youtube_channels shows each channel's."
 
 // toolAliases maps retired tool names to their replacement. They answer calls
 // but are never listed: a client that cached the old tools/list (up to the ttl,
@@ -149,6 +156,13 @@ func searchSchema() map[string]any {
 		"youtube_category": map[string]any{"type": "string",
 			"description": "Limit to one of YouTube's own category labels, e.g. \"Science & Technology\" or " +
 				"\"Education\". Exact label, case-insensitive; independent of category."},
+		"subcategory": map[string]any{"type": "string", "enum": videos.SubcategoryKeys(),
+			"description": "Limit to videos labelled with this subcategory (category/subcategory). Finer than " +
+				"category; videos peeq only read carry none of their own, so prefer channel_subcategory for " +
+				"\"videos from X channels\"."},
+		"channel_subcategory": map[string]any{"type": "string", "enum": videos.SubcategoryKeys(),
+			"description": "Limit to videos from channels labelled with this subcategory, e.g. sports/cycling " +
+				"for \"videos from cycling channels\"."},
 		"after":  date("on or after"),
 		"before": date("on or before"),
 		"mode": map[string]any{"type": "string", "enum": []string{"hybrid", "keyword"}, "default": "hybrid",

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/trick77/peeq/internal/store"
@@ -232,6 +233,53 @@ func TestFilterYouTubeCategory(t *testing.T) {
 	}
 }
 
+// Subcategory matches the video's own labels, ChannelSubcategory its
+// channel's; a video with no labels of its own (an inbox read) is reached only
+// through the second.
+func TestFilterSubcategories(t *testing.T) {
+	db, s, q := filterFixture(t)
+	ctx := context.Background()
+	for _, stmt := range []string{
+		`INSERT INTO channels (id, name) VALUES ('UCA', 'Alpha'), ('UCB', 'Beta')`,
+		`INSERT INTO video_subcategories (video_id, subcategory, rank) VALUES ('a1', 'ai/models', 0), ('b1', 'ai/infra', 0)`,
+		`INSERT INTO channel_subcategories (channel_id, subcategory, rank) VALUES ('UCB', 'ai/building', 0)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids := func(hs []Hit) []string {
+		var out []string
+		for _, h := range hs {
+			if !slices.Contains(out, h.VideoID) {
+				out = append(out, h.VideoID)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	for _, c := range []struct {
+		f    Filter
+		want []string
+	}{
+		{Filter{Subcategory: "ai/models"}, []string{"a1"}},
+		{Filter{ChannelSubcategory: "ai/building"}, []string{"b1"}},
+		{Filter{ChannelSubcategory: "ai/models"}, nil},
+	} {
+		fts, err := s.SearchFTSFiltered(ctx, "ontology", 200, c.f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		vec, err := s.RetrieveWithinFiltered(ctx, q, 40, 0, c.f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(ids(fts), c.want) || !slices.Equal(ids(vec), c.want) {
+			t.Errorf("%+v: fts=%v vec=%v, want %v", c.f, ids(fts), ids(vec), c.want)
+		}
+	}
+}
+
 // Legacy rows carry an empty channel_id, so a by-name arm has to exist — but it
 // must never widen a by-id match into a by-name one on rows that DO have an id.
 func TestFilterChannelNameFallback(t *testing.T) {
@@ -284,6 +332,8 @@ func TestFilterEmpty(t *testing.T) {
 		"before":       {Before: "2026-01-01"},
 		"video ids":    {VideoIDs: []string{"v1"}},
 		"yt category":  {YouTubeCategory: "Education"},
+		"subcategory":  {Subcategory: "sports/cycling"},
+		"channel sub":  {ChannelSubcategory: "sports/cycling"},
 	}
 	for name, f := range cases {
 		if f.Empty() {

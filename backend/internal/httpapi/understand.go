@@ -123,13 +123,17 @@ type queryFilters struct {
 	// After and Before bound the release date as 'YYYY-MM-DD', inclusive.
 	After  string `json:"after"`
 	Before string `json:"before"`
+	// ChannelSubcategory is a full subcategory key ("sports/cycling") from a
+	// question that names a KIND of channel ("what do the cycling channels say
+	// about tire pressure"). Anything not in the vocabulary is dropped.
+	ChannelSubcategory string `json:"channel_subcategory"`
 }
 
 // empty reports that the question carried no structured constraint at all, so
 // the whole resolution step can be skipped.
 func (f queryFilters) empty() bool {
 	return len(f.Channels) == 0 && f.Watched == "" && !f.Favorite &&
-		f.Category == "" && f.After == "" && f.Before == ""
+		f.Category == "" && f.After == "" && f.Before == "" && f.ChannelSubcategory == ""
 }
 
 // queryUnderstanding is what the call reports.
@@ -217,6 +221,7 @@ filters — which videos to search, when the question restricts them. Every key 
   "watched": "unwatched" | "watched" — only when the question says so.
   "favorite": true — only when the question says favorite, starred or loved.
   "category": one of ` + strings.Join(videos.CategoryIDs(), ", ") + ` — only when the question names a subject area as a CATEGORY of the library rather than as its topic. If in doubt this belongs in topic, not here.
+  "channel_subcategory": one of ` + strings.Join(videos.SubcategoryKeys(), ", ") + ` — only when the question restricts to a KIND of channel ("cycling channels", "AI engineering channels"). Never for a subject alone.
   "after": "YYYY-MM-DD", "before": "YYYY-MM-DD" — release-date bounds, from a question that mentions time. The reader's date is given to you below; compute against it.
 
 OMIT ANY FILTER THE QUESTION DOES NOT ACTUALLY STATE. An invented filter hides videos the reader asked to see, and they cannot tell that it happened. "filters": {} is the correct and common answer. When you are unsure whether the question meant a constraint, leave it out.
@@ -238,6 +243,8 @@ Q: what did I watch about transients this year
 {"topic": "transients", "counting": false, "filters": {"watched": "watched", "after": "` + understandExampleYearStart + `"}}
 Q: what are transients
 {"topic": "transients", "counting": false, "filters": {}}
+Q: what do the cycling channels say about tire pressure
+{"topic": "tire pressure", "counting": false, "filters": {"channel_subcategory": "sports/cycling"}}
 Q: how many unwatched Veritasium videos do I have
 {"topic": "", "counting": true, "filters": {"channels": ["Veritasium"], "watched": "unwatched"}}
 
@@ -352,6 +359,9 @@ func (f queryFilters) describe() string {
 	if f.Category != "" {
 		parts = append(parts, "category="+f.Category)
 	}
+	if f.ChannelSubcategory != "" {
+		parts = append(parts, "channel_subcategory="+f.ChannelSubcategory)
+	}
 	if f.After != "" {
 		parts = append(parts, "after="+f.After)
 	}
@@ -403,12 +413,13 @@ func parseUnderstanding(raw string) (queryUnderstanding, []string, bool) {
 		// reason; that property is worth keeping through the change.
 		Counting any `json:"counting"`
 		Filters  struct {
-			Channels []string `json:"channels"`
-			Watched  string   `json:"watched"`
-			Favorite bool     `json:"favorite"`
-			Category string   `json:"category"`
-			After    string   `json:"after"`
-			Before   string   `json:"before"`
+			Channels           []string `json:"channels"`
+			Watched            string   `json:"watched"`
+			Favorite           bool     `json:"favorite"`
+			Category           string   `json:"category"`
+			After              string   `json:"after"`
+			Before             string   `json:"before"`
+			ChannelSubcategory string   `json:"channel_subcategory"`
 		} `json:"filters"`
 	}
 	if err := json.Unmarshal([]byte(body[start:end+1]), &parsed); err != nil {
@@ -465,6 +476,16 @@ func parseUnderstanding(raw string) (queryUnderstanding, []string, bool) {
 			u.Filters.Category = id
 		} else {
 			drop("category:" + c)
+		}
+	}
+
+	if c := strings.TrimSpace(parsed.Filters.ChannelSubcategory); c != "" {
+		// Full keys only: a bare id like 'other' or 'industry' names no
+		// category, and a guess here would narrow the search invisibly.
+		if key := strings.ToLower(c); videos.ValidSubcategory(key) {
+			u.Filters.ChannelSubcategory = key
+		} else {
+			drop("channel_subcategory:" + c)
 		}
 	}
 

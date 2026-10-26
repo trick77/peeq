@@ -6,6 +6,7 @@ import type {
   Channel,
   ChannelDetail,
   ScanResult,
+  Subcategory,
 } from "./types";
 
 // ChannelFilter mirrors the ?filter= values the channels handler
@@ -153,6 +154,27 @@ export async function getChannel(id: string): Promise<ChannelDetail> {
   return api.get<ChannelDetail>(
     `/api/channels/${encodeURIComponent(id)}`,
     "failed to load channel",
+  );
+}
+
+// listSubcategories is the whole subcategory vocabulary, in order.
+export async function listSubcategories(): Promise<Subcategory[]> {
+  return api.get<Subcategory[]>(
+    "/api/subcategories",
+    "failed to load subcategories",
+  );
+}
+
+// setChannelSubcategories sets a channel's subcategories by hand (at most 3,
+// primary first). An empty list hands the channel back to the classifier.
+export async function setChannelSubcategories(
+  id: string,
+  subcategories: string[],
+): Promise<{ subcategories: Subcategory[]; subcategories_manual: boolean }> {
+  return api.put(
+    `/api/channels/${encodeURIComponent(id)}/subcategories`,
+    { subcategories },
+    "failed to save subcategories",
   );
 }
 

@@ -6141,6 +6141,33 @@ details.tomb-sect[open] > summary svg {
   color: var(--color-faint);
   margin-top: 1px;
 }
+/* The channel's subcategories: context like the stats above, so the same
+   muted voice and the stat label's small caps for its own label. */
+.chan-subcats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  font-size: var(--text-label);
+  color: var(--color-muted);
+}
+.chan-subcats .l {
+  font-size: var(--text-micro);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+.chan-subcats .faint {
+  color: var(--color-faint);
+}
+.chan-subcats .chan-more {
+  margin-top: 0;
+}
+.chan-subcats select {
+  font: inherit;
+  max-width: 14rem;
+}
 .chan-acts {
   margin-left: auto;
   display: flex;

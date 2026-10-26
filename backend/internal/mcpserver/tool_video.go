@@ -51,6 +51,7 @@ func runGetVideo(ctx context.Context, h *handler, raw json.RawMessage) toolResul
 		add("duration", clock(int(v.DurationSeconds)))
 	}
 	add("category", v.Category)
+	add("subcategories", strings.Join(v.Subcategories, ", "))
 	add("youtube categories", strings.Join(v.YouTubeCategories, ", "))
 	if len(meta) > 0 {
 		b.WriteString(strings.Join(meta, " · ") + "\n")

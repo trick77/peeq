@@ -44,6 +44,9 @@ type Channel struct {
 	// TopYouTubeCategories the same over YouTube's own labels.
 	TopCategories        []CategoryCount
 	TopYouTubeCategories []CategoryCount
+	// Subcategories are the channel's labels ("sports/cycling"), primary
+	// first: what search's channel_subcategory filter matches.
+	Subcategories []string
 }
 
 // CategoryCount is one bucket of a channel's category histogram.
@@ -76,6 +79,10 @@ type SearchQuery struct {
 	Category string
 	// YouTubeCategory is one of YouTube's own labels or "".
 	YouTubeCategory string
+	// Subcategory and ChannelSubcategory are valid subcategory keys or "":
+	// the video's own label, and its channel's.
+	Subcategory        string
+	ChannelSubcategory string
 	// After and Before are inclusive 'YYYY-MM-DD' release-date bounds or "".
 	After, Before string
 	// Keyword skips the embedding: a literal FTS5 match only.
@@ -120,6 +127,7 @@ type Video struct {
 	PublishedAt       string
 	DurationSeconds   int64
 	Category          string
+	Subcategories     []string
 	YouTubeCategories []string
 	Summary           string
 	KeyPoints         []Moment

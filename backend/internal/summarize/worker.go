@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/activity"
+	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/subtitles"
 	"github.com/trick77/peeq/internal/summaryjobs"
@@ -27,8 +28,11 @@ type Embedder interface {
 // Summarizer, and Embedder are required; the rest have safe defaults applied
 // in NewWorker.
 type WorkerDeps struct {
-	Jobs         *summaryjobs.Store
-	Videos       *videos.Store
+	Jobs   *summaryjobs.Store
+	Videos *videos.Store
+	// Channels, when set, lets the idle sweep label channels with
+	// subcategories. Nil skips that half of the sweep.
+	Channels     *channels.Store
 	Rag          *rag.Store
 	Summarizer   *Summarizer
 	Embedder     Embedder
@@ -59,6 +63,11 @@ type Worker struct {
 	// Process-lifetime only: a restart gives every video another chance, which
 	// is the right bound for a transient LLM outage.
 	classifyFailed map[string]bool
+	// subcatFailed and channelSubcatFailed are classifyFailed's twins for the
+	// subcategory sweep; subcatIdleUntil rests the sweep after an empty pass.
+	subcatFailed        map[string]bool
+	channelSubcatFailed map[string]bool
+	subcatIdleUntil     time.Time
 	// inDepthPausedUntil holds in-depth retries off after a retry could not be
 	// re-queued: its row keeps a past-due next_at, and without this the next
 	// idle turn would repeat the call with no backoff at all.
@@ -76,7 +85,8 @@ func NewWorker(d WorkerDeps) *Worker {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &Worker{d: d, classifyFailed: map[string]bool{}}
+	return &Worker{d: d, classifyFailed: map[string]bool{},
+		subcatFailed: map[string]bool{}, channelSubcatFailed: map[string]bool{}}
 }
 
 // Run is the worker loop; it blocks until ctx is cancelled. It first resets
@@ -130,6 +140,9 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	}
 	if job == nil {
 		if did, err := w.classifyOne(ctx); did || err != nil {
+			return did, err
+		}
+		if did, err := w.subcategorizeOne(ctx); did || err != nil {
 			return did, err
 		}
 		return w.inDepthOne(ctx)

@@ -33,6 +33,8 @@ type searchArgs struct {
 	Channel         string `json:"channel"`
 	Category        string `json:"category"`
 	YouTubeCategory string `json:"youtube_category"`
+	Subcategory     string `json:"subcategory"`
+	ChannelSub      string `json:"channel_subcategory"`
 	After           string `json:"after"`
 	Before          string `json:"before"`
 	Mode            string `json:"mode"`
@@ -45,16 +47,24 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) toolResult 
 		return errorResult("invalid arguments: " + err.Error())
 	}
 	q := SearchQuery{
-		Text:            strings.TrimSpace(a.Query),
-		Category:        strings.TrimSpace(a.Category),
-		YouTubeCategory: strings.TrimSpace(a.YouTubeCategory),
-		Videos:          defaultSearchVideos,
+		Text:               strings.TrimSpace(a.Query),
+		Category:           strings.TrimSpace(a.Category),
+		YouTubeCategory:    strings.TrimSpace(a.YouTubeCategory),
+		Subcategory:        strings.TrimSpace(a.Subcategory),
+		ChannelSubcategory: strings.TrimSpace(a.ChannelSub),
+		Videos:             defaultSearchVideos,
 	}
 	if q.Text == "" {
 		return errorResult("query is required")
 	}
 	if q.Category != "" && !videos.ValidCategory(q.Category) {
 		return errorResult(fmt.Sprintf("unknown category %q; use one of: %s", q.Category, strings.Join(videos.CategoryIDs(), ", ")))
+	}
+	for _, s := range []struct{ name, val string }{{"subcategory", q.Subcategory}, {"channel_subcategory", q.ChannelSubcategory}} {
+		if s.val != "" && !videos.ValidSubcategory(s.val) {
+			return errorResult(fmt.Sprintf("unknown %s %q; use a category/subcategory key: %s", s.name, s.val,
+				strings.Join(videos.SubcategoryKeys(), ", ")))
+		}
 	}
 	for _, d := range []struct{ name, val string }{{"after", a.After}, {"before", a.Before}} {
 		if d.val == "" {
@@ -123,7 +133,8 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) toolResult {
 	}
 	if len(res.Videos) == 0 {
 		b.WriteString("No videos in peeq match this search.")
-		if len(q.Channel.Matched) > 0 || q.Category != "" || q.YouTubeCategory != "" || q.After != "" || q.Before != "" {
+		if len(q.Channel.Matched) > 0 || q.Category != "" || q.YouTubeCategory != "" || q.After != "" || q.Before != "" ||
+			q.Subcategory != "" || q.ChannelSubcategory != "" {
 			b.WriteString(" Try again without some of the filters.")
 		}
 		return toolResult{Text: b.String(), Sources: sources}
@@ -170,8 +181,8 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) toolResult {
 	return toolResult{Text: strings.TrimRight(b.String(), "\n"), Sources: sources}
 }
 
-// resultHeader is "<title> — <channel>, <date>, category <c> · youtube: <yt>",
-// each part omitted when unknown.
+// resultHeader is "<title> — <channel>, <date>, category <c> · youtube: <yt>,
+// subcategories: <s>", each part omitted when unknown.
 func resultHeader(v Video) string {
 	var meta []string
 	if v.Channel != "" {
@@ -188,6 +199,9 @@ func resultHeader(v Video) string {
 		meta = append(meta, c)
 	} else if len(v.YouTubeCategories) > 0 {
 		meta = append(meta, "youtube: "+strings.Join(v.YouTubeCategories, ", "))
+	}
+	if len(v.Subcategories) > 0 {
+		meta = append(meta, "subcategories: "+strings.Join(v.Subcategories, ", "))
 	}
 	title := trimRunes(v.Title, titleRunes)
 	if title == "" {

@@ -38,6 +38,8 @@ function detail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     last_scanned_at: sqlUTC(-18 * 3600 * 1000),
     next_scan_at: sqlUTC(6 * 3600 * 1000),
     pending_count: 0,
+    subcategories: [],
+    subcategories_manual: false,
     ...overrides,
   };
 }
