@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// classifiedVideo seeds a downloaded video with a summary and a category: what
-// the subcategory sweep looks for.
+// classifiedVideo seeds a downloaded video with a summary ("summary of <id>")
+// and a category: what the subcategory sweep looks for.
 func classifiedVideo(t *testing.T, s *Store, id, channelID, category string) {
 	t.Helper()
 	seedVideo(t, s, Video{ID: id, URL: "u-" + id, Title: "T " + id, ChannelID: channelID, DurationSeconds: 100, Status: StatusDownloaded})
@@ -20,15 +20,19 @@ func classifiedVideo(t *testing.T, s *Store, id, channelID, category string) {
 	}
 }
 
-func TestSetSubcategoriesIfCategory_writesInOrderAndGuardsTheCategory(t *testing.T) {
+func label(t *testing.T, s *Store, id, category string, keys ...string) {
+	t.Helper()
+	if ok, err := s.SetSubcategoriesIfCurrent(context.Background(), id, category, "summary of "+id, keys); err != nil || !ok {
+		t.Fatalf("label %s: %v, %v", id, ok, err)
+	}
+}
+
+func TestSetSubcategoriesIfCurrent_writesInOrderAndGuardsTheRow(t *testing.T) {
 	s := New(openTestDB(t))
 	ctx := context.Background()
 	classifiedVideo(t, s, "v1", "UCa", "ai")
 
-	ok, err := s.SetSubcategoriesIfCategory(ctx, "v1", "ai", []string{"ai/models", "ai/building"})
-	if err != nil || !ok {
-		t.Fatalf("write = %v, %v", ok, err)
-	}
+	label(t, s, "v1", "ai", "ai/models", "ai/building")
 	got, err := s.SubcategoriesCtx(ctx, "v1")
 	if err != nil {
 		t.Fatal(err)
@@ -37,11 +41,17 @@ func TestSetSubcategoriesIfCategory_writesInOrderAndGuardsTheCategory(t *testing
 		t.Fatalf("got %v: primary must stay first", got)
 	}
 
-	// A classify call takes seconds; the user may have re-picked the category
-	// meanwhile. Labels chosen under the old one must not land.
-	ok, err = s.SetSubcategoriesIfCategory(ctx, "v1", "science", []string{"science/physics"})
-	if err != nil || ok {
-		t.Fatalf("stale write = %v, %v; want refused", ok, err)
+	// A classify call takes seconds. A category re-picked meanwhile, or a
+	// reprocess that wrote a new summary under the same category, must not
+	// receive labels chosen from the old row.
+	for name, c := range map[string]struct{ category, summary string }{
+		"other category": {"science", "summary of v1"},
+		"other summary":  {"ai", "an older summary"},
+	} {
+		ok, err := s.SetSubcategoriesIfCurrent(ctx, "v1", c.category, c.summary, []string{"ai/infra"})
+		if err != nil || ok {
+			t.Fatalf("%s: stale write = %v, %v; want refused", name, ok, err)
+		}
 	}
 	got, _ = s.SubcategoriesCtx(ctx, "v1")
 	if !slices.Equal(got, []string{"ai/models", "ai/building"}) {
@@ -53,18 +63,23 @@ func TestSetCategory_dropsSubcategoriesAndHandsTheVideoBack(t *testing.T) {
 	s := New(openTestDB(t))
 	ctx := context.Background()
 	classifiedVideo(t, s, "v1", "UCa", "ai")
-	if _, err := s.SetSubcategoriesIfCategory(ctx, "v1", "ai", []string{"ai/models"}); err != nil {
-		t.Fatal(err)
-	}
+	label(t, s, "v1", "ai", "ai/models")
 	if v, err := s.NextUnsubcategorized(ctx, nil); err != nil || v != nil {
 		t.Fatalf("classified video offered again: %v, %v", v, err)
+	}
+
+	// Re-picking the same category is no change and keeps the labels.
+	if err := s.SetCategory("v1", "ai"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.SubcategoriesCtx(ctx, "v1"); len(got) != 1 {
+		t.Fatalf("an unchanged category dropped the labels: %v", got)
 	}
 
 	if err := s.SetCategory("v1", "science"); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.SubcategoriesCtx(ctx, "v1")
-	if len(got) != 0 {
+	if got, _ := s.SubcategoriesCtx(ctx, "v1"); len(got) != 0 {
 		t.Fatalf("labels of the old category survived: %v", got)
 	}
 	v, err := s.NextUnsubcategorized(ctx, nil)
@@ -77,9 +92,7 @@ func TestResetForReprocess_dropsSubcategories(t *testing.T) {
 	s := New(openTestDB(t))
 	ctx := context.Background()
 	classifiedVideo(t, s, "v1", "UCa", "ai")
-	if _, err := s.SetSubcategoriesIfCategory(ctx, "v1", "ai", []string{"ai/models"}); err != nil {
-		t.Fatal(err)
-	}
+	label(t, s, "v1", "ai", "ai/models")
 	if err := s.ResetForReprocess("v1"); err != nil {
 		t.Fatal(err)
 	}
@@ -92,9 +105,7 @@ func TestNextUnsubcategorized_skipsWhatTheSweepMustNotTouch(t *testing.T) {
 	s := New(openTestDB(t))
 	ctx := context.Background()
 	classifiedVideo(t, s, "done", "UCa", "ai")
-	if _, err := s.SetSubcategoriesIfCategory(ctx, "done", "ai", nil); err != nil {
-		t.Fatal(err) // an empty answer still counts as answered
-	}
+	label(t, s, "done", "ai") // an empty answer still counts as answered
 	seedVideo(t, s, Video{ID: "uncat", URL: "u-uncat", DurationSeconds: 100, Status: StatusDownloaded})
 	// Inbox reads are never categorized (summarize/worker.go), so never subcategorized.
 	seedVideo(t, s, Video{ID: "inbox", URL: "u-inbox", DurationSeconds: 100})
@@ -117,8 +128,8 @@ func TestSubcategoriesMany(t *testing.T) {
 	ctx := context.Background()
 	classifiedVideo(t, s, "a", "UCa", "ai")
 	classifiedVideo(t, s, "b", "UCa", "sports")
-	_, _ = s.SetSubcategoriesIfCategory(ctx, "a", "ai", []string{"ai/infra", "ai/models"})
-	_, _ = s.SetSubcategoriesIfCategory(ctx, "b", "sports", []string{"sports/cycling"})
+	label(t, s, "a", "ai", "ai/infra", "ai/models")
+	label(t, s, "b", "sports", "sports/cycling")
 
 	got, err := s.SubcategoriesMany(ctx, []string{"a", "b", "missing"})
 	if err != nil {
@@ -129,28 +140,41 @@ func TestSubcategoriesMany(t *testing.T) {
 	}
 }
 
-func TestChannelTitles_newestFirst(t *testing.T) {
+func TestChannelTitles_mostRecentlyRecordedFirst(t *testing.T) {
 	s := New(openTestDB(t))
 	ctx := context.Background()
-	for i, d := range []string{"2026-01-01", "2026-03-01", "2026-02-01"} {
-		id := string(rune('a' + i))
-		seedVideo(t, s, Video{ID: id, URL: "u-" + id, Title: "T" + d, ChannelID: "UCa", PublishedAt: d, DurationSeconds: 1})
+	for _, id := range []string{"a", "b", "c"} {
+		seedVideo(t, s, Video{ID: id, URL: "u-" + id, Title: "T" + id, ChannelID: "UCa", DurationSeconds: 1})
 	}
 	seedVideo(t, s, Video{ID: "x", URL: "u-x", Title: "other channel", ChannelID: "UCb", DurationSeconds: 1})
 	got, err := s.ChannelTitles(ctx, "UCa", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(got, []string{"T2026-03-01", "T2026-02-01"}) {
+	if !slices.Equal(got, []string{"Tc", "Tb"}) {
 		t.Fatalf("got %v", got)
 	}
 }
 
-// The filter seeks by subcategory: it must stay on the index, never scan.
-func TestSubcategoryFilterQuery_usesTheIndex(t *testing.T) {
+// Every query here runs on the cold production disk, where a videos row is
+// expensive (its small columns sit behind the text ones). Pin the plans.
+func TestSubcategoryQueries_stayOnIndexes(t *testing.T) {
 	db := openTestDB(t)
-	plan := queryPlan(t, db, `SELECT video_id FROM video_subcategories WHERE subcategory = ?`, "ai/models")
-	if !strings.Contains(plan, "idx_video_subcategories_sub") {
-		t.Fatalf("plan = %s", plan)
+	for name, c := range map[string]struct {
+		query string
+		args  []any
+		want  string
+	}{
+		"filter": {`SELECT video_id FROM video_subcategories WHERE subcategory = ?`, []any{"ai/models"}, "idx_video_subcategories_sub"},
+		"sweep":  {nextUnsubcategorizedQuery, []any{UncategorizedCategory, StatusNew}, "USING COVERING INDEX idx_videos_cards"},
+		// The rowid pick sorts index entries only; the outer read seeks by rowid.
+		"titles": {channelTitlesQuery, []any{"UCa", 25}, "USING COVERING INDEX idx_videos_channel_status"},
+	} {
+		if plan := queryPlan(t, db, c.query, c.args...); !strings.Contains(plan, c.want) || strings.Contains(plan, "SCAN videos") {
+			t.Errorf("%s: plan = %s; want %s and no table scan", name, plan, c.want)
+		}
+	}
+	if plan := queryPlan(t, db, channelTitlesQuery, "UCa", 25); !strings.Contains(plan, "USING INTEGER PRIMARY KEY (rowid=?)") {
+		t.Errorf("titles: rows are not read by rowid: %s", plan)
 	}
 }

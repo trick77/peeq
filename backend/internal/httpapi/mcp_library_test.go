@@ -331,7 +331,8 @@ func TestMCP_subcategoriesEndToEnd(t *testing.T) {
 	var cs *channels.Store
 	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, func(d *Deps) { vs, cs = d.Videos, d.Channels })
 	ctx := context.Background()
-	if _, err := vs.SetSubcategoriesIfCategory(ctx, "bikeVideo01", "science", []string{"science/physics"}); err != nil {
+	if _, err := vs.SetSubcategoriesIfCurrent(ctx, "bikeVideo01", "science",
+		"Gyroscopes are not why bikes stay up; trail and mass distribution are.", []string{"science/physics"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cs.SetSubcategoriesIfAuto(ctx, "UCbikes", []string{"sports/cycling", "science/physics"}, 2); err != nil {

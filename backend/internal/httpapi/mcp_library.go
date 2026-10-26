@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -41,9 +42,10 @@ func (l mcpLibrary) Channels(ctx context.Context) ([]mcpserver.Channel, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Labels are an extra on the list, not the list: a failed read drops them.
 	subs, err := l.s.channels.AllSubcategories(ctx)
 	if err != nil {
-		return nil, err
+		slog.WarnContext(ctx, "mcp: channel subcategories unavailable", "err", err)
 	}
 	out := make([]mcpserver.Channel, 0, len(chans))
 	for _, c := range chans {
@@ -263,7 +265,7 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 	groups := groupHits(hits, byID, q.Videos, 0)
 	subs, err := s.videos.SubcategoriesMany(ctx, idsOf(groups, func(g *searchResult) string { return g.Video.ID }))
 	if err != nil {
-		return res, err
+		slog.WarnContext(ctx, "mcp: video subcategories unavailable", "err", err)
 	}
 	for _, g := range groups {
 		vh := mcpserver.VideoHits{Video: toMCPVideo(byID[g.Video.ID])}
@@ -286,7 +288,7 @@ func (l mcpLibrary) Video(ctx context.Context, id string) (*mcpserver.Video, err
 	}
 	out := toMCPVideo(v)
 	if out.Subcategories, err = l.s.videos.SubcategoriesCtx(ctx, id); err != nil {
-		return nil, err
+		slog.WarnContext(ctx, "mcp: video subcategories unavailable", "video_id", id, "err", err)
 	}
 	var chapters []struct {
 		TS    int    `json:"ts"`

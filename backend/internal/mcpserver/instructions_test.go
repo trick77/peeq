@@ -51,8 +51,9 @@ func TestInstructions_reportSubcategories(t *testing.T) {
 			TopCategories: []CategoryCount{{"sports", 18}}, Subcategories: []string{"sports/cycling", "tech/wearables"}},
 	}}
 	got := (&handler{lib: lib}).instructions(context.Background())
-	if !strings.Contains(got, "- GCN: sports; subcategories: sports/cycling, tech/wearables") {
-		t.Errorf("channel line lacks its subcategories:\n%s", got)
+	// The keys stand in for the top categories: they name them already.
+	if !strings.Contains(got, "- GCN: sports/cycling, tech/wearables\n") {
+		t.Errorf("channel line lacks its subcategories, or still carries the categories:\n%s", got)
 	}
 	if !strings.Contains(got, "channel_subcategory") || !strings.Contains(got, "subcategory") {
 		t.Errorf("no word that subcategory filters exist:\n%s", got)

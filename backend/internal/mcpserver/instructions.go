@@ -27,6 +27,8 @@ const instructionsIntro = "peeq is the user's own YouTube library: transcripts, 
 	"and in-depth analyses of the videos from the channels below. Search it to answer from what those " +
 	"videos say, and cite results with the peeq links given."
 
+const instructionsSubcategoryLine = "search filters by subcategory or channel_subcategory (keys as listed below, e.g. sports/cycling)."
+
 const (
 	autoSearchHeader = "Search peeq automatically (without being asked) when the user's question touches these channels' topics:"
 	explicitLine     = "The user can also ask explicitly (\"search peeq for …\", \"in channel X …\"); list_youtube_channels shows every channel."
@@ -35,10 +37,12 @@ const (
 // instructions is the server's usage hint, built per request so a newly
 // subscribed channel shows up without a restart.
 //
-// The subcategory note rides here and in the search description, not in the
-// shared channel hint, which the search description already appends.
+// The subcategory line rides here and (as the longer subcategoryNote) in the
+// search description, not in the shared channel hint, which the search
+// description already appends. Short, because it comes out of the same budget
+// as the channel list.
 func (h *handler) instructions(ctx context.Context) string {
-	intro := instructionsIntro + " " + subcategoryNote
+	intro := instructionsIntro + " " + instructionsSubcategoryLine
 	hint := h.channelHint(ctx)
 	if hint == "" {
 		return intro
@@ -82,7 +86,7 @@ func buildChannelHint(chans []Channel) string {
 		return cmp.Compare(b.Videos, a.Videos)
 	})
 
-	budget := instructionsBudget - len(instructionsIntro) - 1 - len(subcategoryNote) - 2 -
+	budget := instructionsBudget - len(instructionsIntro) - 1 - len(instructionsSubcategoryLine) - 2 -
 		len(autoSearchHeader) - 1 - len(explicitLine) - 1
 	bases := make([]string, 0, hintMaxChannels)
 	used := 0
@@ -130,7 +134,13 @@ func hintLine(c Channel) string {
 	if c.KeepReads {
 		b.WriteString(" (full catalogue indexed)")
 	}
+	// A labelled channel shows its subcategories in place of its top
+	// categories: each key names its category already, and the hint's budget
+	// is shared by every channel — a longer line is a channel dropped.
 	cats := joinCounts(c.TopCategories, 3, false)
+	if len(c.Subcategories) > 0 {
+		cats = strings.Join(c.Subcategories, ", ")
+	}
 	yt := joinCounts(c.TopYouTubeCategories, 2, false)
 	switch {
 	case cats != "" && yt != "":
@@ -139,13 +149,6 @@ func hintLine(c Channel) string {
 		b.WriteString(": " + cats)
 	case yt != "":
 		b.WriteString(": youtube: " + yt)
-	}
-	if len(c.Subcategories) > 0 {
-		sep := "; "
-		if cats == "" && yt == "" {
-			sep = ": "
-		}
-		b.WriteString(sep + "subcategories: " + strings.Join(c.Subcategories, ", "))
 	}
 	return b.String()
 }

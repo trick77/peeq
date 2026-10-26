@@ -110,8 +110,8 @@ func TestGetVideo_carriesSubcategories(t *testing.T) {
 	if err := deps.Videos.SetCategory("v1", "sports"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := deps.Videos.SetSubcategoriesIfCategory(context.Background(), "v1", "sports", []string{"sports/cycling", "sports/fitness"}); err != nil {
-		t.Fatal(err)
+	if ok, err := deps.Videos.SetSubcategoriesIfCurrent(context.Background(), "v1", "sports", "", []string{"sports/cycling", "sports/fitness"}); err != nil || !ok {
+		t.Fatal(ok, err)
 	}
 	rec := doReq(t, h, cookie, http.MethodGet, "/api/videos/v1", nil)
 	if rec.Code != http.StatusOK {

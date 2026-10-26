@@ -2,6 +2,8 @@ package summarize
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/trick77/peeq/internal/llm"
@@ -23,8 +25,9 @@ const subcategoryRules = "Pick at most 3, the best fit first, and only ones the 
 
 // ClassifySubcategories labels a video with up to videos.MaxSubcategories of
 // its own category's subcategories, from the title and the short summary, and
-// returns the normalized keys (possibly none). A category without
-// subcategories — 'uncategorized' — needs no call and returns nil.
+// returns the normalized keys (none when the model said nothing fits). A reply
+// that is no answer at all is errNotAnAnswer. A category without subcategories
+// — 'uncategorized' — needs no call and returns nil.
 //
 // Same settings as Classify, for the same reasons: the gate model (the labels
 // never reach a reader as prose) and the model's default reasoning (a
@@ -54,7 +57,20 @@ func (s *Summarizer) ClassifySubcategories(ctx context.Context, title, summary, 
 	if err != nil {
 		return nil, err
 	}
-	return videos.NormalizeSubcategories(reply, allowed), nil
+	return normalized(reply, allowed)
+}
+
+// errNotAnAnswer is a reply that parses to no answer: empty, prose, cut, or
+// only junk. It is an error rather than an empty result because the sweep
+// persists an empty result as final ("nothing fits") and never asks again.
+var errNotAnAnswer = errors.New("subcategory reply is not an answer")
+
+func normalized(reply string, allowed []videos.Subcategory) ([]string, error) {
+	keys, ok := videos.NormalizeSubcategories(reply, allowed)
+	if !ok {
+		return nil, fmt.Errorf("%w (%d chars)", errNotAnAnswer, len(reply))
+	}
+	return keys, nil
 }
 
 // ClassifyChannelSubcategories labels a channel with up to
@@ -87,7 +103,7 @@ func (s *Summarizer) ClassifyChannelSubcategories(ctx context.Context, name, des
 	if err != nil {
 		return nil, err
 	}
-	return videos.NormalizeSubcategories(reply, videos.Subcategories), nil
+	return normalized(reply, videos.Subcategories)
 }
 
 func subcategoryLine(id string, sc videos.Subcategory) string {

@@ -130,7 +130,8 @@ func (w *Worker) Run(ctx context.Context) {
 
 // processOne claims and processes a single job. When the queue is empty it
 // spends the turn on the classification backlog, then on a due in-depth retry,
-// and returns false only when there is nothing left to do at all. Panics are
+// then on the subcategory backlog, and returns false only when there is
+// nothing left to do at all. Panics are
 // recovered so one bad job never kills the loop. This is the test seam: tests call it directly to
 // drive one job deterministically, without goroutine/ticker timing.
 func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
@@ -142,10 +143,10 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		if did, err := w.classifyOne(ctx); did || err != nil {
 			return did, err
 		}
-		if did, err := w.subcategorizeOne(ctx); did || err != nil {
+		if did, err := w.inDepthOne(ctx); did || err != nil {
 			return did, err
 		}
-		return w.inDepthOne(ctx)
+		return w.subcategorizeOne(ctx)
 	}
 	// Declared before the recover so a panic mid-analysis still gets a terminal
 	// line with the tokens that video had already spent.

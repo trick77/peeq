@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -201,10 +202,28 @@ type understandDiag struct {
 
 // understandSystemPrompt is built once at init because the category list is
 // rendered into it — a model asked to pick a category must be shown the ones
-// that exist, or it coins its own.
-var understandSystemPrompt = buildUnderstandPrompt()
+// that exist, or it coins its own. It is the prompt without channel
+// subcategories; understandPrompt adds the ones in use.
+var understandSystemPrompt = buildUnderstandPrompt(nil)
 
-func buildUnderstandPrompt() string {
+// buildUnderstandPrompt renders the prompt, offering channelSubs (subcategory
+// keys some channel carries) as the channel_subcategory filter. Only keys in
+// use, never the whole vocabulary: this call is the latency-bound gate in
+// front of every Ask answer, and ~120 keys are ~800 tokens of prefill on every
+// question for filters most of which could match nothing. None in use, no
+// filter offered.
+func buildUnderstandPrompt(channelSubs []string) string {
+	var subLine, subExample string
+	if len(channelSubs) > 0 {
+		subLine = `
+  "channel_subcategory": one of ` + strings.Join(channelSubs, ", ") + ` — only when the question restricts to a KIND of channel ("cycling channels", "AI engineering channels"). Never for a subject alone.`
+		subExample = "\nQ: what's new on the " + strings.ToLower(videos.SubcategoryLabel(channelSubs[0])) + " channels\n" +
+			`{"topic": "", "counting": false, "filters": {"channel_subcategory": "` + channelSubs[0] + `"}}`
+		if slices.Contains(channelSubs, "sports/cycling") {
+			subExample = "\nQ: what do the cycling channels say about tire pressure\n" +
+				`{"topic": "tire pressure", "counting": false, "filters": {"channel_subcategory": "sports/cycling"}}`
+		}
+	}
 	return `You separate what a question is ABOUT from the words it is asked WITH, and from the constraints it puts on WHICH videos to look at.
 
 You are given one question a reader typed into a personal video library. Reply with JSON and nothing else:
@@ -220,8 +239,7 @@ filters — which videos to search, when the question restricts them. Every key 
   "channels": ["..."] — channel names EXACTLY as the reader wrote them. Never an id, never a guess at the real spelling. One name per entry: "Veritasium and Kurzgesagt" is two entries, not one.
   "watched": "unwatched" | "watched" — only when the question says so.
   "favorite": true — only when the question says favorite, starred or loved.
-  "category": one of ` + strings.Join(videos.CategoryIDs(), ", ") + ` — only when the question names a subject area as a CATEGORY of the library rather than as its topic. If in doubt this belongs in topic, not here.
-  "channel_subcategory": one of ` + strings.Join(videos.SubcategoryKeys(), ", ") + ` — only when the question restricts to a KIND of channel ("cycling channels", "AI engineering channels"). Never for a subject alone.
+  "category": one of ` + strings.Join(videos.CategoryIDs(), ", ") + ` — only when the question names a subject area as a CATEGORY of the library rather than as its topic. If in doubt this belongs in topic, not here.` + subLine + `
   "after": "YYYY-MM-DD", "before": "YYYY-MM-DD" — release-date bounds, from a question that mentions time. The reader's date is given to you below; compute against it.
 
 OMIT ANY FILTER THE QUESTION DOES NOT ACTUALLY STATE. An invented filter hides videos the reader asked to see, and they cannot tell that it happened. "filters": {} is the correct and common answer. When you are unsure whether the question meant a constraint, leave it out.
@@ -242,9 +260,7 @@ Q: anything on sourdough starters I haven't seen yet
 Q: what did I watch about transients this year
 {"topic": "transients", "counting": false, "filters": {"watched": "watched", "after": "` + understandExampleYearStart + `"}}
 Q: what are transients
-{"topic": "transients", "counting": false, "filters": {}}
-Q: what do the cycling channels say about tire pressure
-{"topic": "tire pressure", "counting": false, "filters": {"channel_subcategory": "sports/cycling"}}
+{"topic": "transients", "counting": false, "filters": {}}` + subExample + `
 Q: how many unwatched Veritasium videos do I have
 {"topic": "", "counting": true, "filters": {"channels": ["Veritasium"], "watched": "unwatched"}}
 
@@ -289,7 +305,7 @@ func (s *server) understandQuery(ctx context.Context, q string) (queryUnderstand
 	// every midnight for a call whose whole point is to be cheap. "since March"
 	// cannot be resolved without it.
 	raw, err := s.understand.Complete(cctx, []llm.Message{
-		{Role: "system", Content: understandSystemPrompt},
+		{Role: "system", Content: s.understandPrompt(ctx)},
 		{Role: "user", Content: "Today is " + started.Format("2006-01-02") + ".\nQ: " + q},
 	})
 	elapsed := time.Since(started).Milliseconds()

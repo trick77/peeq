@@ -261,6 +261,10 @@ type StreamAccessRecorder interface {
 }
 
 type server struct {
+	// understandPromptCache holds the Ask understand prompt built from the
+	// channel subcategories in use (understand_prompt.go).
+	understandPromptCache understandPromptCache
+
 	version       string
 	static        http.Handler
 	shell         []byte

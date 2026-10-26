@@ -10,21 +10,23 @@ import (
 	"github.com/trick77/peeq/internal/store"
 )
 
-// SetSubcategoriesIfCategory replaces a video's subcategories with keys (in
+// SetSubcategoriesIfCurrent replaces a video's subcategories with keys (in
 // order, first = primary) and records that the classifier answered, but only
-// while the video's category is still category, and reports whether it wrote.
-// The classify call runs on a row read before it; a category picked by hand in
-// the meantime must not receive labels chosen under the old one. An empty keys
+// while the video still has the category and summary they were chosen from,
+// and reports whether it wrote. The classify call runs on a row read before
+// it: a category picked by hand meanwhile, or a reprocess that wrote a new
+// summary (and may have landed on the same category), must not receive labels
+// chosen from the old row — the marker would keep them for good. An empty keys
 // is a real answer ("nothing fits") and is recorded so the sweep moves on.
-func (s *Store) SetSubcategoriesIfCategory(ctx context.Context, id, category string, keys []string) (bool, error) {
+func (s *Store) SetSubcategoriesIfCurrent(ctx context.Context, id, category, summary string, keys []string) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("set video %s subcategories: begin: %w", id, err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	var current string
-	err = tx.QueryRowContext(ctx, `SELECT category FROM videos WHERE id = ?`, id).Scan(&current)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && current != category) {
+	var curCategory, curSummary string
+	err = tx.QueryRowContext(ctx, `SELECT category, summary FROM videos WHERE id = ?`, id).Scan(&curCategory, &curSummary)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && (curCategory != category || curSummary != summary)) {
 		return false, nil
 	}
 	if err != nil {
@@ -105,12 +107,12 @@ func (s *Store) SubcategoriesMany(ctx context.Context, ids []string) (map[string
 // under its current category. skip is the sweep's in-process set of videos
 // whose call failed, so one bad video cannot starve the rest.
 //
-// category and status come from idx_videos_counts, so the scan never reads a
-// row's text columns; only the chosen video is loaded whole.
+// The scan reads status, id and category from idx_videos_cards, which holds
+// all three: once the backlog is drained every pass finds nothing, and it must
+// find it without opening one videos row (pinned by a query-plan test). Only
+// the chosen video is loaded whole.
 func (s *Store) NextUnsubcategorized(ctx context.Context, skip []string) (*Video, error) {
-	q := `SELECT v.id FROM videos v INDEXED BY idx_videos_counts
-WHERE v.category <> ? AND v.status <> ?
-  AND NOT EXISTS (SELECT 1 FROM video_subcategory_state s WHERE s.video_id = v.id)`
+	q := nextUnsubcategorizedQuery
 	args := []any{UncategorizedCategory, StatusNew}
 	if len(skip) > 0 {
 		q += ` AND v.id NOT IN (` + store.Placeholders(len(skip)) + `)`
@@ -130,14 +132,24 @@ WHERE v.category <> ? AND v.status <> ?
 	return s.GetCtx(ctx, id)
 }
 
-// ChannelTitles returns up to limit of a channel's video titles, newest
-// release first: what the channel classifier reads besides the description.
-// Inbox reads count — a channel's labels are what makes its unread videos
-// findable at all.
+const nextUnsubcategorizedQuery = `SELECT v.id FROM videos v INDEXED BY idx_videos_cards
+WHERE v.category <> ? AND v.status <> ?
+  AND NOT EXISTS (SELECT 1 FROM video_subcategory_state s WHERE s.video_id = v.id)`
+
+// ChannelTitles returns up to limit of a channel's video titles, most
+// recently recorded first: what the channel classifier reads besides the
+// description. Inbox reads count — a channel's labels are what makes its
+// unread videos findable at all.
+//
+// Recorded order (rowid), not release order: release date and created_at sit
+// behind a row's text columns, and sorting by them reads every video of the
+// channel through its overflow pages to keep 25 titles. The inner query picks
+// the newest rowids from idx_videos_channel_status alone (rowid rides in every
+// index entry); only the rows it returns are opened, and title is at the
+// front of the row. An untitled row is skipped here rather than in SQL, which
+// would have to open every row to test it.
 func (s *Store) ChannelTitles(ctx context.Context, channelID string, limit int) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT title FROM videos
-WHERE channel_id = ? AND title <> ''
-ORDER BY COALESCE(published_at, date(created_at)) DESC, id LIMIT ?`, channelID, limit)
+	rows, err := s.db.QueryContext(ctx, channelTitlesQuery, channelID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("channel %s titles: %w", channelID, err)
 	}
@@ -148,7 +160,14 @@ ORDER BY COALESCE(published_at, date(created_at)) DESC, id LIMIT ?`, channelID, 
 		if err := rows.Scan(&t); err != nil {
 			return nil, fmt.Errorf("channel %s titles: scan: %w", channelID, err)
 		}
-		out = append(out, strings.TrimSpace(t))
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
 	}
 	return out, rows.Err()
 }
+
+const channelTitlesQuery = `SELECT title FROM videos WHERE rowid IN (
+	SELECT rowid FROM videos INDEXED BY idx_videos_channel_status
+	WHERE channel_id = ? ORDER BY rowid DESC LIMIT ?)
+ORDER BY rowid DESC`

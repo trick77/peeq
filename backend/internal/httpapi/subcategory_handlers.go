@@ -18,15 +18,14 @@ type subcategoryDTO struct {
 	CategoryLabel string `json:"category_label"`
 }
 
+// toSubcategoryDTO labels a key. An unknown one (a key retired from the
+// vocabulary but still stored) shows as itself rather than as nothing.
 func toSubcategoryDTO(key string) subcategoryDTO {
-	out := subcategoryDTO{ID: key, Label: videos.SubcategoryLabel(key)}
-	for _, s := range videos.Subcategories {
-		if s.Key() == key {
-			out.Category, out.CategoryLabel = s.Category, videos.CategoryLabel(s.Category)
-			break
-		}
+	s, ok := videos.LookupSubcategory(key)
+	if !ok {
+		return subcategoryDTO{ID: key, Label: key}
 	}
-	return out
+	return subcategoryDTO{ID: key, Label: s.Label, Category: s.Category, CategoryLabel: videos.CategoryLabel(s.Category)}
 }
 
 func toSubcategoryDTOs(keys []string) []subcategoryDTO {

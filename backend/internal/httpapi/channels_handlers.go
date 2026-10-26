@@ -454,10 +454,10 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 		out.AutoSummary = c.AutoSummary
 		out.KeepReads = c.KeepReads
 	}
+	// A failed label read costs the page its subcategory row, not the page.
 	keys, manual, err := s.channels.Subcategories(r.Context(), id)
 	if err != nil {
-		httpx.ServerError(w, r, err, "load channel failed")
-		return
+		slog.WarnContext(r.Context(), "read channel subcategories failed", "channel_id", id, "err", err)
 	}
 	out.Subcategories, out.SubcategoriesManual = toSubcategoryDTOs(keys), manual
 

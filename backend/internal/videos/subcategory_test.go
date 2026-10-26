@@ -85,13 +85,38 @@ func TestNormalizeSubcategories(t *testing.T) {
 		// ambiguous without the category, so it only counts as a full key.
 		{"ambiguous short id across categories", `{"subcategories":["other","cycling"]}`, all,
 			[]string{"sports/cycling"}},
-		{"junk", "I cannot decide", ai, nil},
-		{"empty list", `{"subcategories":[]}`, ai, nil},
+		{"empty list is an answer", `{"subcategories":[]}`, ai, nil},
 	}
 	for _, c := range cases {
-		got := NormalizeSubcategories(c.reply, c.allowed)
-		if !slices.Equal(got, c.want) {
-			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
+		got, ok := NormalizeSubcategories(c.reply, c.allowed)
+		if !ok || !slices.Equal(got, c.want) {
+			t.Errorf("%s: got %v ok=%v, want %v", c.name, got, ok, c.want)
 		}
+	}
+
+	// Not answers: persisting any of these as "nothing fits" would stop the
+	// sweep asking again. An empty reply is what a call that out-thought its
+	// cap returns, with no error.
+	for name, reply := range map[string]string{
+		"empty":      "",
+		"prose":      "I cannot decide",
+		"cut":        `{"subcategories":["build`,
+		"no list":    `{"category":"ai"}`,
+		"only junk":  `{"subcategories":["knitting","sports/cycling"]}`,
+		"wrong type": `{"subcategories":"building"}`,
+	} {
+		if got, ok := NormalizeSubcategories(reply, ai); ok || got != nil {
+			t.Errorf("%s: got %v ok=%v, want not an answer", name, got, ok)
+		}
+	}
+}
+
+func TestLookupSubcategory(t *testing.T) {
+	s, ok := LookupSubcategory("sports/cycling")
+	if !ok || s.Category != "sports" || s.Label != "Cycling" {
+		t.Fatalf("got %+v %v", s, ok)
+	}
+	if _, ok := LookupSubcategory("sports"); ok {
+		t.Fatal("a category is not a subcategory key")
 	}
 }

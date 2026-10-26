@@ -27,6 +27,9 @@ func subcatCompleter(calls *[]string) Completer {
 			if strings.Contains(m[1].Content, "poison") {
 				return "", errors.New("boom")
 			}
+			if strings.Contains(m[1].Content, "blank") {
+				return "", nil // out-thought its cap: no content, no error
+			}
 			return `{"subcategories":["cycling"]}`, nil
 		}
 		return "", errors.New("unexpected prompt: " + sys)
@@ -43,7 +46,7 @@ func TestIdleSweep_subcategorizesVideosThenChannelsThenRests(t *testing.T) {
 	if err := ch.MarkAdded("UCgcn", "2026-07-20 10:00:00"); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"v-ok", "v-poison"} {
+	for _, id := range []string{"v-ok", "v-poison", "v-blank"} {
 		if err := h.videos.Upsert(videos.Video{ID: id, URL: "u-" + id, Title: id + " title", ChannelID: "UCgcn"}); err != nil {
 			t.Fatal(err)
 		}
@@ -63,8 +66,9 @@ func TestIdleSweep_subcategorizesVideosThenChannelsThenRests(t *testing.T) {
 		EmbedModel: "test-model", EmbedDim: 1536, Now: func() time.Time { return now },
 	})
 
-	// Three working turns: both videos (one fails and is parked), then the channel.
-	for i := range 3 {
+	// Four working turns: the three videos (two give no answer and are
+	// parked), then the channel.
+	for i := range 4 {
 		if did, err := w.processOne(ctx); err != nil || !did {
 			t.Fatalf("turn %d: did=%v err=%v", i, did, err)
 		}
@@ -74,6 +78,13 @@ func TestIdleSweep_subcategorizesVideosThenChannelsThenRests(t *testing.T) {
 	}
 	if got, _ := h.videos.SubcategoriesCtx(ctx, "v-poison"); len(got) != 0 {
 		t.Fatalf("v-poison = %v, want none", got)
+	}
+	// Neither non-answer is recorded as "nothing fits": a fresh process (no
+	// parked ids) is offered both again.
+	var owed int
+	if err := h.db.QueryRow(`SELECT count(*) FROM videos v WHERE id IN ('v-poison','v-blank')
+		AND NOT EXISTS (SELECT 1 FROM video_subcategory_state s WHERE s.video_id = v.id)`).Scan(&owed); err != nil || owed != 2 {
+		t.Fatalf("unanswered videos still owed = %d (%v), want 2", owed, err)
 	}
 	keys, manual, _ := ch.Subcategories(ctx, "UCgcn")
 	if manual || !slices.Equal(keys, []string{"sports/cycling", "tech/wearables"}) {

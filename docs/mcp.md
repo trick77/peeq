@@ -115,9 +115,11 @@ page; the classifier never overwrites those.
 The instructions (`server/discover` and `initialize`) and the `search` description
 are built per request (reused for a minute). They list every subscribed channel (at most 40, keep_reads
 channels first, then by video count) under "search peeq automatically when the
-user's question touches these channels' topics", each with its top categories, its
-subcategories and, while the ~3 KB budget allows, a trimmed description. Both texts
-also say that the `subcategory` and `channel_subcategory` filters exist. keep_reads channels are marked
+user's question touches these channels' topics", each with its subcategories (or,
+unlabelled, its top categories) and, while the ~3 KB budget allows, a trimmed
+description. Both texts also say that the `subcategory` and `channel_subcategory`
+filters exist. Ask's understand step offers `channel_subcategory` too, listing only
+the keys some channel carries (a latency-bound gate; refreshed every minute). keep_reads channels are marked
 "(full catalogue indexed)": peeq keeps every downloaded video's transcript and
 analysis anyway; keep_reads additionally keeps videos it only read from captions.
 The user can always ask explicitly ("search peeq for …", "in channel X …").

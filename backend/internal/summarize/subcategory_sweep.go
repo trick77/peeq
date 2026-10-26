@@ -23,9 +23,15 @@ const (
 )
 
 // subcategorizeOne spends an idle turn on the subcategory backlog: one video,
-// else one channel. Like classifyOne it reports did=true only when it made an
-// LLM call, logs its failures rather than returning them (there is no job to
-// fail), and parks a failed id for the life of the process.
+// else one channel. It reports did=true whenever it took an item off the
+// backlog (an empty backlog must say false, or the Run loop spins and the idle
+// hold never starts), logs its failures rather than returning them (there is
+// no job to fail), and parks a failed id for the life of the process — a reply
+// that is no answer included, so a restart asks again rather than never.
+//
+// It runs after the due in-depth retries (processOne): the first deploy owes
+// every categorized video a label, and a backlog that long must not hold back
+// retries that complete analyses already shown on the Player.
 func (w *Worker) subcategorizeOne(ctx context.Context) (bool, error) {
 	if w.d.Now().Before(w.subcatIdleUntil) {
 		return false, nil
@@ -58,7 +64,7 @@ func (w *Worker) subcategorizeVideoOne(ctx context.Context) (bool, error) {
 		w.d.Logger.Warn("summarize worker: subcategories failed", append(ident, "duration_ms", elapsed, "err", err)...)
 		return true, nil
 	}
-	applied, err := w.d.Videos.SetSubcategoriesIfCategory(ctx, video.ID, video.Category, subs)
+	applied, err := w.d.Videos.SetSubcategoriesIfCurrent(ctx, video.ID, video.Category, video.Summary, subs)
 	if err != nil {
 		w.subcatFailed[video.ID] = true
 		w.d.Logger.Error("summarize worker: set subcategories failed", append(ident, "err", err)...)
@@ -82,7 +88,8 @@ func (w *Worker) subcategorizeChannelOne(ctx context.Context) (bool, error) {
 	if err != nil {
 		w.channelSubcatFailed[c.ID] = true
 		w.d.Logger.Error("summarize worker: channel titles failed", append(ident, "err", err)...)
-		return false, nil
+		// true: the backlog is not empty, so this must not start the idle hold.
+		return true, nil
 	}
 	totals := &llm.Totals{}
 	cctx := llm.WithTotals(llm.WithCall(ctx, llm.CallInfo{Channel: c.Name, Step: "channel-subcategories"}), totals)

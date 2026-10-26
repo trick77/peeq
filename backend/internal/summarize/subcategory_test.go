@@ -2,6 +2,7 @@ package summarize
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -73,6 +74,24 @@ func TestClassifySubcategories_offersOnlyTheCategorysList(t *testing.T) {
 	}
 	if !strings.Contains(user, "Watts") || !strings.Contains(user, "training video") {
 		t.Fatalf("user message missing title/summary: %q", user)
+	}
+}
+
+// A call that out-thinks its cap ends with empty content and no error; that
+// must surface as an error, or the sweep records "nothing fits" for good.
+func TestSubcategoryCalls_noAnswerIsAnError(t *testing.T) {
+	for _, reply := range []string{"", "Hmm, hard to say.", `{"subcategories":["knitting"]}`} {
+		s := New(completerFunc(func(context.Context, []llm.Message) (string, error) { return reply, nil }))
+		if _, err := s.ClassifySubcategories(context.Background(), "T", "S", "ai"); !errors.Is(err, errNotAnAnswer) {
+			t.Errorf("video, reply %q: err = %v", reply, err)
+		}
+		if _, err := s.ClassifyChannelSubcategories(context.Background(), "C", "", nil); !errors.Is(err, errNotAnAnswer) {
+			t.Errorf("channel, reply %q: err = %v", reply, err)
+		}
+	}
+	s := New(completerFunc(func(context.Context, []llm.Message) (string, error) { return `{"subcategories":[]}`, nil }))
+	if got, err := s.ClassifySubcategories(context.Background(), "T", "S", "ai"); err != nil || got != nil {
+		t.Errorf("an empty list is an answer: %v, %v", got, err)
 	}
 }
 

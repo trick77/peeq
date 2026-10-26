@@ -206,20 +206,21 @@ func SubcategoryKeys() []string {
 
 // ValidSubcategory reports whether key is an exact "category/id" key.
 func ValidSubcategory(key string) bool {
-	_, ok := subcategoryByKey(key)
+	_, ok := LookupSubcategory(key)
 	return ok
 }
 
 // SubcategoryLabel is a key's display label, or the key itself when unknown,
 // so a reader never sees an empty name.
 func SubcategoryLabel(key string) string {
-	if s, ok := subcategoryByKey(key); ok {
+	if s, ok := LookupSubcategory(key); ok {
 		return s.Label
 	}
 	return key
 }
 
-func subcategoryByKey(key string) (Subcategory, bool) {
+// LookupSubcategory returns the vocabulary entry for a "category/id" key.
+func LookupSubcategory(key string) (Subcategory, bool) {
 	for _, s := range Subcategories {
 		if s.Key() == key {
 			return s, true
@@ -234,19 +235,28 @@ func subcategoryByKey(key string) (Subcategory, bool) {
 // or an id. The calls run on the gate model without JSON mode (it may not
 // support it), so the object is cut out of whatever fence or prose wraps it.
 // An id counts only when it is unique within allowed: 'other' offered across
-// categories names no category at all. Anything unparseable or unknown is
-// dropped, never guessed; an empty result means "nothing usable", which the
-// caller records as such.
-func NormalizeSubcategories(reply string, allowed []Subcategory) []string {
+// categories names no category at all. Unknown entries are dropped, never
+// guessed.
+//
+// ok reports whether the reply is an ANSWER: a parseable object whose list is
+// empty ("nothing fits") or names at least one usable key. A reply that does
+// not parse, lacks the list, or names only junk is not one — and an empty or
+// cut reply (a call that out-thinks its cap ends "length" with no content and
+// no error) must not be persisted as "nothing fits", or the sweep never asks
+// again. The caller parks those instead.
+func NormalizeSubcategories(reply string, allowed []Subcategory) (keys []string, ok bool) {
 	start, end := strings.IndexByte(reply, '{'), strings.LastIndexByte(reply, '}')
 	if start < 0 || end < start {
-		return nil
+		return nil, false
 	}
 	var parsed struct {
-		Subcategories []string `json:"subcategories"`
+		Subcategories *[]string `json:"subcategories"`
 	}
-	if json.Unmarshal([]byte(reply[start:end+1]), &parsed) != nil {
-		return nil
+	if json.Unmarshal([]byte(reply[start:end+1]), &parsed) != nil || parsed.Subcategories == nil {
+		return nil, false
+	}
+	if len(*parsed.Subcategories) == 0 {
+		return nil, true
 	}
 	byKey := map[string]string{}
 	idCount := map[string]int{}
@@ -259,16 +269,15 @@ func NormalizeSubcategories(reply string, allowed []Subcategory) []string {
 			byKey[a.ID] = a.Key()
 		}
 	}
-	var out []string
-	for _, raw := range parsed.Subcategories {
-		key, ok := byKey[strings.ToLower(strings.TrimSpace(raw))]
-		if !ok || slices.Contains(out, key) {
+	for _, raw := range *parsed.Subcategories {
+		key, found := byKey[strings.ToLower(strings.TrimSpace(raw))]
+		if !found || slices.Contains(keys, key) {
 			continue
 		}
-		out = append(out, key)
-		if len(out) == MaxSubcategories {
+		keys = append(keys, key)
+		if len(keys) == MaxSubcategories {
 			break
 		}
 	}
-	return out
+	return keys, len(keys) > 0
 }
