@@ -261,6 +261,10 @@ type StreamAccessRecorder interface {
 }
 
 type server struct {
+	// understandPromptCache holds the Ask understand prompt built from the
+	// channel subcategories in use (understand_prompt.go).
+	understandPromptCache understandPromptCache
+
 	version       string
 	static        http.Handler
 	shell         []byte
@@ -490,6 +494,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("DELETE /api/channels/{id}", s.requireAuth(http.HandlerFunc(s.handleChannelsDelete)))
 	mux.Handle("GET /api/channels/{id}/keep-reads/impact", s.requireAuth(http.HandlerFunc(s.handleKeepReadsImpact)))
 	mux.Handle("GET /api/channels/{id}/storage", s.requireAuth(http.HandlerFunc(s.handleChannelStorage)))
+	mux.Handle("PUT /api/channels/{id}/subcategories", s.requireAuth(http.HandlerFunc(s.handlePutChannelSubcategories)))
+	mux.Handle("GET /api/subcategories", s.requireAuth(http.HandlerFunc(s.handleListSubcategories)))
 	mux.Handle("POST /api/channels/{id}/subscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsSubscribe)))
 	mux.Handle("POST /api/channels/{id}/unsubscribe", s.requireAuth(http.HandlerFunc(s.handleChannelsUnsubscribe)))
 	mux.Handle("POST /api/channels/{id}/scan", s.requireAuth(http.HandlerFunc(s.handleChannelScan)))

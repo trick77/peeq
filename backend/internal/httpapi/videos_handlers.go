@@ -79,10 +79,13 @@ type videoDTO struct {
 	// embedding failure leaves a finished, readable summary behind, so reporting
 	// it as summary_status='error' made the Player claim the summary had failed
 	// while displaying it. The two states are independent and now say so.
-	Indexed       bool   `json:"indexed"`
-	Category      string `json:"category"`
-	AudioLanguage string `json:"audio_language"`
-	HasSubtitles  bool   `json:"has_subtitles"`
+	Indexed  bool   `json:"indexed"`
+	Category string `json:"category"`
+	// Subcategories are set by handleGetVideo only (their own table, 0046),
+	// primary first; omitted for a video the classifier has not labelled.
+	Subcategories []subcategoryDTO `json:"subcategories,omitempty"`
+	AudioLanguage string           `json:"audio_language"`
+	HasSubtitles  bool             `json:"has_subtitles"`
 	// CaptionError is why the caption fetcher's last attempt failed, for a video
 	// it gave up on (no_transcript, no transcript). Empty when that attempt ran
 	// cleanly and found no track — and on the list endpoints, which never set it.
@@ -336,6 +339,12 @@ func (s *server) handleGetVideo(w http.ResponseWriter, r *http.Request) {
 		}
 		dto.InDepth = text
 	}
+	// Same terms as the in-depth text: a failed read costs the details row.
+	subs, err := s.videos.SubcategoriesCtx(r.Context(), v.ID)
+	if err != nil {
+		slog.WarnContext(r.Context(), "read subcategories failed", "video_id", v.ID, "err", err)
+	}
+	dto.Subcategories = toSubcategoryDTOs(subs)
 	// Only the one state the reason explains, so every other video's page costs
 	// no extra query.
 	if s.ledger != nil && v.SummaryStatus == videos.SummaryNoTranscript && !v.HasTranscript {

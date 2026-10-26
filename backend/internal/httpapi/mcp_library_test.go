@@ -324,6 +324,45 @@ func TestMCP_endToEnd(t *testing.T) {
 	}
 }
 
+// Subcategories reach SQL from the real stores: the video's own label, its
+// channel's, and both show up where the client reads them.
+func TestMCP_subcategoriesEndToEnd(t *testing.T) {
+	var vs *videos.Store
+	var cs *channels.Store
+	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, func(d *Deps) { vs, cs = d.Videos, d.Channels })
+	ctx := context.Background()
+	if _, err := vs.SetSubcategoriesIfCurrent(ctx, "bikeVideo01", "science",
+		"Gyroscopes are not why bikes stay up; trail and mass distribution are.", []string{"science/physics"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs.SetSubcategoriesIfAuto(ctx, "UCbikes", []string{"sports/cycling", "science/physics"}, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	text := mcpToolText(t, callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail", "subcategory": "science/physics"}))
+	if !strings.Contains(text, "Why bikes stay upright") || strings.Contains(text, "Bicycle trail explained") ||
+		!strings.Contains(text, "subcategories: science/physics") {
+		t.Errorf("subcategory filter:\n%s", text)
+	}
+	text = mcpToolText(t, callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail", "channel_subcategory": "sports/cycling"}))
+	if !strings.Contains(text, "Why bikes stay upright") || !strings.Contains(text, "Bicycle trail explained") {
+		t.Errorf("channel_subcategory filter:\n%s", text)
+	}
+	text = mcpToolText(t, callMCPTool(t, h, "search", map[string]any{"query": "rice", "channel_subcategory": "sports/cycling", "mode": "keyword"}))
+	if strings.Contains(text, "Perfect rice") {
+		t.Errorf("channel_subcategory leaked another channel:\n%s", text)
+	}
+	text = mcpToolText(t, callMCPTool(t, h, "get_video", map[string]any{"id": "bikeVideo01"}))
+	if !strings.Contains(text, "subcategories: science/physics") {
+		t.Errorf("get_video:\n%s", text)
+	}
+	text = mcpToolText(t, callMCPTool(t, h, "list_youtube_channels", map[string]any{}))
+	if !strings.Contains(text, "subcategories: sports/cycling, science/physics") ||
+		!strings.Contains(text, "Channel subcategories in use (search's channel_subcategory filter): science/physics, sports/cycling") {
+		t.Errorf("list_youtube_channels:\n%s", text)
+	}
+}
+
 func TestMCP_searchDegradesToKeywordWhenEmbeddingFails(t *testing.T) {
 	h := mcpFixture(t, &fakeEmbedder{err: errors.New("embeddings are down")})
 	text := mcpToolText(t, callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail"}))

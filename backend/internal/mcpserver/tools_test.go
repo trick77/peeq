@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -110,10 +111,57 @@ func TestToolCallDoesNotReadTheChannelHint(t *testing.T) {
 
 func TestSearchSchemaListsEveryArgument(t *testing.T) {
 	props, _ := searchSchema()["properties"].(map[string]any)
-	for _, k := range []string{"query", "channel", "category", "youtube_category", "after", "before", "mode", "k"} {
+	for _, k := range []string{"query", "channel", "category", "youtube_category", "subcategory", "channel_subcategory", "after", "before", "mode", "k"} {
 		if _, ok := props[k]; !ok {
 			t.Errorf("schema lacks %s", k)
 		}
+	}
+	// The enum is how a client learns which subcategories exist at all.
+	for _, k := range []string{"subcategory", "channel_subcategory"} {
+		p, _ := props[k].(map[string]any)
+		enum, _ := p["enum"].([]string)
+		if !slices.Contains(enum, "sports/cycling") || !slices.Contains(enum, "ai/building") {
+			t.Errorf("%s enum does not list the vocabulary: %v", k, p["enum"])
+		}
+	}
+	if d := tools["search"].description; !strings.Contains(d, "subcategory") || !strings.Contains(d, "channel_subcategory") {
+		t.Errorf("search description does not say subcategory filters exist: %q", d)
+	}
+}
+
+func TestSearch_passesSubcategoryFilters(t *testing.T) {
+	lib := searchFixture()
+	r := callTool(t, lib, "search", map[string]any{
+		"query": "x", "subcategory": "ai/building", "channel_subcategory": "sports/cycling",
+	})
+	if isError(r) {
+		t.Fatalf("unexpected error: %s", toolText(t, r))
+	}
+	if q := lib.lastQuery; q.Subcategory != "ai/building" || q.ChannelSubcategory != "sports/cycling" {
+		t.Errorf("query = %+v", q)
+	}
+}
+
+func TestSearch_badSubcategoryNamesTheVocabulary(t *testing.T) {
+	for _, arg := range []string{"subcategory", "channel_subcategory"} {
+		lib := searchFixture()
+		r := callTool(t, lib, "search", map[string]any{"query": "x", arg: "cycling"})
+		text := toolText(t, r)
+		if !isError(r) || lib.lastQuery != nil {
+			t.Fatalf("%s: want a tool error and no search, got %q", arg, text)
+		}
+		if !strings.Contains(text, "sports/cycling") {
+			t.Errorf("%s: error does not offer the valid keys: %q", arg, text)
+		}
+	}
+}
+
+func TestSearch_headerShowsSubcategories(t *testing.T) {
+	lib := searchFixture()
+	lib.result.Videos[0].Video.Subcategories = []string{"science/physics", "science/math"}
+	text := toolText(t, callTool(t, lib, "search", map[string]any{"query": "x"}))
+	if !strings.Contains(text, "subcategories: science/physics, science/math") {
+		t.Errorf("text = %q", text)
 	}
 }
 
@@ -309,17 +357,18 @@ func TestGetVideo(t *testing.T) {
 	lib := &fakeLibrary{videos: map[string]*Video{"abc123": {
 		ID: "abc123", Title: "Why bikes stay upright", Channel: "Veritasium", PublishedAt: "2026-05-02",
 		DurationSeconds: 3725, Category: "science", YouTubeCategories: []string{"Education"},
-		Tags:      []string{"bikes", "physics"},
-		Summary:   "Bikes steer into their fall.",
-		KeyPoints: []Moment{{Seconds: 61, Text: "Trail matters"}},
-		Chapters:  []Moment{{Seconds: 0, Text: "Intro"}, {Seconds: 3700, Text: "Outro"}},
-		InDepth:   "## Trail\nThe contact patch sits behind the steering axis.",
+		Subcategories: []string{"science/physics"},
+		Tags:          []string{"bikes", "physics"},
+		Summary:       "Bikes steer into their fall.",
+		KeyPoints:     []Moment{{Seconds: 61, Text: "Trail matters"}},
+		Chapters:      []Moment{{Seconds: 0, Text: "Intro"}, {Seconds: 3700, Text: "Outro"}},
+		InDepth:       "## Trail\nThe contact patch sits behind the steering axis.",
 	}}}
 	r := callTool(t, lib, "get_video", map[string]any{"id": "abc123"})
 	text := toolText(t, r)
 	for _, want := range []string{
 		"Why bikes stay upright", "channel: Veritasium", "published: 2026-05-02", "duration: 1:02:05",
-		"category: science", "youtube categories: Education", "tags: bikes, physics",
+		"category: science", "subcategories: science/physics", "youtube categories: Education", "tags: bikes, physics",
 		"Bikes steer into their fall.", "[01:01] Trail matters", "[1:01:40] Outro",
 		"The contact patch sits behind", "https://peeq.example.com/video/abc123", "https://youtu.be/abc123",
 	} {
@@ -497,13 +546,18 @@ func TestListYouTubeChannels(t *testing.T) {
 		{ID: "UCV", Name: "Veritasium", Handle: "@veritasium", Description: "An element of truth.",
 			Subscribed: true, KeepReads: true, Videos: 42,
 			TopCategories:        []CategoryCount{{"science", 30}, {"engineering", 8}},
-			TopYouTubeCategories: []CategoryCount{{"Education", 40}}},
-		{ID: "UCX", Name: "Other", Subscribed: true, Videos: 3},
+			TopYouTubeCategories: []CategoryCount{{"Education", 40}},
+			Subcategories:        []string{"science/physics", "engineering/making"}},
+		{ID: "UCX", Name: "Other", Subscribed: true, Videos: 3, Subcategories: []string{"sports/cycling"}},
 	}}
 	text := toolText(t, callTool(t, lib, "list_youtube_channels", map[string]any{}))
 	for _, want := range []string{
 		"Veritasium (@veritasium)", "id UCV", "videos: 42", "science (30), engineering (8)",
 		"youtube: Education (40)", "An element of truth.", "Other", "caption-only reads kept",
+		"subcategories: science/physics, engineering/making",
+		// The availability line: what a channel_subcategory filter can hit today.
+		"Channel subcategories in use", "engineering/making, science/physics, sports/cycling",
+		"channel_subcategory",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("text lacks %q\n---\n%s", want, text)

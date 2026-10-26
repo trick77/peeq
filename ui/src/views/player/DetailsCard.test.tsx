@@ -171,6 +171,35 @@ describe("DetailsCard", () => {
       expect(screen.getByText("Watched")).toBeInTheDocument();
     });
 
+    it("lists the subcategories, primary first", () => {
+      open(
+        baseVideo({
+          subcategories: [
+            {
+              id: "science/physics",
+              label: "Physics",
+              category: "science",
+              category_label: "Science & Research",
+            },
+            {
+              id: "science/math",
+              label: "Mathematics",
+              category: "science",
+              category_label: "Science & Research",
+            },
+          ],
+        }),
+      );
+
+      expect(screen.getByText("Subcategories")).toBeInTheDocument();
+      expect(screen.getByText("Physics, Mathematics")).toBeInTheDocument();
+    });
+
+    it("drops the subcategories row for an unlabelled video", () => {
+      open(baseVideo());
+      expect(screen.queryByText("Subcategories")).not.toBeInTheDocument();
+    });
+
     it("uses the singular for a lone SponsorBlock segment", () => {
       open(
         baseVideo({

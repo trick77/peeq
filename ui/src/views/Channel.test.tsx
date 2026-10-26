@@ -141,6 +141,8 @@ function detail(overrides: Partial<ChannelDetail> = {}): ChannelDetail {
     last_scanned_at: "2026-07-20 08:00:00",
     next_scan_at: sqlUTC(6 * 3600 * 1000), // due in 6h → not queued
     pending_count: 7,
+    subcategories: [],
+    subcategories_manual: false,
     ...overrides,
   };
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 )
 
@@ -27,6 +28,9 @@ func runListYouTubeChannels(ctx context.Context, h *handler, raw json.RawMessage
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d channels. Every downloaded or summarized video stays searchable, after its file is deleted too unless its channel is set to forget deleted videos; "+
 		"\"caption-only reads kept\" means videos peeq only read (never downloaded) stay searchable too.\n", len(chans))
+	if inUse := subcategoriesInUse(chans); len(inUse) > 0 {
+		b.WriteString("Channel subcategories in use (search's channel_subcategory filter): " + strings.Join(inUse, ", ") + "\n")
+	}
 	for _, c := range chans {
 		b.WriteString("\n- " + c.Name)
 		if c.Handle != "" {
@@ -39,6 +43,9 @@ func runListYouTubeChannels(ctx context.Context, h *handler, raw json.RawMessage
 		if c.KeepReads {
 			b.WriteString(" · caption-only reads kept")
 		}
+		if len(c.Subcategories) > 0 {
+			b.WriteString("\n  subcategories: " + strings.Join(c.Subcategories, ", "))
+		}
 		if cats := joinCounts(c.TopCategories, 5, true); cats != "" {
 			b.WriteString("\n  categories: " + cats)
 		}
@@ -50,4 +57,19 @@ func runListYouTubeChannels(ctx context.Context, h *handler, raw json.RawMessage
 		}
 	}
 	return toolResult{Text: b.String()}
+}
+
+// subcategoriesInUse is every channel subcategory the list carries, sorted:
+// the channel_subcategory values that can match anything today.
+func subcategoriesInUse(chans []Channel) []string {
+	var out []string
+	for _, c := range chans {
+		for _, s := range c.Subcategories {
+			if !slices.Contains(out, s) {
+				out = append(out, s)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
 }

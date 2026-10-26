@@ -169,6 +169,10 @@ export type Video = {
   live_status?: string;
   yt_tags?: string[];
   yt_categories?: string[];
+  // subcategories are peeq's finer labels under `category`, primary first.
+  // Only GET /api/videos/{id} sends them, and only once the classifier has
+  // labelled the video.
+  subcategories?: Subcategory[];
   // What the chat model has spent analysing this video, summed over every
   // attempt the job queue made. Chat only — embedding tokens come from another
   // endpoint and are not folded in.
@@ -546,6 +550,22 @@ export type ChannelDetail = {
   last_scanned_at?: string;
   next_scan_at?: string;
   pending_count: number;
+
+  // subcategories label the channel for Ask and MCP search, primary first;
+  // subcategories_manual means the user set them on this page and the
+  // classifier leaves them alone.
+  subcategories: Subcategory[];
+  subcategories_manual: boolean;
+};
+
+// Subcategory is one entry of the backend's fixed vocabulary
+// (backend/internal/videos/subcategory.go), served with its labels by
+// GET /api/subcategories rather than mirrored here. id is "category/sub".
+export type Subcategory = {
+  id: string;
+  label: string;
+  category: string;
+  category_label: string;
 };
 
 // ScanResult mirrors POST /api/channels/{id}/scan. "blocked" carries a

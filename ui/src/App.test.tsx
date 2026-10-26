@@ -806,6 +806,8 @@ describe("App routing", () => {
       last_scanned_at: "2026-07-20 08:00:00",
       next_scan_at: "2026-07-20 14:00:00",
       pending_count: 0,
+      subcategories: [],
+      subcategories_manual: false,
     });
 
     render(<App />);

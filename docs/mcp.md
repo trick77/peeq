@@ -87,25 +87,39 @@ Each tool carries a display title, sent both as `title` and `annotations.title`
 - `search` ("Search your video library") — `query` (required), `channel` (name, @handle or id; case-insensitive,
   typo-tolerant, resolved against the channels list_youtube_channels shows plus any with videos; an unknown one is an error listing the closest names, a listed one with no videos yet says so), `category`
   (peeq's fixed category enum), `youtube_category` (YouTube's own label, e.g.
-  "Science & Technology", "Education"; exact, case-insensitive), `after`/`before`
+  "Science & Technology", "Education"; exact, case-insensitive), `subcategory`
+  (a `category/subcategory` key, e.g. `ai/building`: videos labelled with it),
+  `channel_subcategory` (same keys: videos from channels labelled with it, the
+  only form that reaches caption-only reads; e.g. `sports/cycling` for "videos
+  from cycling channels"; both enums list the whole vocabulary), `after`/`before`
   (`YYYY-MM-DD`, inclusive), `mode` (`hybrid` default: keyword + semantic fused like
   the Search page, no query-understanding model call; `keyword`: literal full-text
   match), `k` (videos, default 6, max 10). If the query cannot be embedded, hybrid
   falls back to keyword-only and says so.
-- `get_video` ("Get a video's details and summaries") — `id`: metadata (peeq and YouTube categories, tags), short summary,
+- `get_video` ("Get a video's details and summaries") — `id`: metadata (peeq categories and subcategories, YouTube categories, tags), short summary,
   key points, chapters, in-depth summary, links.
 - `get_transcript` ("Read a video's transcript") — `id`, optional `start_seconds`, `end_seconds` (exclusive):
   `[mm:ss] text` lines. A cut transcript ends with the `start_seconds` to request next.
 - `list_youtube_channels` ("List YouTube channels in your library") — subscribed channels plus channels whose caption-only reads are
-  kept: id, handle, description, video count, top peeq and YouTube categories.
+  kept: id, handle, description, video count, top peeq and YouTube categories, the
+  channel's subcategories, and a header line naming every channel subcategory in use.
+
+Subcategories come from `backend/internal/videos/subcategory.go` (fixed, every
+category ends in `other`): up to 3 per video from its own category and up to 3 per
+channel from any, primary first, labelled by the summarize worker's idle sweep
+(inbox reads never get video labels). A channel's labels can be set by hand on its
+page; the classifier never overwrites those.
 
 ### Auto-search hint
 
 The instructions (`server/discover` and `initialize`) and the `search` description
 are built per request (reused for a minute). They list every subscribed channel (at most 40, keep_reads
 channels first, then by video count) under "search peeq automatically when the
-user's question touches these channels' topics", each with its top categories and,
-while the ~3 KB budget allows, a trimmed description. keep_reads channels are marked
+user's question touches these channels' topics", each with its subcategories (or,
+unlabelled, its top categories) and, while the ~3 KB budget allows, a trimmed
+description. Both texts also say that the `subcategory` and `channel_subcategory`
+filters exist. Ask's understand step offers `channel_subcategory` too, listing only
+the keys some channel carries (a latency-bound gate; refreshed every minute). keep_reads channels are marked
 "(full catalogue indexed)": peeq keeps every downloaded video's transcript and
 analysis anyway; keep_reads additionally keeps videos it only read from captions.
 The user can always ask explicitly ("search peeq for …", "in channel X …").

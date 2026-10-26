@@ -237,11 +237,12 @@ func min3(a, b, c int) int {
 // the parse in understand.go. Nothing the model wrote reaches SQL as text.
 func (s *server) buildFilter(f queryFilters, ch channelResolution) rag.Filter {
 	out := rag.Filter{
-		ChannelIDs:   ch.IDs,
-		ChannelNames: ch.Names,
-		Category:     f.Category,
-		After:        f.After,
-		Before:       f.Before,
+		ChannelIDs:         ch.IDs,
+		ChannelNames:       ch.Names,
+		Category:           f.Category,
+		ChannelSubcategory: f.ChannelSubcategory,
+		After:              f.After,
+		Before:             f.Before,
 	}
 	switch f.Watched {
 	case watchedUnwatched:
@@ -278,6 +279,9 @@ func describeFilter(f queryFilters, ch channelResolution) []string {
 	}
 	if f.Category != "" {
 		out = append(out, videos.CategoryLabel(f.Category))
+	}
+	if f.ChannelSubcategory != "" {
+		out = append(out, videos.SubcategoryLabel(f.ChannelSubcategory)+" channels")
 	}
 	switch {
 	case f.After != "" && f.Before != "":

@@ -43,6 +43,23 @@ func TestInstructions_listSubscribedChannelsForAutoSearch(t *testing.T) {
 	}
 }
 
+// The hint is what a client reads before deciding how to search, so it says
+// subcategory filters exist and which channel carries which.
+func TestInstructions_reportSubcategories(t *testing.T) {
+	lib := &fakeLibrary{channels: []Channel{
+		{ID: "UC1", Name: "GCN", Subscribed: true, Videos: 20,
+			TopCategories: []CategoryCount{{"sports", 18}}, Subcategories: []string{"sports/cycling", "tech/wearables"}},
+	}}
+	got := (&handler{lib: lib}).instructions(context.Background())
+	// The keys stand in for the top categories: they name them already.
+	if !strings.Contains(got, "- GCN: sports/cycling, tech/wearables\n") {
+		t.Errorf("channel line lacks its subcategories, or still carries the categories:\n%s", got)
+	}
+	if !strings.Contains(got, "channel_subcategory") || !strings.Contains(got, "subcategory") {
+		t.Errorf("no word that subcategory filters exist:\n%s", got)
+	}
+}
+
 func TestInstructions_stayUnderBudget(t *testing.T) {
 	var chans []Channel
 	for i := 0; i < 120; i++ {
@@ -51,6 +68,7 @@ func TestInstructions_stayUnderBudget(t *testing.T) {
 			Description:          strings.Repeat("A long and winding channel description. ", 20),
 			TopCategories:        []CategoryCount{{"science", 3}, {"engineering", 2}, {"education", 1}},
 			TopYouTubeCategories: []CategoryCount{{"Science & Technology", 3}, {"Education", 1}},
+			Subcategories:        []string{"science/physics", "engineering/infrastructure", "education/howto"},
 		})
 	}
 	got := (&handler{lib: &fakeLibrary{channels: chans}}).instructions(context.Background())

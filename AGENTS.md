@@ -88,7 +88,8 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 - Lookup no reader sees (an id, a label) → `llm.ShortGate(ctx)`: routes to the gate model. Never on
   reader-facing text (summary, map, reduce, keypoints, Ask). Independent of the reasoning intent.
 - Need JSON → `llm.AsJSONObject(ctx)`. A prompt saying "as JSON" does NOT work: 0/8 raw replies
-  strictly parseable without it, 8/8 with it.
+  strictly parseable without it, 8/8 with it. Except on `ShortGate`: a gate profile may lack JSON
+  output and llmwire refuses the call; there, cut the object out of the reply (understand, subcategories).
 - New summarizer call site → feed it `forSummary`, never `parsed` (summarize/worker.go). `parsed` is
   the raw transcript and still carries sponsor reads; `forSummary` has them stripped so no chapter,
   key point or summary sentence can be drawn from one. See `summarize/sponsor.go`. Embedding

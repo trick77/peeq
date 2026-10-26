@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -41,15 +42,21 @@ func (l mcpLibrary) Channels(ctx context.Context) ([]mcpserver.Channel, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Labels are an extra on the list, not the list: a failed read drops them.
+	subs, err := l.s.channels.AllSubcategories(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "mcp: channel subcategories unavailable", "err", err)
+	}
 	out := make([]mcpserver.Channel, 0, len(chans))
 	for _, c := range chans {
 		mc := mcpserver.Channel{
-			ID:          c.ID,
-			Name:        cmp.Or(c.Name, c.Handle, c.ID),
-			Handle:      c.Handle,
-			Description: c.Description,
-			Subscribed:  c.Subscribed,
-			KeepReads:   c.KeepReads,
+			ID:            c.ID,
+			Name:          cmp.Or(c.Name, c.Handle, c.ID),
+			Handle:        c.Handle,
+			Description:   c.Description,
+			Subscribed:    c.Subscribed,
+			KeepReads:     c.KeepReads,
+			Subcategories: subs[c.ID],
 		}
 		if st := stats[c.ID]; st != nil {
 			mc.Videos = st.Videos
@@ -205,12 +212,14 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 		return mcpserver.SearchResult{}, errMCPNotConfigured
 	}
 	filter := rag.Filter{
-		ChannelIDs:      q.Channel.IDs,
-		ChannelNames:    q.Channel.Names,
-		Category:        q.Category,
-		YouTubeCategory: q.YouTubeCategory,
-		After:           q.After,
-		Before:          q.Before,
+		ChannelIDs:         q.Channel.IDs,
+		ChannelNames:       q.Channel.Names,
+		Category:           q.Category,
+		YouTubeCategory:    q.YouTubeCategory,
+		Subcategory:        q.Subcategory,
+		ChannelSubcategory: q.ChannelSubcategory,
+		After:              q.After,
+		Before:             q.Before,
 	}
 	var hits []rag.Hit
 	var res mcpserver.SearchResult
@@ -253,8 +262,14 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 	if err != nil {
 		return res, err
 	}
-	for _, g := range groupHits(hits, byID, q.Videos, 0) {
+	groups := groupHits(hits, byID, q.Videos, 0)
+	subs, err := s.videos.SubcategoriesMany(ctx, idsOf(groups, func(g *searchResult) string { return g.Video.ID }))
+	if err != nil {
+		slog.WarnContext(ctx, "mcp: video subcategories unavailable", "err", err)
+	}
+	for _, g := range groups {
 		vh := mcpserver.VideoHits{Video: toMCPVideo(byID[g.Video.ID])}
+		vh.Video.Subcategories = subs[g.Video.ID]
 		for _, m := range g.Matches {
 			vh.Matches = append(vh.Matches, mcpserver.Match{StartSeconds: m.StartSeconds, Kind: m.Kind, Snippet: m.Snippet})
 		}
@@ -272,6 +287,9 @@ func (l mcpLibrary) Video(ctx context.Context, id string) (*mcpserver.Video, err
 		return nil, err
 	}
 	out := toMCPVideo(v)
+	if out.Subcategories, err = l.s.videos.SubcategoriesCtx(ctx, id); err != nil {
+		slog.WarnContext(ctx, "mcp: video subcategories unavailable", "video_id", id, "err", err)
+	}
 	var chapters []struct {
 		TS    int    `json:"ts"`
 		Title string `json:"title"`

@@ -113,6 +113,13 @@ function buildGroups(video: Video, stats: VideoEmbeddings | null): Group[] {
     // unwatched video rather than reading "Never": the action row already says
     // so, with a control that changes it.
     { k: "Watched", v: video.watched_at ? formatAgo(video.watched_at) : "" },
+    // peeq's finer labels under the category pill on the byline, primary
+    // first. Here and not on the byline: they serve Ask and MCP search, and
+    // the byline has no room for three more pills.
+    {
+      k: "Subcategories",
+      v: (video.subcategories ?? []).map((s) => s.label).join(", "),
+    },
     // YouTube's own label, which is a different thing from video.category
     // (peeq's classification, shown as the pill on the byline). Joined rather
     // than truncated: the list is one entry in practice.

@@ -374,6 +374,11 @@ type channelDetail struct {
 	LastScannedAt  string `json:"last_scanned_at,omitempty"`
 	NextScanAt     string `json:"next_scan_at,omitempty"`
 	PendingCount   int    `json:"pending_count"`
+
+	// Subcategories label the channel for Ask and MCP, primary first;
+	// SubcategoriesManual says the user set them, so the classifier will not.
+	Subcategories       []subcategoryDTO `json:"subcategories"`
+	SubcategoriesManual bool             `json:"subcategories_manual"`
 }
 
 // handleChannelDetail returns the data behind the channel page: identity,
@@ -449,6 +454,12 @@ func (s *server) handleChannelDetail(w http.ResponseWriter, r *http.Request) {
 		out.AutoSummary = c.AutoSummary
 		out.KeepReads = c.KeepReads
 	}
+	// A failed label read costs the page its subcategory row, not the page.
+	keys, manual, err := s.channels.Subcategories(r.Context(), id)
+	if err != nil {
+		slog.WarnContext(r.Context(), "read channel subcategories failed", "channel_id", id, "err", err)
+	}
+	out.Subcategories, out.SubcategoriesManual = toSubcategoryDTOs(keys), manual
 
 	// "Gone" is asked for regardless of whether the channel is still added
 	// or subscribed: auto-unsubscribe REMOVES the subscription row, so by the
