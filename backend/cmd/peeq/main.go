@@ -625,8 +625,8 @@ func runYtdlpVersionCheckTicker(
 		if !firstSighting {
 			activity.Record(rec, activity.Event{
 				Kind: activity.KindYtdlp, Outcome: activity.OutcomeWarn,
-				Summary: "yt-dlp " + latest + " available",
-				Detail:  "Installed " + installed + ". Update from Settings.",
+				Summary: "yt-dlp " + ytdlp.DisplayVersion(latest) + " available",
+				Detail:  "Installed " + ytdlp.DisplayVersion(installed) + ". Update from Settings.",
 			})
 		}
 		announced = latest

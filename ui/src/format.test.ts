@@ -17,7 +17,27 @@ import {
   formatRuntime,
   formatSubscribers,
   formatStamp,
+  formatYtdlpVersion,
 } from "./format";
+
+// Mirrors ytdlp.DisplayVersion: the same rule on both sides of the wire.
+describe("formatYtdlpVersion", () => {
+  it.each([
+    ["2026.10.26", "26.10.2026"],
+    ["2026.01.05", "05.01.2026"],
+    ["2026.10.26.1", "26.10.2026-1"],
+    ["2026.10.26.232813", "26.10.2026-232813"],
+    ["", ""],
+    ["unknown", "unknown"],
+    ["2026.10", "2026.10"],
+    ["2026.13.40", "2026.13.40"],
+    ["2026.02.30", "2026.02.30"],
+    ["2026.10.26.", "2026.10.26."],
+    ["26.10.2026", "26.10.2026"],
+  ])("%s → %s", (input, want) => {
+    expect(formatYtdlpVersion(input)).toBe(want);
+  });
+});
 
 // A fixed "now" so the relative output is deterministic. daysSince (which
 // formatAgo builds on) floors whole days, so each case picks a day offset

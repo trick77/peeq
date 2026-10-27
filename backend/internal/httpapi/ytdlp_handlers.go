@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/trick77/peeq/internal/activity"
+	"github.com/trick77/peeq/internal/ytdlp"
 	"github.com/trick77/ship/kit/httpx"
 )
 
@@ -124,9 +125,9 @@ func (s *server) handleYTDLPUpdate(w http.ResponseWriter, r *http.Request) {
 	// and records nothing. See the activity package doc for why this one
 	// user-triggered event belongs in the log.
 	if updated && s.activityWrite != nil {
-		summary := "Updated to " + v
+		summary := "Updated to " + ytdlp.DisplayVersion(v)
 		if previous == "" {
-			summary = "Installed " + v
+			summary = "Installed " + ytdlp.DisplayVersion(v)
 		}
 		s.activityWrite.Record(activity.Event{
 			Kind: activity.KindYtdlp, Outcome: activity.OutcomeOK,

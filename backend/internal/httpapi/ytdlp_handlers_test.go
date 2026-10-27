@@ -207,8 +207,8 @@ func TestYTDLPUpdate_versionChanged_recordsTheInstall(t *testing.T) {
 	if got.Kind != activity.KindYtdlp || got.Outcome != activity.OutcomeOK {
 		t.Fatalf("event = %s/%s, want %s/%s", got.Kind, got.Outcome, activity.KindYtdlp, activity.OutcomeOK)
 	}
-	if got.Summary != "Updated to 2026.08.15" {
-		t.Fatalf("summary = %q, want %q", got.Summary, "Updated to 2026.08.15")
+	if got.Summary != "Updated to 15.08.2026" {
+		t.Fatalf("summary = %q, want %q", got.Summary, "Updated to 15.08.2026")
 	}
 }
 
@@ -232,8 +232,8 @@ func TestYTDLPUpdate_firstInstall_saysInstalled(t *testing.T) {
 	if len(rec.events) != 1 {
 		t.Fatalf("recorded %d events, want exactly 1: %+v", len(rec.events), rec.events)
 	}
-	if got := rec.events[0].Summary; got != "Installed 2026.08.15" {
-		t.Fatalf("summary = %q, want %q", got, "Installed 2026.08.15")
+	if got := rec.events[0].Summary; got != "Installed 15.08.2026" {
+		t.Fatalf("summary = %q, want %q", got, "Installed 15.08.2026")
 	}
 }
 

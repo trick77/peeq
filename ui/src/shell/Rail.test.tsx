@@ -289,8 +289,8 @@ describe("Rail yt-dlp indicator", () => {
     expect(html).toContain("update available");
     // Both halves matter: "an update exists" without saying from what is not
     // actionable, and the pair is what makes the size of the gap obvious.
-    expect(html).toContain("2026.07.01");
-    expect(html).toContain("2026.08.15");
+    expect(html).toContain("01.07.2026");
+    expect(html).toContain("15.08.2026");
   });
 
   it("stays silent when the installed version is current", () => {
