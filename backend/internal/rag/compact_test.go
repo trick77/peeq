@@ -260,6 +260,23 @@ func TestLogVectorIndexAtBoot_saysEachRewriteBeforeItRuns(t *testing.T) {
 	}
 }
 
+// Before a step begins there is nothing to report: a tick that lands while
+// compactVectors is still measuring must not claim a compaction is running.
+// This is what made the test below flake when its 1ms tick beat the measure.
+func TestHeartbeat_silentUntilAttrsReady(t *testing.T) {
+	defer func(d time.Duration) { compactHeartbeat = d }(compactHeartbeat)
+	compactHeartbeat = time.Millisecond
+	logs := &records{}
+
+	stop := heartbeat(slog.New(logs), "still running", func() ([]any, bool) { return nil, false })
+	time.Sleep(20 * time.Millisecond)
+	stop()
+
+	if _, ok := logs.find("still running"); ok {
+		t.Fatalf("heartbeat logged before anything began: %v", logs.recs)
+	}
+}
+
 // A copy longer than one heartbeat says where it has got to while it runs.
 func TestCompactVectorsAndLog_heartbeatReportsProgress(t *testing.T) {
 	db := vecDB(t)
