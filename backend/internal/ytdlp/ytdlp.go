@@ -114,6 +114,11 @@ type RunnerConfig struct {
 	// read on every call like CookieProvider, so a change in Settings takes
 	// effect on the next yt-dlp invocation. Defaults to IPFamilyAuto.
 	IPFamilyProvider func() string
+	// OnHostRefused is called with the classified error when YouTube refuses
+	// this server (ErrHostRefused). main wires it to the youtube_paused kill
+	// switch: the refusal holds for every call, so the next one must not go
+	// out on the same address. Defaults to a no-op.
+	OnHostRefused func(err error)
 	// AllowAnonymous is a dev-only escape hatch (config.AllowAnonymousYoutube):
 	// when true, cookieGate lets an EMPTY cookie through instead of failing
 	// with ErrNoCookie, and exec omits --cookies entirely for that empty-text
@@ -206,6 +211,9 @@ func New(cfg RunnerConfig) *Runner {
 	}
 	if cfg.IPFamilyProvider == nil {
 		cfg.IPFamilyProvider = func() string { return IPFamilyAuto }
+	}
+	if cfg.OnHostRefused == nil {
+		cfg.OnHostRefused = func(error) {}
 	}
 	if cfg.ThrottleJitter == 0 {
 		cfg.ThrottleJitter = defaultThrottleJitter
@@ -541,9 +549,18 @@ func (r *Runner) logStderr(ctx context.Context, stderr string) {
 
 // failed classifies a failed run and logs its stderr, with the IP family the
 // run was pinned to.
+//
+// A host refusal is acted on here, once, for every caller: OnHostRefused
+// throws the kill switch, and the caller gets ErrPaused (still matching
+// ErrHostRefused), which the download, scan, caption and recheck paths all
+// settle as "not now" rather than as a verdict on the video.
 func (r *Runner) failed(ctx context.Context, stderr string, runErr error, family string) error {
 	err := Classify(stderr, runErr)
 	r.logFailedStderr(ctx, stderr, runErr, err, family)
+	if errors.Is(err, ErrHostRefused) {
+		r.cfg.OnHostRefused(err)
+		return fmt.Errorf("%w: %w", ErrPaused, err)
+	}
 	return err
 }
 
