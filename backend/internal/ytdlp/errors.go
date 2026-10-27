@@ -7,6 +7,7 @@ package ytdlp
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -29,6 +30,12 @@ var (
 	// throttle sleep, or the binary are ever reached — never derived from
 	// stderr, so Classify does not need to know about it.
 	ErrPaused = errors.New("ytdlp: youtube paused")
+	// ErrHostRefused means YouTube refused this server: its address, or the
+	// session as a whole ("rate-limited for up to an hour"). YouTube words it
+	// like a dead video, "This content isn't available", but every call
+	// gets it. The Runner throws the kill switch on it and hands callers
+	// ErrPaused, so nothing keeps calling on a refused address.
+	ErrHostRefused = errors.New("ytdlp: youtube refused this server")
 )
 
 // RefusedError wraps a gate refusal (ErrPaused, ErrNoCookie, ErrCookieExpired
@@ -207,6 +214,23 @@ func Classify(stderr string, exitErr error) error {
 		return ErrCookieExpired
 	case containsAny(s, "private video"):
 		return &TerminalError{Reason: "private", Detail: detail}
+	// A refused address or session, worded like a dead video: "Video
+	// unavailable. This content isn't available." (and yt-dlp's
+	// "…, try again later … rate-limited" rendering of the same). Seen when
+	// YouTube blocked a server's IPv4 address: the videos played everywhere
+	// else. Before the "video unavailable" match below, or a block fails and
+	// parks every video it touches as deleted; after the specific gates, so a
+	// members/age/geo video beside the generic sentence keeps its own reason.
+	// Both apostrophes: YouTube sends a curly one. ERROR lines only: peeq asks
+	// several player clients, and a WARNING that one of them was refused says
+	// nothing about the run, which may have failed for another reason.
+	case containsAny(errorLines(s), "this content isn't available", "this content isn’t available", "rate-limited by youtube") &&
+		!containsAny(s, membersSignatures...) && !containsAny(s, ageSignatures...) &&
+		!containsAny(s, geoSignatures...) && !containsAny(s, channelGoneSignatures...):
+		if detail == "" {
+			return ErrHostRefused
+		}
+		return fmt.Errorf("%w: %s", ErrHostRefused, detail)
 	case containsAny(s, "video is no longer available", "video unavailable"):
 		return &TerminalError{Reason: "deleted", Detail: detail}
 	// Channel-level deletion signatures. These are distinct from the
@@ -216,22 +240,13 @@ func Classify(stderr string, exitErr error) error {
 	// channel is still there. Without these two lines matching, a deleted
 	// channel falls through to the generic ExecError branch below,
 	// staleUnsubscribe is never reached, and the whole feature never fires.
-	case containsAny(s,
-		// Verified against real yt-dlp output run against a nonexistent
-		// channel: "ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube
-		// said: This channel does not exist."
-		"this channel does not exist",
-		// The known YouTube termination message. NOT verified against real
-		// yt-dlp output (no terminated channel was available to observe) —
-		// keep this comment until someone captures the real stderr line.
-		"this account has been terminated",
-	):
+	case containsAny(s, channelGoneSignatures...):
 		return &TerminalError{Reason: "deleted", Detail: detail}
-	case containsAny(s, "members-only", "join this channel"):
+	case containsAny(s, membersSignatures...):
 		return &TerminalError{Reason: "members", Detail: detail}
-	case containsAny(s, "age-restricted", "confirm your age"):
+	case containsAny(s, ageSignatures...):
 		return &TerminalError{Reason: "age", Detail: detail}
-	case containsAny(s, "not available in your country", "not available on this app"):
+	case containsAny(s, geoSignatures...):
 		return &TerminalError{Reason: "geo", Detail: detail}
 	case containsAny(s, "http error 429", "429: too many requests", "http error 5"):
 		return &RetryableError{Reason: "rate limited or server error", Detail: detail}
@@ -241,6 +256,36 @@ func Classify(stderr string, exitErr error) error {
 		return nil
 	}
 	return &ExecError{Err: exitErr, Stderr: detail}
+}
+
+// Per-video and channel gate signatures, shared by their Classify cases and
+// the host-refused guard that must not swallow them.
+var (
+	membersSignatures     = []string{"members-only", "join this channel"}
+	ageSignatures         = []string{"age-restricted", "confirm your age"}
+	geoSignatures         = []string{"not available in your country", "not available on this app"}
+	channelGoneSignatures = []string{
+		// Verified against real yt-dlp output run against a nonexistent
+		// channel: "ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube
+		// said: This channel does not exist."
+		"this channel does not exist",
+		// The known YouTube termination message. NOT verified against real
+		// yt-dlp output (no terminated channel was available to observe) —
+		// keep this comment until someone captures the real stderr line.
+		"this account has been terminated",
+	}
+)
+
+// errorLines is the ERROR: lines of an already-lowercased stderr, joined.
+func errorLines(s string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "error:") {
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }
 
 func containsAny(haystack string, subs ...string) bool {

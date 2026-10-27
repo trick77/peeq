@@ -293,7 +293,8 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		// there is nothing of this attempt to clean up, and a .part left by an
 		// earlier rate-limited attempt must survive so the requeued job can
 		// still --continue from it once the gate opens again.
-		if !isRetryable(execErr) && !IsRefused(execErr) {
+		// A host refusal is "not now" too: the user resumes, the job requeues.
+		if !isRetryable(execErr) && !IsRefused(execErr) && !errors.Is(execErr, ErrHostRefused) {
 			_ = os.RemoveAll(stagingDir)
 		}
 		return nil, execErr

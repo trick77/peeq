@@ -80,7 +80,10 @@ func (s *Scheduler) listChannel(ctx context.Context, ucid string, baseline, skip
 	case serr == nil:
 		answered = true
 		tab = streamsAnswered
-	case errors.Is(serr, ytdlp.ErrBlocked), errors.Is(serr, ytdlp.ErrCookieExpired):
+	case errors.Is(serr, ytdlp.ErrBlocked), errors.Is(serr, ytdlp.ErrCookieExpired),
+		// A host refusal comes back as ErrPaused after throwing the kill
+		// switch: the channel was not read, uploads alone are half of it.
+		errors.Is(serr, ytdlp.ErrPaused):
 		return nil, 0, streamsNotAsked, fmt.Errorf("scan: list streams %s: %w", ucid, serr)
 	case ytdlp.IsMissingTab(serr):
 		s.d.Logger.Debug("scan: channel has no streams tab", "channel_id", ucid)
