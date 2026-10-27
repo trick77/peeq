@@ -326,6 +326,47 @@ func TestSettingsHandlers_putRejectsNegativeNumbers(t *testing.T) {
 	}
 }
 
+// ytdlp_ip_family is "", "4" or "6". Anything else is a 400 and leaves the
+// stored value alone; the three valid values round-trip, "" included.
+func TestSettingsHandlers_putYtdlpIPFamily(t *testing.T) {
+	put := func(t *testing.T, h http.Handler, c *http.Cookie, v string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"ytdlp_ip_family": v})
+		req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+		req.AddCookie(c)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	for _, v := range []string{"5", "ipv6", "v4"} {
+		t.Run("rejects/"+v, func(t *testing.T) {
+			h := New(testDeps(t))
+			c := loginAndGetCookie(t, h)
+			if rec := put(t, h, c, v); rec.Code != http.StatusBadRequest {
+				t.Fatalf("PUT ytdlp_ip_family=%q status = %d, want 400, body = %s", v, rec.Code, rec.Body.String())
+			}
+		})
+	}
+
+	h := New(testDeps(t))
+	c := loginAndGetCookie(t, h)
+	for _, v := range []string{"6", "4", ""} {
+		rec := put(t, h, c, v)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PUT ytdlp_ip_family=%q status = %d, body = %s", v, rec.Code, rec.Body.String())
+		}
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("unmarshal PUT response: %v", err)
+		}
+		if got["ytdlp_ip_family"] != v {
+			t.Fatalf("ytdlp_ip_family = %v after PUT %q", got["ytdlp_ip_family"], v)
+		}
+	}
+}
+
 // An unknown format_preset makes ytdlp.Resolve error, which surfaces as a
 // failed download for EVERY video until the setting is corrected. A retired
 // id gets here without anyone hand-crafting a request — a Settings tab

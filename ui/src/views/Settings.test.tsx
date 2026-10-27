@@ -23,6 +23,7 @@ const baseSettings: SettingsType = {
   min_video_duration_seconds: 60,
   subtitles_default: false,
   direct_stream_enabled: false,
+  ytdlp_ip_family: "",
   ytdlp_version: "2026.01.01",
   youtube_paused: false,
   youtube_pause_reason: "",
@@ -247,6 +248,27 @@ describe("Settings", () => {
       // on the page — that is the difference this test exists to catch.
       expect(group).toHaveTextContent(phrase);
     }
+  });
+
+  it("pins yt-dlp to one IP family", async () => {
+    const user = userEvent.setup();
+    vi.mocked(updateSettings).mockResolvedValue({
+      ...baseSettings,
+      ytdlp_ip_family: "6",
+    });
+    render(<Settings />);
+    const select = await screen.findByRole("combobox", {
+      name: /ip version for youtube/i,
+    });
+    // Unset means yt-dlp decides, which is today's behaviour.
+    expect(select).toHaveValue("");
+
+    await user.selectOptions(select, "6");
+
+    await waitFor(() => {
+      expect(updateSettings).toHaveBeenCalledWith({ ytdlp_ip_family: "6" });
+    });
+    await waitFor(() => expect(select).toHaveValue("6"));
   });
 
   it("toggles direct playback links", async () => {

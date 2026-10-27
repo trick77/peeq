@@ -110,6 +110,10 @@ type RunnerConfig struct {
 	// runs. It is consulted before the throttle sleep and again after it, so
 	// a switch thrown while a call was queued still stops that call.
 	PauseProvider func() (paused bool, reason string)
+	// IPFamilyProvider returns settings.ytdlp_ip_family ("", "4" or "6"),
+	// read on every call like CookieProvider, so a change in Settings takes
+	// effect on the next yt-dlp invocation. Defaults to IPFamilyAuto.
+	IPFamilyProvider func() string
 	// AllowAnonymous is a dev-only escape hatch (config.AllowAnonymousYoutube):
 	// when true, cookieGate lets an EMPTY cookie through instead of failing
 	// with ErrNoCookie, and exec omits --cookies entirely for that empty-text
@@ -199,6 +203,9 @@ func New(cfg RunnerConfig) *Runner {
 	}
 	if cfg.PauseProvider == nil {
 		cfg.PauseProvider = func() (bool, string) { return false, "" }
+	}
+	if cfg.IPFamilyProvider == nil {
+		cfg.IPFamilyProvider = func() string { return IPFamilyAuto }
 	}
 	if cfg.ThrottleJitter == 0 {
 		cfg.ThrottleJitter = defaultThrottleJitter
@@ -726,6 +733,9 @@ func (r *Runner) execCall(ctx context.Context, held *heldTurn, onLine func(strin
 		// AllowAnonymous dev carve-out) is better left on yt-dlp's own defaults.
 		fullArgs = append([]string{"--cookies", cookieFile, "--extractor-args", playerClients}, args...)
 	}
+	// The address-family pin rides with neither branch: a block is on the
+	// host's address, so it bites an anonymous run as much as a cookie one.
+	fullArgs = append(ipFamilyArgs(r.cfg.IPFamilyProvider()), fullArgs...)
 	// Resolve the binary path fresh on every invocation (not once at boot),
 	// so a self-updated yt-dlp written to disk after startup is used without
 	// requiring a restart.

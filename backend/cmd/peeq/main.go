@@ -199,6 +199,11 @@ func run() error {
 			paused, reason, _ := settingsStore.YoutubePaused(context.Background())
 			return paused, reason
 		},
+		IPFamilyProvider: func() string {
+			// Per call, like the cookie: a Settings change applies to the
+			// next yt-dlp invocation.
+			return settingsStore.YtdlpIPFamily(context.Background())
+		},
 		ThrottleFloor:  time.Duration(initialSettings.ThrottleBaseSeconds) * time.Second,
 		MediaDir:       cfg.MediaDir,
 		AllowAnonymous: cfg.AllowAnonymousYoutube,

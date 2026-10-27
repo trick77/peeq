@@ -327,6 +327,10 @@ export type Settings = {
   // needs: an Apple TV fetches the media URL itself and cannot sign in. Off by
   // default; turning it off revokes every link already handed out.
   direct_stream_enabled: boolean;
+  // ytdlp_ip_family — "" lets yt-dlp choose, "4"/"6" pins every yt-dlp call
+  // to that address family. YouTube blocks per address: one family can be
+  // refused while the other still plays.
+  ytdlp_ip_family: YtdlpIPFamily;
   ytdlp_version: string;
   // youtube_paused/youtube_pause_reason mirror the Task 10 global kill-switch
   // fields — user-writable, but only via the dedicated POST
@@ -349,7 +353,10 @@ export type SettingsPatch = Partial<{
   min_video_duration_seconds: number;
   subtitles_default: boolean;
   direct_stream_enabled: boolean;
+  ytdlp_ip_family: YtdlpIPFamily;
 }>;
+
+export type YtdlpIPFamily = "" | "4" | "6";
 
 // PlaybackGrant is what POST /api/videos/{id}/playback-grant returns: an
 // auth-free URL for one video and when it stops working. There is no token

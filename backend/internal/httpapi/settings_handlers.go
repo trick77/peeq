@@ -23,6 +23,7 @@ type settingsPatchRequest struct {
 	MinVideoDurationSeconds *int    `json:"min_video_duration_seconds"`
 	SubtitlesDefault        *bool   `json:"subtitles_default"`
 	DirectStreamEnabled     *bool   `json:"direct_stream_enabled"`
+	YtdlpIPFamily           *string `json:"ytdlp_ip_family"`
 }
 
 // cookiePutRequest is the request body for PUT /api/settings/cookie.
@@ -91,6 +92,13 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			"unknown format_preset "+strconv.Quote(*req.FormatPreset))
 		return
 	}
+	// The column's CHECK would refuse it too, but as a 500; this is the
+	// caller's mistake, so say so.
+	if req.YtdlpIPFamily != nil && !ytdlp.IsIPFamily(*req.YtdlpIPFamily) {
+		httpx.WriteError(w, http.StatusBadRequest,
+			"unknown ytdlp_ip_family "+strconv.Quote(*req.YtdlpIPFamily))
+		return
+	}
 	patch := settings.Patch{
 		FormatPreset:            req.FormatPreset,
 		FormatCustom:            req.FormatCustom,
@@ -103,6 +111,7 @@ func (s *server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		// bool cannot be out of range.
 		SubtitlesDefault:    req.SubtitlesDefault,
 		DirectStreamEnabled: req.DirectStreamEnabled,
+		YtdlpIPFamily:       req.YtdlpIPFamily,
 	}
 	if err := s.settings.Update(r.Context(), patch); err != nil {
 		httpx.ServerError(w, r, err, "failed to update settings")

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTransient } from "../hooks/useTransient";
 import { Icon } from "../icons";
-import { Button, Spinner, t } from "../ui";
+import { Button, Spinner, controlClass, t } from "../ui";
 import {
   updateSettings,
   putCookie,
@@ -12,7 +12,11 @@ import { getYtdlpVersion, updateYtdlp, type YtdlpVersion } from "../api/ytdlp";
 import { formatAgo } from "../format";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
 import { publishSettings, refreshSettings } from "../settingsStore";
-import type { Settings as SettingsType, SettingsPatch } from "../api/types";
+import type {
+  Settings as SettingsType,
+  SettingsPatch,
+  YtdlpIPFamily,
+} from "../api/types";
 import { DOT } from "../sep";
 import { PRESETS } from "../formatPresets";
 
@@ -229,6 +233,9 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
     save({ subtitles_default: next });
   const handleToggleDirectStream = (next: boolean) =>
     save({ direct_stream_enabled: next });
+  // Renders straight off settings like the checkboxes: a pick is one PUT.
+  const handlePickIPFamily = (next: YtdlpIPFamily) =>
+    save({ ytdlp_ip_family: next });
 
   async function handleCreateToken() {
     setTokenBusy(true);
@@ -681,6 +688,27 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
             <p className="retain-note">{ytdlpCheckNote(ytdlp)}</p>
             {ytdlpError ? <p className="retain-note">{ytdlpError}</p> : null}
             {ytdlpNote ? <p className="retain-note">{ytdlpNote}</p> : null}
+          </div>
+          <div className="ctrl">
+            <span className="lab">IP version for YouTube</span>
+            <select
+              className={controlClass}
+              value={settings.ytdlp_ip_family}
+              onChange={(e) =>
+                handlePickIPFamily(e.target.value as YtdlpIPFamily)
+              }
+              aria-label="IP version for YouTube"
+            >
+              <option value="">Automatic</option>
+              <option value="4">IPv4 only</option>
+              <option value="6">IPv6 only</option>
+            </select>
+            <p className="retain-note">
+              Passed to yt-dlp as <b>--force-ipv4</b> / <b>--force-ipv6</b>. Pin
+              one when YouTube answers every video with &ldquo;This content
+              isn&rsquo;t available&rdquo;: it blocks by address, often only one
+              of the two.
+            </p>
           </div>
         </div>
       </section>
