@@ -177,7 +177,7 @@ func run() error {
 	// youtube_paused kill-switch automatically (yt-dlp is most likely broken
 	// against a YouTube change, not any single video/channel).
 	const autoPauseReason = "Auto-paused after repeated extractor failures — yt-dlp may need updating. Update yt-dlp, then resume."
-	const hostRefusedPauseReason = "Paused: YouTube refuses this server (\"This content isn't available\" on every video). Its address is blocked; try another IP version in Settings, then resume."
+	const hostRefusedPauseReason = "Paused: YouTube refuses this server (\"This content isn't available\"). Either its address is blocked, so try another IP version in Settings, or the session is rate-limited for up to an hour. Then resume."
 	failMonitor := failmonitor.New(3, func() {
 		if err := settingsStore.SetYoutubePaused(context.Background(), true, autoPauseReason); err != nil {
 			slog.Error("auto-pause: set youtube_paused failed", "err", err)
@@ -209,13 +209,19 @@ func run() error {
 			defer cancel()
 			return settingsStore.YtdlpIPFamily(ctx)
 		},
-		OnHostRefused: func(err error) {
+		OnHostRefused: func(err error) error {
 			// Every call would get the same answer: stop them all, and say
 			// what to try. Resuming is the user's call, like any pause.
+			// Bounded like IPFamilyProvider: this runs under the one turn.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
 			slog.Error("youtube refused this server; pausing youtube activity", "err", err)
-			if serr := settingsStore.SetYoutubePaused(context.Background(), true, hostRefusedPauseReason); serr != nil {
-				slog.Error("youtube pause on host refusal failed", "err", serr)
+			// An existing pause keeps its own reason: the user's, or the
+			// fail monitor's, says more than this one would.
+			if paused, _, perr := settingsStore.YoutubePaused(ctx); perr == nil && paused {
+				return nil
 			}
+			return settingsStore.SetYoutubePaused(ctx, true, hostRefusedPauseReason)
 		},
 		ThrottleFloor:  time.Duration(initialSettings.ThrottleBaseSeconds) * time.Second,
 		MediaDir:       cfg.MediaDir,

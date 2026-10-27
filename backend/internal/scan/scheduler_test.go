@@ -647,6 +647,9 @@ func TestScan_streamsTabError_toleratedExceptSentinels(t *testing.T) {
 		{"unrecognised", errors.New("some transient yt-dlp hiccup"), false},
 		{"blocked", ytdlp.ErrBlocked, true},
 		{"cookie expired", ytdlp.ErrCookieExpired, true},
+		// A host refusal throws the kill switch and comes back as ErrPaused:
+		// finishing on uploads alone would record a half-read channel.
+		{"paused", ytdlp.ErrPaused, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newScanHarness(t)
