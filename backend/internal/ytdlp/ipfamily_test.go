@@ -1,10 +1,13 @@
 package ytdlp
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -86,6 +89,59 @@ func TestExec_ipFamily_appliesWithoutCookie(t *testing.T) {
 	})
 	if !strings.Contains(args, "--force-ipv6") {
 		t.Fatalf("args %q must contain --force-ipv6 in anonymous mode", args)
+	}
+}
+
+// Posters and channel art come off YouTube's CDN through Go's own client, not
+// yt-dlp, and a blocked address blocks them too: the pin dials only that
+// family. The test server listens on 127.0.0.1, so "6" cannot reach it.
+func TestFetchImage_ipFamily_pinsTheDial(t *testing.T) {
+	var hits atomic.Int32
+	url := imageServer(t, &hits)
+	for _, c := range []struct {
+		family string
+		ok     bool
+	}{{"4", true}, {"", true}, {"6", false}} {
+		t.Run("family="+c.family, func(t *testing.T) {
+			r := New(RunnerConfig{
+				CookieProvider:   func() (string, string) { return "cookie-text", "valid" },
+				Sleep:            func(context.Context, time.Duration) error { return nil },
+				IPFamilyProvider: func() string { return c.family },
+			})
+			_, _, err := r.FetchImage(context.Background(), url)
+			if c.ok && err != nil {
+				t.Fatalf("FetchImage over family %q: %v", c.family, err)
+			}
+			if !c.ok && err == nil {
+				t.Fatalf("FetchImage over family %q reached an IPv4-only server", c.family)
+			}
+		})
+	}
+}
+
+// A failed call's log names the family it ran on: after switching the
+// setting, "did this failure go out pinned?" is the first question.
+func TestExec_ipFamily_failureLogNamesTheFamily(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "fail.sh")
+	content := "#!/bin/sh\necho 'ERROR: [youtube] x: boom' >&2\nexit 1\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ family, want string }{{"6", "ip_family=6"}, {"", "ip_family=auto"}} {
+		var buf bytes.Buffer
+		r := New(RunnerConfig{
+			Bin:              script,
+			CookieProvider:   func() (string, string) { return "cookie-text", "valid" },
+			Sleep:            func(context.Context, time.Duration) error { return nil },
+			IPFamilyProvider: func() string { return c.family },
+			Logger:           slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		})
+		if _, err := r.Metadata(context.Background(), "https://youtu.be/dQw4w9WgXcQ"); err == nil {
+			t.Fatal("Metadata succeeded against a failing binary")
+		}
+		if !strings.Contains(buf.String(), c.want) {
+			t.Fatalf("family %q: log %q must contain %q", c.family, buf.String(), c.want)
+		}
 	}
 }
 

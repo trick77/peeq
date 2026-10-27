@@ -539,10 +539,11 @@ func (r *Runner) logStderr(ctx context.Context, stderr string) {
 	r.logStderrLines(ctx, slog.LevelDebug, "yt-dlp stderr", stderr)
 }
 
-// failed classifies a failed run and logs its stderr.
-func (r *Runner) failed(ctx context.Context, stderr string, runErr error) error {
+// failed classifies a failed run and logs its stderr, with the IP family the
+// run was pinned to.
+func (r *Runner) failed(ctx context.Context, stderr string, runErr error, family string) error {
 	err := Classify(stderr, runErr)
-	r.logFailedStderr(ctx, stderr, runErr, err)
+	r.logFailedStderr(ctx, stderr, runErr, err, family)
 	return err
 }
 
@@ -558,13 +559,16 @@ func (r *Runner) failed(ctx context.Context, stderr string, runErr error) error 
 // walled-off videos and expects exactly that; its Detail already carries the
 // ERROR line into the caller's error), and a run whose context was cancelled
 // (shutdown, job cancel).
-func (r *Runner) logFailedStderr(ctx context.Context, stderr string, runErr, classified error) {
+func (r *Runner) logFailedStderr(ctx context.Context, stderr string, runErr, classified error, family string) {
 	level := slog.LevelWarn
 	var terminal *TerminalError
 	if IsMissingTab(classified) || errors.As(classified, &terminal) || ctx.Err() != nil {
 		level = slog.LevelDebug
 	}
-	var attrs []any
+	if family == IPFamilyAuto {
+		family = "auto"
+	}
+	attrs := []any{"ip_family", family}
 	var exitErr *exec.ExitError
 	if errors.As(runErr, &exitErr) {
 		attrs = append(attrs, "exit_code", exitErr.ExitCode())
@@ -735,7 +739,8 @@ func (r *Runner) execCall(ctx context.Context, held *heldTurn, onLine func(strin
 	}
 	// The address-family pin rides with neither branch: a block is on the
 	// host's address, so it bites an anonymous run as much as a cookie one.
-	fullArgs = append(ipFamilyArgs(r.cfg.IPFamilyProvider()), fullArgs...)
+	family := r.cfg.IPFamilyProvider()
+	fullArgs = append(ipFamilyArgs(family), fullArgs...)
 	// Resolve the binary path fresh on every invocation (not once at boot),
 	// so a self-updated yt-dlp written to disk after startup is used without
 	// requiring a restart.
@@ -761,7 +766,7 @@ func (r *Runner) execCall(ctx context.Context, held *heldTurn, onLine func(strin
 				r.cfg.Logger.Warn("yt-dlp runtime ceiling hit",
 					"video_id", callLabel(ctx), "args", argsWithoutURLs(args), "after", maxCallRuntime)
 			}
-			return nil, r.failed(ctx, stderr.String(), runErr)
+			return nil, r.failed(ctx, stderr.String(), runErr, family)
 		}
 		r.logStderr(ctx, stderr.String())
 		return stdout.Bytes(), nil
@@ -801,7 +806,7 @@ func (r *Runner) execCall(ctx context.Context, held *heldTurn, onLine func(strin
 
 	runErr := cmd.Wait()
 	if runErr != nil {
-		return nil, r.failed(ctx, stderr.String(), runErr)
+		return nil, r.failed(ctx, stderr.String(), runErr, family)
 	}
 	// cmd.Wait() succeeding doesn't mean the stdout scan actually saw
 	// everything: a mid-stream read error (scanner.Err()) would otherwise

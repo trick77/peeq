@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/cookie"
@@ -311,6 +312,10 @@ func (s *Store) YtdlpIPFamily(ctx context.Context) string {
 	err := s.db.QueryRowContext(ctx,
 		`SELECT ytdlp_ip_family FROM settings WHERE id = 1`).Scan(&family)
 	if err != nil {
+		// Logged: a call sent unpinned over a blocked family fails with a
+		// misleading "content isn't available", and this line is what ties
+		// that failure back to the read.
+		slog.Warn("ytdlp ip family unreadable; using automatic", "err", err)
 		return ""
 	}
 	return family

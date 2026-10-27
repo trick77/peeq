@@ -271,6 +271,25 @@ describe("Settings", () => {
     await waitFor(() => expect(select).toHaveValue("6"));
   });
 
+  it("keeps the picked IP family while its save is in flight, and reverts it on failure", async () => {
+    const user = userEvent.setup();
+    let reject!: (e: Error) => void;
+    vi.mocked(updateSettings).mockImplementationOnce(
+      () => new Promise((_, rej) => (reject = rej)),
+    );
+    render(<Settings />);
+    const select = await screen.findByRole("combobox", {
+      name: /ip version for youtube/i,
+    });
+
+    await user.selectOptions(select, "6");
+    // No snap back to the stored value while the PUT is pending.
+    expect(select).toHaveValue("6");
+
+    reject(new Error("failed to save settings"));
+    await waitFor(() => expect(select).toHaveValue(""));
+  });
+
   it("toggles direct playback links", async () => {
     const user = userEvent.setup();
     vi.mocked(updateSettings).mockResolvedValue({

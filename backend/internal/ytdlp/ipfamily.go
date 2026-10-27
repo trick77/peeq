@@ -1,7 +1,14 @@
 package ytdlp
 
+import (
+	"context"
+	"net"
+	"net/http"
+	"time"
+)
+
 // IP families settings.ytdlp_ip_family may hold. Empty leaves the choice to
-// yt-dlp, which in practice means IPv4.
+// yt-dlp (and the host's resolver order).
 //
 // The setting exists because YouTube blocks by address, and per family: a
 // server's IPv4 address can answer every call, anonymous or not, with
@@ -21,6 +28,31 @@ func IsIPFamily(v string) bool {
 		return true
 	}
 	return false
+}
+
+// imageClients are the HTTP clients FetchImage uses, one per family. Built
+// once: each owns a Transport and its idle connections.
+var imageClients = map[string]*http.Client{
+	IPFamilyV4: familyClient("tcp4"),
+	IPFamilyV6: familyClient("tcp6"),
+}
+
+// imageClient is the client that dials only family, or http.DefaultClient for
+// automatic (and, as with ipFamilyArgs, for an unknown value).
+func imageClient(family string) *http.Client {
+	if c, ok := imageClients[family]; ok {
+		return c
+	}
+	return http.DefaultClient
+}
+
+func familyClient(network string) *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	tr.DialContext = func(ctx context.Context, _, addr string) (net.Conn, error) {
+		return d.DialContext(ctx, network, addr)
+	}
+	return &http.Client{Transport: tr}
 }
 
 // ipFamilyArgs is the yt-dlp flag that pins family, or nothing. An unknown

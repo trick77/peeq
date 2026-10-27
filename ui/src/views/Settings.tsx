@@ -89,6 +89,9 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
   const [throttleBase, setThrottleBase] = useState(20);
   const [retentionDays, setRetentionDays] = useState(14);
   const [minVideoDuration, setMinVideoDuration] = useState(0);
+  // Mirrors settings.ytdlp_ip_family so a pick shows at once, not when the
+  // PUT answers; a failed save puts the stored value back.
+  const [ipFamily, setIPFamily] = useState<YtdlpIPFamily>("");
 
   const [ytdlp, setYtdlp] = useState<YtdlpVersion | null>(null);
   const [ytdlpBusy, setYtdlpBusy] = useState(false);
@@ -130,6 +133,7 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
         setThrottleBase(s.throttle_base_seconds);
         setRetentionDays(s.retention_days);
         setMinVideoDuration(s.min_video_duration_seconds);
+        setIPFamily(s.ytdlp_ip_family ?? "");
         setError(null);
       })
       .catch((e: Error) => setError(e.message));
@@ -187,16 +191,21 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
   // back to its old self while its save was still on the wire would be taken
   // for unchanged and never sent.
   const sent = useRef<SettingsPatch>({});
-  async function save(patch: SettingsPatch) {
-    if (!settings) return;
+  // Resolves false when the PUT failed, for a field that shows its pick
+  // before the answer and has to take it back.
+  async function save(patch: SettingsPatch): Promise<boolean> {
+    if (!settings) return false;
     const expected: Record<string, unknown> = { ...settings, ...sent.current };
     const incoming: Record<string, unknown> = patch;
-    if (Object.keys(incoming).every((k) => expected[k] === incoming[k])) return;
+    if (Object.keys(incoming).every((k) => expected[k] === incoming[k]))
+      return true;
     sent.current = { ...sent.current, ...patch };
     try {
       adoptSettings(await updateSettings(patch));
+      return true;
     } catch (err) {
       setError((err as Error).message);
+      return false;
     } finally {
       // Forget only what this save put there: a later save of the same field
       // has replaced the value, and its own answer is still to come.
@@ -233,9 +242,13 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
     save({ subtitles_default: next });
   const handleToggleDirectStream = (next: boolean) =>
     save({ direct_stream_enabled: next });
-  // Renders straight off settings like the checkboxes: a pick is one PUT.
-  const handlePickIPFamily = (next: YtdlpIPFamily) =>
-    save({ ytdlp_ip_family: next });
+  // A pick is one PUT; the mirror shows it meanwhile and is reverted to the
+  // stored value if the PUT fails.
+  async function handlePickIPFamily(next: YtdlpIPFamily) {
+    const before = settings?.ytdlp_ip_family ?? "";
+    setIPFamily(next);
+    if (!(await save({ ytdlp_ip_family: next }))) setIPFamily(before);
+  }
 
   async function handleCreateToken() {
     setTokenBusy(true);
@@ -693,9 +706,9 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
             <span className="lab">IP version for YouTube</span>
             <select
               className={controlClass}
-              value={settings.ytdlp_ip_family}
+              value={ipFamily}
               onChange={(e) =>
-                handlePickIPFamily(e.target.value as YtdlpIPFamily)
+                void handlePickIPFamily(e.target.value as YtdlpIPFamily)
               }
               aria-label="IP version for YouTube"
             >

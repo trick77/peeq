@@ -58,6 +58,12 @@ var imageExts = map[string]string{
 // read one byte past the cap so an oversize response is detected rather than
 // silently truncated.
 func FetchImageBytes(ctx context.Context, url string) (string, []byte, error) {
+	return FetchImageBytesWith(ctx, http.DefaultClient, url)
+}
+
+// FetchImageBytesWith is FetchImageBytes over client, for a caller that has
+// to control the dial (ytdlp pins the IP family).
+func FetchImageBytesWith(ctx context.Context, client *http.Client, url string) (string, []byte, error) {
 	if url == "" {
 		return "", nil, nil
 	}
@@ -72,7 +78,7 @@ func FetchImageBytes(ctx context.Context, url string) (string, []byte, error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("fetch image: %w", logx.RedactErr(err))
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", nil, fmt.Errorf("fetch image: %w", logx.RedactErr(err))
 	}
