@@ -356,15 +356,19 @@ describe("Settings", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Update$/ }));
 
     expect(
-      await screen.findByText("Updated 2026.01.01 → 2026.08.15."),
+      await screen.findByText("Updated 01.01.2026 → 15.08.2026."),
     ).toBeInTheDocument();
   });
 
   it("reports the installed version and a successful release check", async () => {
     render(<Settings />);
-    expect(await screen.findByText("2026.01.01")).toBeInTheDocument();
+    // The raw release tag stays reachable on hover.
+    expect(await screen.findByText("01.01.2026")).toHaveAttribute(
+      "title",
+      "2026.01.01",
+    );
     expect(
-      await screen.findByText(/Latest release 2026\.01\.01/),
+      await screen.findByText(/Latest release 01\.01\.2026/),
     ).toBeInTheDocument();
   });
 
@@ -377,7 +381,7 @@ describe("Settings", () => {
     });
     render(<Settings />);
     expect(
-      await screen.findByText(/2026\.08\.15 is available/),
+      await screen.findByText(/15\.08\.2026 is available/),
     ).toBeInTheDocument();
   });
 
@@ -400,7 +404,7 @@ describe("Settings", () => {
     // The stale answer is still worth showing — it is the best available —
     // so long as its age is shown with it.
     expect(
-      screen.getByText(/Last known release 2026\.08\.15/),
+      screen.getByText(/Last known release 15\.08\.2026/),
     ).toBeInTheDocument();
   });
 
@@ -417,12 +421,12 @@ describe("Settings", () => {
       updated: true,
     });
     render(<Settings />);
-    await screen.findByText(/2026\.08\.15 is available/);
+    await screen.findByText(/15\.08\.2026 is available/);
 
     fireEvent.click(await screen.findByRole("button", { name: /^Update$/ }));
 
     expect(
-      await screen.findByText(/Latest release 2026\.08\.15/),
+      await screen.findByText(/Latest release 15\.08\.2026/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/is available/)).toBeNull();
   });

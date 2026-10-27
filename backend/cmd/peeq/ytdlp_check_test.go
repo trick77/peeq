@@ -295,7 +295,7 @@ func TestYtdlpVersionCheck_recordsActivityOnce(t *testing.T) {
 	if got.Kind != activity.KindYtdlp || got.Outcome != activity.OutcomeWarn {
 		t.Fatalf("event = %s/%s, want %s/%s", got.Kind, got.Outcome, activity.KindYtdlp, activity.OutcomeWarn)
 	}
-	if !strings.Contains(got.Summary, "2026.09.20") {
+	if !strings.Contains(got.Summary, "20.09.2026") {
 		t.Fatalf("summary = %q, want it to name the new release", got.Summary)
 	}
 }

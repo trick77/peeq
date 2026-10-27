@@ -9,7 +9,7 @@ import {
   createAPIToken,
 } from "../api/settings";
 import { getYtdlpVersion, updateYtdlp, type YtdlpVersion } from "../api/ytdlp";
-import { formatAgo } from "../format";
+import { formatAgo, formatYtdlpVersion } from "../format";
 import { pauseYoutube, resumeYoutube } from "../api/downloads";
 import { publishSettings, refreshSettings } from "../settingsStore";
 import type {
@@ -53,14 +53,16 @@ function ytdlpCheckNote(v: YtdlpVersion | null): string {
     // last-known release and no timestamp, and would otherwise render with a
     // doubled period.
     const when = v.checked_at ? `, seen ${formatAgo(v.checked_at)}` : "";
-    const known = v.latest ? ` Last known release ${v.latest}${when}.` : "";
+    const known = v.latest
+      ? ` Last known release ${formatYtdlpVersion(v.latest)}${when}.`
+      : "";
     return `Couldn't reach GitHub to check for newer releases.${known}`;
   }
   if (!v.latest) return "Checking for newer releases.";
   if (v.update_available) {
-    return `${v.latest} is available ${DOT} checked ${formatAgo(v.checked_at)}.`;
+    return `${formatYtdlpVersion(v.latest)} is available ${DOT} checked ${formatAgo(v.checked_at)}.`;
   }
-  return `Latest release ${v.latest} ${DOT} checked ${formatAgo(v.checked_at)}.`;
+  return `Latest release ${formatYtdlpVersion(v.latest)} ${DOT} checked ${formatAgo(v.checked_at)}.`;
 }
 
 // Settings — cookie / format preset / rate-limit / retention / yt-dlp
@@ -300,9 +302,11 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
       }));
       onStatusChanged?.();
       if (res.updated && res.previous_version) {
-        setYtdlpNote(`Updated ${res.previous_version} → ${res.version}.`);
+        setYtdlpNote(
+          `Updated ${formatYtdlpVersion(res.previous_version)} → ${formatYtdlpVersion(res.version)}.`,
+        );
       } else if (res.updated) {
-        setYtdlpNote(`Installed ${res.version}.`);
+        setYtdlpNote(`Installed ${formatYtdlpVersion(res.version)}.`);
       } else {
         setYtdlpNote("Already on the latest version.");
       }
@@ -685,8 +689,10 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
           <div className="ctrl">
             <span className="lab">yt-dlp version</span>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span className="mono" style={t.label}>
-                {ytdlp?.version || "unknown"}
+              {/* The raw version is the release tag: kept on hover for a bug
+                  report or a search of yt-dlp's releases. */}
+              <span className="mono" style={t.label} title={ytdlp?.version}>
+                {ytdlp?.version ? formatYtdlpVersion(ytdlp.version) : "unknown"}
               </span>
               <Button
                 type="button"

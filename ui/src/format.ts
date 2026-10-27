@@ -421,3 +421,25 @@ export function formatStamp(stored: string | undefined): string {
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleDateString();
 }
+
+// formatYtdlpVersion renders a yt-dlp version, a dotted date ("2026.10.26"),
+// as "26.10.2026"; a same-day build suffix stays after a dash
+// ("2026.10.26.1" → "26.10.2026-1"). Anything that is not a valid dotted date
+// comes back unchanged. Display only: the raw string is what the backend
+// compares. Same rule as the backend's ytdlp.DisplayVersion.
+export function formatYtdlpVersion(v: string): string {
+  const m = /^(\d{4})\.(\d{2})\.(\d{2})(?:\.(.+))?$/.exec(v);
+  if (!m) return v;
+  const [, y, mo, d, build] = m;
+  // setUTCFullYear, not Date.UTC: the latter maps years 0-99 to 19xx.
+  const date = new Date(0);
+  date.setUTCFullYear(Number(y), Number(mo) - 1, Number(d));
+  if (
+    date.getUTCFullYear() !== Number(y) ||
+    date.getUTCMonth() !== Number(mo) - 1 ||
+    date.getUTCDate() !== Number(d)
+  ) {
+    return v;
+  }
+  return `${d}.${mo}.${y}${build ? `-${build}` : ""}`;
+}

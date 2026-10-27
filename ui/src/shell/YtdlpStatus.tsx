@@ -1,3 +1,5 @@
+import { formatYtdlpVersion } from "../format";
+
 // YtdlpStatus — the rail-foot indicator for a waiting yt-dlp update, sitting
 // directly under CookieStatus and sharing its styling.
 //
@@ -24,7 +26,7 @@ export function YtdlpStatus({
         yt-dlp <b>update available</b>
         <br />
         <span className="ytdlp-detail">
-          {version} → {latest}
+          {formatYtdlpVersion(version)} → {formatYtdlpVersion(latest)}
         </span>
       </div>
     </div>
