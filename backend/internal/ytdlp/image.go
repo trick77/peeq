@@ -14,7 +14,8 @@ import (
 // valid cookie, and run only when it holds the turn, never alongside a yt-dlp
 // process and always a gap after the previous call. The cookie is only
 // checked, never sent: the CDN does not need it. An empty url is a no-op that
-// costs no turn, like media.FetchImageBytes.
+// costs no turn, like media.FetchImageBytes. It dials the IP family the
+// yt-dlp calls are pinned to: a blocked address blocks the CDN too.
 //
 // This is the only caller of media.FetchImageBytes outside tests.
 func (r *Runner) FetchImage(ctx context.Context, url string) (string, []byte, error) {
@@ -38,5 +39,5 @@ func (r *Runner) FetchImage(ctx context.Context, url string) (string, []byte, er
 		return "", nil, &RefusedError{Err: err}
 	}
 	ran = true
-	return media.FetchImageBytes(ctx, url)
+	return media.FetchImageBytesWith(ctx, imageClient(r.cfg.IPFamilyProvider()), url)
 }

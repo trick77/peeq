@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/cookie"
@@ -33,6 +34,7 @@ type Settings struct {
 	MinVideoDurationSeconds int    `json:"min_video_duration_seconds"`
 	SubtitlesDefault        bool   `json:"subtitles_default"`
 	DirectStreamEnabled     bool   `json:"direct_stream_enabled"`
+	YtdlpIPFamily           string `json:"ytdlp_ip_family"`
 	YTDLPVersion            string `json:"ytdlp_version"`
 	YoutubePaused           bool   `json:"youtube_paused"`
 	YoutubePauseReason      string `json:"youtube_pause_reason"`
@@ -58,6 +60,9 @@ type Patch struct {
 	// and every outstanding grant stops working immediately, so this doubles as
 	// the feature's kill switch.
 	DirectStreamEnabled *bool
+	// YtdlpIPFamily pins every yt-dlp call to one address family ("4", "6"),
+	// or "" for yt-dlp's own choice. Nil leaves it; a pointer to "" resets it.
+	YtdlpIPFamily *string
 }
 
 // Store persists the settings singleton row.
@@ -83,14 +88,14 @@ func (s *Store) Get(ctx context.Context) (Settings, error) {
 	err := s.db.QueryRowContext(ctx, `
 SELECT cookie_status, cookie_updated_at, format_preset, format_custom, limit_rate,
        throttle_base_seconds, retention_days, min_free_gb, min_video_duration_seconds,
-       subtitles_default, direct_stream_enabled, ytdlp_version,
+       subtitles_default, direct_stream_enabled, ytdlp_ip_family, ytdlp_version,
        youtube_paused, youtube_pause_reason, youtube_paused_at
 FROM settings
 WHERE id = 1`,
 	).Scan(
 		&st.CookieStatus, &cookieUpdatedAt, &st.FormatPreset, &st.FormatCustom, &st.LimitRate,
 		&st.ThrottleBaseSeconds, &st.RetentionDays, &st.MinFreeGB, &st.MinVideoDurationSeconds,
-		&st.SubtitlesDefault, &st.DirectStreamEnabled, &st.YTDLPVersion,
+		&st.SubtitlesDefault, &st.DirectStreamEnabled, &st.YtdlpIPFamily, &st.YTDLPVersion,
 		&st.YoutubePaused, &st.YoutubePauseReason, &pausedAt,
 	)
 	if err != nil {
@@ -118,11 +123,12 @@ SET format_preset         = COALESCE(?, format_preset),
     min_free_gb           = COALESCE(?, min_free_gb),
     min_video_duration_seconds = COALESCE(?, min_video_duration_seconds),
     subtitles_default     = COALESCE(?, subtitles_default),
-    direct_stream_enabled = COALESCE(?, direct_stream_enabled)
+    direct_stream_enabled = COALESCE(?, direct_stream_enabled),
+    ytdlp_ip_family       = COALESCE(?, ytdlp_ip_family)
 WHERE id = 1`,
 		patch.FormatPreset, patch.FormatCustom, patch.LimitRate,
 		patch.ThrottleBaseSeconds, patch.RetentionDays, patch.MinFreeGB, patch.MinVideoDurationSeconds,
-		patch.SubtitlesDefault, patch.DirectStreamEnabled,
+		patch.SubtitlesDefault, patch.DirectStreamEnabled, patch.YtdlpIPFamily,
 	)
 	if err != nil {
 		return fmt.Errorf("update settings: %w", err)
@@ -293,6 +299,26 @@ func (s *Store) DirectStreamEnabled(ctx context.Context) bool {
 		return false
 	}
 	return enabled
+}
+
+// YtdlpIPFamily reports the address family yt-dlp is pinned to, without
+// loading the rest of the row: the Runner asks before EVERY call, so a change
+// in Settings applies to the next one. A read error answers "" (yt-dlp's own
+// choice), today's behaviour, rather than failing the call: the pause gate
+// already reads the same row and refuses on an error, so a blip that gets
+// this far is one the row answered a moment ago.
+func (s *Store) YtdlpIPFamily(ctx context.Context) string {
+	var family string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT ytdlp_ip_family FROM settings WHERE id = 1`).Scan(&family)
+	if err != nil {
+		// Logged: a call sent unpinned over a blocked family fails with a
+		// misleading "content isn't available", and this line is what ties
+		// that failure back to the read.
+		slog.Warn("ytdlp ip family unreadable; using automatic", "err", err)
+		return ""
+	}
+	return family
 }
 
 // SetAPITokenHash stores the token hash and stamps api_token_created_at,

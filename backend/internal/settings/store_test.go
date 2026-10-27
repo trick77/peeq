@@ -142,6 +142,56 @@ func TestSetAndReadYoutubePaused(t *testing.T) {
 	}
 }
 
+func TestUpdate_ytdlpIPFamily(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	got, err := s.Get(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.YtdlpIPFamily != "" {
+		t.Fatalf("ytdlp_ip_family seeds to %q, want empty (yt-dlp decides)", got.YtdlpIPFamily)
+	}
+
+	six := "6"
+	if err := s.Update(ctx, Patch{YtdlpIPFamily: &six}); err != nil {
+		t.Fatal(err)
+	}
+	// An unrelated patch must leave it alone (COALESCE).
+	days := 21
+	if err := s.Update(ctx, Patch{RetentionDays: &days}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.Get(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got.YtdlpIPFamily != "6" {
+		t.Fatalf("ytdlp_ip_family = %q, want %q", got.YtdlpIPFamily, "6")
+	}
+	if v := s.YtdlpIPFamily(ctx); v != "6" {
+		t.Fatalf("YtdlpIPFamily() = %q, want %q", v, "6")
+	}
+
+	// Back to automatic: "" is a real value here, not "unchanged".
+	auto := ""
+	if err := s.Update(ctx, Patch{YtdlpIPFamily: &auto}); err != nil {
+		t.Fatal(err)
+	}
+	if v := s.YtdlpIPFamily(ctx); v != "" {
+		t.Fatalf("YtdlpIPFamily() = %q after reset, want empty", v)
+	}
+}
+
+// The column's CHECK is the last line behind the handler's validation.
+func TestUpdate_ytdlpIPFamily_rejectsUnknown(t *testing.T) {
+	s := newTestStore(t)
+	bad := "5"
+	if err := s.Update(context.Background(), Patch{YtdlpIPFamily: &bad}); err == nil {
+		t.Fatal("Update accepted ytdlp_ip_family = 5")
+	}
+}
+
 func TestUpdate_minVideoDurationSeconds(t *testing.T) {
 	s := newTestStore(t) // existing helper in this test file
 	want := 300
