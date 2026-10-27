@@ -689,7 +689,9 @@ export function Settings({ onStatusChanged }: SettingsProps = {}) {
           <div className="ctrl">
             <span className="lab">yt-dlp version</span>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span className="mono" style={t.label}>
+              {/* The raw version is the release tag: kept on hover for a bug
+                  report or a search of yt-dlp's releases. */}
+              <span className="mono" style={t.label} title={ytdlp?.version}>
                 {ytdlp?.version ? formatYtdlpVersion(ytdlp.version) : "unknown"}
               </span>
               <Button

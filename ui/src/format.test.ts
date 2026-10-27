@@ -33,6 +33,8 @@ describe("formatYtdlpVersion", () => {
     ["2026.13.40", "2026.13.40"],
     ["2026.02.30", "2026.02.30"],
     ["2026.10.26.", "2026.10.26."],
+    // Date.UTC maps years 0-99 to 19xx; the Go side does not.
+    ["0050.01.01", "01.01.0050"],
     ["26.10.2026", "26.10.2026"],
   ])("%s → %s", (input, want) => {
     expect(formatYtdlpVersion(input)).toBe(want);

@@ -362,7 +362,11 @@ describe("Settings", () => {
 
   it("reports the installed version and a successful release check", async () => {
     render(<Settings />);
-    expect(await screen.findByText("01.01.2026")).toBeInTheDocument();
+    // The raw release tag stays reachable on hover.
+    expect(await screen.findByText("01.01.2026")).toHaveAttribute(
+      "title",
+      "2026.01.01",
+    );
     expect(
       await screen.findByText(/Latest release 01\.01\.2026/),
     ).toBeInTheDocument();

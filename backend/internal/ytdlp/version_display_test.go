@@ -18,6 +18,8 @@ func TestDisplayVersion(t *testing.T) {
 		{"2026.13.40", "2026.13.40"},
 		{"2026.02.30", "2026.02.30"},
 		{"2026.10.26.", "2026.10.26."},
+		// Parity with the UI's helper below year 100.
+		{"0050.01.01", "01.01.0050"},
 		{"26.10.2026", "26.10.2026"},
 	}
 	for _, c := range cases {

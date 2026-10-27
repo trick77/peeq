@@ -431,7 +431,9 @@ export function formatYtdlpVersion(v: string): string {
   const m = /^(\d{4})\.(\d{2})\.(\d{2})(?:\.(.+))?$/.exec(v);
   if (!m) return v;
   const [, y, mo, d, build] = m;
-  const date = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)));
+  // setUTCFullYear, not Date.UTC: the latter maps years 0-99 to 19xx.
+  const date = new Date(0);
+  date.setUTCFullYear(Number(y), Number(mo) - 1, Number(d));
   if (
     date.getUTCFullYear() !== Number(y) ||
     date.getUTCMonth() !== Number(mo) - 1 ||
