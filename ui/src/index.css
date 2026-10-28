@@ -422,9 +422,16 @@ button {
 .rail-nav-dot.hot {
   background: var(--color-accent);
 }
-.rail-nav-item:hover {
+.rail-nav-item:hover:not(:disabled) {
   color: var(--color-ink-dim);
   background: var(--color-active);
+}
+/* "Now playing" with nothing playing. Unlike an empty Inbox this is not a page
+   worth opening, so it reads as unavailable rather than merely quiet. */
+.rail-nav-item:disabled,
+.tabbar-item:disabled {
+  opacity: 0.42;
+  cursor: default;
 }
 .rail-nav-item.active {
   color: var(--color-ink);

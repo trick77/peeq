@@ -53,6 +53,15 @@ describe("TabBar", () => {
     expect(screen.getByRole("button", { name: "Inbox, 3" })).toBeTruthy();
   });
 
+  it("disables Now playing when nothing is playing", () => {
+    const { onNavigate } = renderBar({ nowPlayingDisabled: true });
+    const tab = screen.getByRole("button", { name: "Now playing" });
+    expect(tab).toBeDisabled();
+    fireEvent.click(tab);
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Library" })).toBeEnabled();
+  });
+
   it("shows no Up next count while nothing is running", () => {
     // Same rule the rail follows: a number that never falls reads as progress.
     renderBar({ upNextCount: 2, upNextLive: false });
