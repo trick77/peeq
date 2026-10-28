@@ -92,6 +92,13 @@ export function App() {
   // that load fails — the rail then behaves exactly as it did before this
   // existed.
   const [persistedVideoId, setPersistedVideoId] = useState<string | null>(null);
+  // Whether the server's pointer names a video, as last heard — what disables
+  // the rail's "Now playing" when nothing is playing. Kept apart from
+  // persistedVideoId because the tab-focus re-read below must only light the
+  // item, never swap the video a "Nothing playing" page at /video shows.
+  // undefined = not known (not loaded yet, or the read failed), which is not
+  // the same claim as "nothing": the item stays enabled then.
+  const [pointerSet, setPointerSet] = useState<boolean | undefined>(undefined);
   // Which video "Now playing" means: the one in the URL, else the persisted
   // pointer. This is the whole read side of the feature.
   const nowPlayingId = selectedVideoId ?? persistedVideoId;
@@ -195,8 +202,12 @@ export function App() {
   // playback, and the other one stops being rendered at all.
   // Stable (functional update, no deps): it is a Player prop, and the Player
   // is memoised so a shell re-render does not reach it.
+  //
+  // A video with a file is also what the Player writes into the pointer as it
+  // opens it, so the same answer says "Now playing" has somewhere to go.
   const handleMediaKnown = useCallback((id: string, hasMedia: boolean) => {
     setSummaryOrigin((prev) => (hasMedia && prev?.id === id ? null : prev));
+    if (hasMedia) setPointerSet(true);
   }, []);
   // setView keeps every existing call site (the rail, the banner's "fix
   // cookie", ViewSwitch's back/deleted handlers) unchanged — it just pushes a
@@ -246,6 +257,7 @@ export function App() {
         .then((p) => {
           const fresh = p.video_id || null;
           setPersistedVideoId(fresh);
+          setPointerSet(!!fresh);
           // The pointer only ever names a downloaded video (playback.Store), so
           // a pointer naming the video remembered as a summary being read is
           // that video after its file arrived — it is being watched now, not
@@ -384,11 +396,27 @@ export function App() {
     // whose video has since been deleted.
     getPlaybackState()
       .then((p) => {
-        if (active) setPersistedVideoId(p.video_id || null);
+        if (!active) return;
+        setPersistedVideoId(p.video_id || null);
+        setPointerSet(!!p.video_id);
       })
       .catch(() => {});
+    // Re-asked whenever the tab comes back, so a video another device started
+    // in the meantime enables "Now playing" here without a reload. Only the
+    // flag moves: persistedVideoId is what a "Nothing playing" page at /video
+    // falls back to, and a focus event must not swap a video onto it.
+    function onVisible() {
+      if (document.visibilityState !== "visible") return;
+      getPlaybackState()
+        .then((p) => {
+          if (active) setPointerSet(!!p.video_id);
+        })
+        .catch(() => {});
+    }
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       active = false;
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [authChecked, user]);
 
@@ -414,6 +442,7 @@ export function App() {
     setPlaybackVideoId(null);
     setNowPlaying(null);
     setPersistedVideoId(null);
+    setPointerSet(false);
     setPlaybackState(null).catch(() => {});
   }, []);
 
@@ -443,6 +472,7 @@ export function App() {
     setPlaybackVideoId(null);
     setNowPlaying(null);
     setPersistedVideoId(null);
+    setPointerSet(false);
     goToLibrary();
   }, [goToLibrary]);
   // Where the summary page goes back to, as a stable function per origin.
@@ -548,6 +578,8 @@ export function App() {
   const navUpNextLive =
     jobs.some((j) => j.state === "running") ||
     summaries.some((s) => s.state === "running");
+  // Only a definite "nothing": unknown leaves the item as it always was.
+  const nowPlayingDisabled = pointerSet === false;
 
   return (
     <div className={`app-shell${railCollapsed ? " collapsed" : ""}`}>
@@ -563,6 +595,7 @@ export function App() {
           pendingCount={pendingCount}
           upNextCount={navUpNextCount}
           upNextLive={navUpNextLive}
+          nowPlayingDisabled={nowPlayingDisabled}
         />
       ) : (
         <Rail
@@ -573,6 +606,7 @@ export function App() {
           pendingCount={pendingCount}
           upNextCount={navUpNextCount}
           upNextLive={navUpNextLive}
+          nowPlayingDisabled={nowPlayingDisabled}
           cookieStatus={cookieStatus}
           ytdlp={ytdlp}
         />

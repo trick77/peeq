@@ -19,12 +19,15 @@ function TabBarImpl({
   pendingCount,
   upNextCount,
   upNextLive,
+  nowPlayingDisabled = false,
 }: {
   active: ViewId;
   onNavigate: (view: ViewId) => void;
   pendingCount?: number;
   upNextCount?: number;
   upNextLive?: boolean;
+  // See Rail's prop of the same name.
+  nowPlayingDisabled?: boolean;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -134,6 +137,7 @@ function TabBarImpl({
               type="button"
               className={`tabbar-item${item.id === active ? " active" : ""}`}
               onClick={() => go(item.id)}
+              disabled={item.id === "player" && nowPlayingDisabled}
               aria-current={item.id === active ? "page" : undefined}
               // The visible label is 10px and truncates on a narrow phone; the
               // count is a dot with no number in it. Both are said in full

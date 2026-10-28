@@ -163,6 +163,29 @@ describe("Rail", () => {
     });
   });
 
+  // Unlike an empty Inbox, an empty Now playing is not a page worth visiting:
+  // it can only say "Nothing playing", so the item says it first.
+  it("disables Now playing, and only Now playing, when nothing is playing", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(
+      <Rail active="library" onNavigate={() => {}} nowPlayingDisabled />,
+    );
+    const disabled = Array.from(
+      host.querySelectorAll<HTMLButtonElement>("button.rail-nav-item"),
+    )
+      .filter((b) => b.disabled)
+      .map((b) => b.textContent);
+    expect(disabled).toEqual(["Now playing"]);
+  });
+
+  it("leaves Now playing enabled by default", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(
+      <Rail active="library" onNavigate={() => {}} />,
+    );
+    expect(host.querySelector("button.rail-nav-item:disabled")).toBeNull();
+  });
+
   describe("collapsed", () => {
     function collapsedRail(props: Partial<Parameters<typeof Rail>[0]> = {}) {
       const host = document.createElement("div");

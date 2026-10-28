@@ -17,6 +17,7 @@ function RailImpl({
   pendingCount,
   upNextCount,
   upNextLive,
+  nowPlayingDisabled = false,
   cookieStatus,
   cookieUpdatedAtLabel,
   ytdlp,
@@ -52,6 +53,13 @@ function RailImpl({
    * banner above the page is the louder signal about why.
    */
   upNextLive?: boolean;
+  /**
+   * The server says nothing is playing. Unlike an empty Inbox, an empty "Now
+   * playing" is not a page worth opening — it can only say "Nothing playing" —
+   * so the item says it first. App passes true only on a definite answer:
+   * not-yet-loaded and a failed read both leave it enabled.
+   */
+  nowPlayingDisabled?: boolean;
   cookieStatus?: string;
   cookieUpdatedAtLabel?: string;
   /**
@@ -142,6 +150,7 @@ function RailImpl({
                   type="button"
                   className={`rail-nav-item${item.id === active ? " active" : ""}`}
                   onClick={() => onNavigate(item.id)}
+                  disabled={item.id === "player" && nowPlayingDisabled}
                   aria-current={item.id === active ? "page" : undefined}
                   aria-label={ariaLabel}
                 >

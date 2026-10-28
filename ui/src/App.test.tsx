@@ -542,9 +542,74 @@ describe("App deep links", () => {
     await screen.findByPlaceholderText("Search titles");
     await waitFor(() => expect(getPlaybackState).toHaveBeenCalled());
 
+    // Unknown is not empty: a failed read must not disable the item.
+    expect(screen.getByRole("button", { name: "Now playing" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Now playing" }));
 
     expect(await screen.findByText(/Nothing playing/i)).toBeInTheDocument();
+  });
+
+  it("disables Now playing while the pointer says nothing is playing", async () => {
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Now playing" }),
+      ).toBeDisabled(),
+    );
+  });
+
+  it("enables Now playing when the pointer names a video", async () => {
+    vi.mocked(getPlaybackState).mockResolvedValue({ video_id: "v1" });
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+    await waitFor(() => expect(getPlaybackState).toHaveBeenCalled());
+
+    expect(screen.getByRole("button", { name: "Now playing" })).toBeEnabled();
+  });
+
+  it("re-reads the pointer when the tab comes back, so another device's video enables it", async () => {
+    render(<App />);
+    await screen.findByPlaceholderText("Search titles");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Now playing" }),
+      ).toBeDisabled(),
+    );
+
+    vi.mocked(getPlaybackState).mockResolvedValue({ video_id: "v1" });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Now playing" })).toBeEnabled(),
+    );
+  });
+
+  it("enables Now playing after opening a video with a file", async () => {
+    // The Player points the server at a video with a file as it opens it, so
+    // leaving that page must not find the item disabled by the boot read.
+    vi.mocked(listVideos).mockResolvedValue([mockVideo]);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /^All \d/ }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Now playing" }),
+      ).toBeDisabled(),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Open The Trillion Dollar Equation",
+      }),
+    );
+    await waitFor(() => expect(document.querySelector("video")).not.toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    await screen.findByPlaceholderText("Search titles");
+
+    expect(screen.getByRole("button", { name: "Now playing" })).toBeEnabled();
   });
 
   // An inbox video's page shares the Player's URL — /video/<id> is the video's
