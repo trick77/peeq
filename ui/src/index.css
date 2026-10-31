@@ -305,9 +305,15 @@ button {
      nav + toggle + foot; scrolling keeps all of it reachable, not cut off. */
   overflow-y: auto;
   overflow-x: hidden;
-  /* The iPad's home-indicator inset, added under whatever is last (the foot,
-     or the toggle when there is no foot), as the tab bar does it. */
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+/* The iPad's home-indicator inset, under whatever is last (the foot, or the
+   toggle when there is no foot). A box, not .rail's padding-bottom: some
+   engines drop a scroll container's end padding once it overflows, which is
+   exactly the short-window case this is for. */
+.rail::after {
+  content: "";
+  flex: none;
+  height: env(safe-area-inset-bottom, 0px);
 }
 
 /* The brand row is loom's sidebar header geometry: a 44px band with 12px side
@@ -359,6 +365,8 @@ button {
    which is where loom's sits — and 2px inside the wordmark's 12px, so the word
    still reads as the thing the list hangs under. It used to be 12 + 11 = 23px,
    which left the entries floating well right of the brand. */
+/* The 8px bottom padding (here and collapsed) is what .rail-toggle's -6px
+   margin pulls into; change one, change the other. */
 .rail-nav {
   padding: 8px 8px;
   display: flex;
