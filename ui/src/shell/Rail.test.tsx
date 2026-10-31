@@ -275,11 +275,14 @@ describe("Rail", () => {
         />,
       );
       const open = host.querySelector(".rail-collapse");
-      expect(open?.classList.contains("rail-nav-item")).toBe(true);
       expect(open?.textContent).toBe("Collapse");
+      // It looks like a destination but is not one: .rail-nav-item is what
+      // App and these tests read as "a destination" (and the active marker).
+      expect(open?.classList.contains("rail-nav-item")).toBe(false);
+      expect(open?.querySelector(".rail-nav-ic svg")).not.toBeNull();
 
       const shut = collapsedRail().querySelector(".rail-collapse");
-      expect(shut?.classList.contains("rail-nav-item")).toBe(true);
+      expect(shut?.classList.contains("rail-nav-item")).toBe(false);
       expect(shut?.textContent).toBe("");
       expect(shut?.getAttribute("aria-label")).toBe("Expand sidebar");
     });

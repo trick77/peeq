@@ -298,6 +298,10 @@ button {
      past the visible area and cut the toggle at its foot in half. */
   height: 100vh;
   height: 100dvh;
+  /* A short window (Split View, Stage Manager) can be shorter than brand +
+     nav + foot; scrolling keeps the toggle reachable rather than cut off. */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* The brand row is loom's sidebar header geometry: a 44px band with 12px side
@@ -311,7 +315,7 @@ button {
   align-items: center;
   gap: 12px;
 }
-/* The toggle is a .rail-nav-item (see .rail-nav below for its look). The foot
+/* The toggle shares .rail-nav-item's look (selectors below). The foot
    is padded 12px for its status rows, the nav 8px; -4px each side puts the
    toggle's glyph in the same column as every destination's. Collapsed, the
    foot drops to the nav's 8px, so the 44px button centres the same way. */
@@ -367,7 +371,8 @@ button {
   color: var(--color-faint);
   padding: 10px 6px 4px;
 }
-.rail-nav-item {
+.rail-nav-item,
+.rail-collapse {
   display: flex;
   align-items: center;
   gap: 11px;
@@ -414,7 +419,8 @@ button {
 .rail-nav-dot.hot {
   background: var(--color-accent);
 }
-.rail-nav-item:hover:not(:disabled) {
+.rail-nav-item:hover:not(:disabled),
+.rail-collapse:hover {
   color: var(--color-ink-dim);
   background: var(--color-active);
 }
@@ -458,7 +464,8 @@ button {
 .rail.collapsed .rail-nav {
   padding: 12px 8px 8px;
 }
-.rail.collapsed .rail-nav-item {
+.rail.collapsed .rail-nav-item,
+.rail.collapsed .rail-collapse {
   width: 44px;
   height: 44px;
   padding: 0;
@@ -505,8 +512,9 @@ button {
 .rail-foot {
   margin-top: auto;
   padding: 12px;
-  /* Clear of the iPad's home indicator; 12px everywhere else. */
-  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  /* The usual 12px, plus the iPad's home-indicator inset where there is one
+     (additive, as the tab bar does it). */
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: 10px;
