@@ -190,20 +190,13 @@ function RailImpl({
           neither survives 64px. It goes when the rail collapses, the way it
           already goes on a phone. */}
       <div className="rail-foot">
-        {collapsed ? null : cookieStatus !== undefined ? (
-          <CookieStatus
-            status={cookieStatus}
-            updatedAtLabel={cookieUpdatedAtLabel}
-          />
-        ) : null}
-        {!collapsed && ytdlp?.update_available && ytdlp.latest ? (
-          <YtdlpStatus version={ytdlp.version} latest={ytdlp.latest} />
-        ) : null}
         {/* Looks like a destination row — same glyph column and sizes, a word
             when there is room, the icon alone collapsed — but is not one, so
             it does not carry .rail-nav-item (the class App and the tests read
             as "a destination"); the CSS gives .rail-collapse the same look.
-            The aria-label keeps the visible word in it ("Collapse sidebar"). */}
+            The aria-label keeps the visible word in it ("Collapse sidebar").
+            First in the foot: above the status rows, next to the destinations
+            it resizes. */}
         {onToggleCollapsed ? (
           <button
             ref={toggleRef}
@@ -218,6 +211,15 @@ function RailImpl({
             </span>
             {collapsed ? null : "Collapse"}
           </button>
+        ) : null}
+        {collapsed ? null : cookieStatus !== undefined ? (
+          <CookieStatus
+            status={cookieStatus}
+            updatedAtLabel={cookieUpdatedAtLabel}
+          />
+        ) : null}
+        {!collapsed && ytdlp?.update_available && ytdlp.latest ? (
+          <YtdlpStatus version={ytdlp.version} latest={ytdlp.latest} />
         ) : null}
       </div>
     </aside>

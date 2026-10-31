@@ -314,6 +314,26 @@ describe("Rail", () => {
       expect(host.querySelector(".rail-foot .rail-collapse")).not.toBeNull();
     });
 
+    // Above the status rows, not under them: the toggle stays next to the
+    // destinations it resizes, and the rows below it come and go.
+    it("puts the toggle above the status dock", () => {
+      const host = document.createElement("div");
+      host.innerHTML = renderToStaticMarkup(
+        <Rail
+          active="library"
+          onNavigate={() => {}}
+          onToggleCollapsed={() => {}}
+          cookieStatus="valid"
+          ytdlp={{ version: "1", latest: "2", update_available: true }}
+        />,
+      );
+      const foot = host.querySelector(".rail-foot");
+      expect(foot?.firstElementChild?.classList.contains("rail-collapse")).toBe(
+        true,
+      );
+      expect(foot?.querySelector(".cookie-status")).not.toBeNull();
+    });
+
     it("leaves the active item's class untouched", () => {
       // Collapsed styling hangs off .rail.collapsed, never off a modifier on
       // the item — App and the tests both read this class as the active marker.
