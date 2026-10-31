@@ -24,7 +24,11 @@ import { seekFromSearch, useRoute } from "./route";
 import { TabBar } from "./shell/TabBar";
 import { NowDock } from "./shell/NowDock";
 import { useSpaceToPlay } from "./shell/useSpaceToPlay";
-import { MOBILE_QUERY, useMediaQuery } from "./shell/useMediaQuery";
+import {
+  MOBILE_QUERY,
+  TOUCH_QUERY,
+  useMediaQuery,
+} from "./shell/useMediaQuery";
 import { hostedVideo } from "./videoHost";
 import type { NowPlaying } from "./nowPlaying";
 import { setPlaybackState } from "./api/playback";
@@ -48,6 +52,18 @@ function readRailCollapsed(): boolean {
   } catch {
     return false;
   }
+}
+
+// isTouchDevice is asked once, when App mounts: a tablet opens with the rail
+// collapsed whatever storage says, and never writes its own choice back. The
+// iPad's few hundred pixels go to the page, not to labels its icons already
+// carry. Guarded like the storage accessors, for the same no-window render.
+function isTouchDevice(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(TOUCH_QUERY).matches
+  );
 }
 
 // At module load, before any effect or route read can rewrite the URL — see
@@ -353,12 +369,17 @@ export function App() {
   // derived value is false there while the stored preference stays untouched,
   // and a window dragged back to full width finds it exactly as it was left.
   // Forcing the flag itself on a narrow window would destroy that preference.
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(readRailCollapsed);
+  // A touch device (see isTouchDevice) starts collapsed and keeps its toggling
+  // to the visit: storage is neither read nor written there.
+  const [touch] = useState(isTouchDevice);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => touch || readRailCollapsed(),
+  );
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const railCollapsed = !isMobile && sidebarCollapsed;
   useEffect(() => {
-    writeRailCollapsed(sidebarCollapsed);
-  }, [sidebarCollapsed]);
+    if (!touch) writeRailCollapsed(sidebarCollapsed);
+  }, [touch, sidebarCollapsed]);
   // The ids the Inbox grid is currently showing, in the order it shows them,
   // so a video's page can step through the inbox without going back to it.
   //

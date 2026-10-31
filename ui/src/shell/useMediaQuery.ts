@@ -37,3 +37,10 @@ export function useMediaQuery(query: string): boolean {
 
 /** The one place the phone breakpoint is written for JS. */
 export const MOBILE_QUERY = "(max-width: 767px)";
+
+/**
+ * A touch device with no hover — an iPad, not a laptop with a touchscreen
+ * (which still hovers with its trackpad) and not an iPad driven by a trackpad.
+ * Asked by input rather than width, so a narrow desktop window never matches.
+ */
+export const TOUCH_QUERY = "(hover: none) and (pointer: coarse)";

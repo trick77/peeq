@@ -459,10 +459,12 @@ button {
    box border-box, so the nav's content box is 63px: 44 + 10 + 10 overflows it
    by 1px and the rounded background bleeds over the border. 8px leaves 47px
    for a 44px item, which auto-centres with room to spare. */
-/* 12px on top: the brand band is gone when collapsed, and 8px put the first
-   icon hard under the window edge. */
+/* 32px on top: the brand band is gone when collapsed, so the first icon's box
+   starts on the same line as the page beside it — .page's 32px top padding,
+   which is where the video, a page title or a list's first row begins. The two
+   must move together. */
 .rail.collapsed .rail-nav {
-  padding: 12px 8px 8px;
+  padding: 32px 8px 8px;
 }
 .rail.collapsed .rail-nav-item,
 .rail.collapsed .rail-collapse {

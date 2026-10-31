@@ -9,6 +9,7 @@ import {
   act,
 } from "@testing-library/react";
 import { App } from "./App";
+import { TOUCH_QUERY } from "./shell/useMediaQuery";
 import {
   downloadsStatus,
   resumeYoutube,
@@ -1091,6 +1092,35 @@ describe("App rail collapse", () => {
       { name: "Expand sidebar" },
       { timeout: 8000 },
     );
+  }, 20000);
+
+  // A tablet (touch, no hover) always opens collapsed: the page needs the
+  // width more than the labels. The rail can still be opened for the visit,
+  // but that is not written back — and the desktop preference in storage is
+  // neither read nor overwritten.
+  it("opens collapsed on a touch device, whatever was stored", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: query === TOUCH_QUERY,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    const store = stubStorage("0");
+    render(<App />);
+    await screen.findByRole(
+      "button",
+      { name: "Expand sidebar" },
+      { timeout: 8000 },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(
+      screen.getByRole("button", { name: "Collapse sidebar" }),
+    ).toBeTruthy();
+    expect(store.get("peeq.rail.collapsed")).toBe("0");
   }, 20000);
 
   it("gives a phone the tab bar and leaves the stored choice alone", async () => {
