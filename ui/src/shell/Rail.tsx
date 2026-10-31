@@ -197,16 +197,30 @@ function RailImpl({
         {!collapsed && ytdlp?.update_available && ytdlp.latest ? (
           <YtdlpStatus version={ytdlp.version} latest={ytdlp.latest} />
         ) : null}
+        {/* A rail row like the destinations: same glyph column and sizes, a
+            word when there is room, the icon alone collapsed. The aria-label
+            keeps the visible word in it ("Collapse sidebar"). */}
         {onToggleCollapsed ? (
           <button
             ref={toggleRef}
             type="button"
-            className="rail-collapse"
+            className="rail-nav-item rail-collapse"
             onClick={onToggleCollapsed}
-            aria-label={collapsed ? "Show sidebar" : "Hide sidebar"}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             aria-expanded={!collapsed}
           >
-            <Icon name="panelLeft" size="18px" />
+            <span className="rail-nav-ic">
+              <Icon
+                name="panelLeft"
+                size={collapsed ? "22px" : "18px"}
+                style={
+                  collapsed
+                    ? { width: 22, height: 22 }
+                    : { width: 18, height: 18 }
+                }
+              />
+            </span>
+            {collapsed ? null : "Collapse"}
           </button>
         ) : null}
       </div>
