@@ -309,7 +309,7 @@ button {
 
 /* The brand row is loom's sidebar header geometry: a 44px band with 12px side
    padding around the wordmark. The collapse toggle no longer shares it — it
-   sits in .rail-foot, so the collapsed rail (which has no room for a word and
+   sits under .rail-nav, so the collapsed rail (which has no room for a word and
    drops the band) leads with Now playing instead of a control. */
 .rail-brand {
   height: 44px;
@@ -318,20 +318,14 @@ button {
   align-items: center;
   gap: 12px;
 }
-/* The toggle shares .rail-nav-item's look (selectors below). The foot
-   is padded 12px for its status rows, the nav 8px; -4px each side puts the
-   toggle's glyph in the same column as every destination's. Collapsed, the
-   foot drops to the nav's 8px, so the 44px button centres the same way. */
-.rail-foot .rail-collapse {
-  width: calc(100% + 8px);
-  margin-inline: -4px;
-}
-.rail.collapsed .rail-foot {
-  padding-inline: 8px;
-}
-.rail.collapsed .rail-foot .rail-collapse {
-  width: 44px;
-  margin-inline: auto;
+/* The toggle shares .rail-nav-item's look (selectors below). Its row takes
+   the nav's 8px inline padding, so the glyph sits in every destination's
+   column and, collapsed, the 44px button centres the same way. Outside the
+   bottom-pinned foot on purpose: rows below it there moved it. */
+.rail-toggle {
+  padding: 0 8px 8px;
+  display: flex;
+  flex-direction: column;
 }
 /* Loom's wordmark exactly: Anthropic Serif at 21px/28px, weight 500, its own
    #f4f0e8 — a shade the peeq scale does not carry (ink #faf9f5 is brighter,

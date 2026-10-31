@@ -80,7 +80,7 @@ function RailImpl({
   ytdlp?: YtdlpVersion;
 }) {
   // Collapsing unmounts every label, the section headings, the brand row and
-  // the foot's status rows (the foot itself stays: it holds the toggle). If
+  // the foot with its status rows. If
   // focus was inside any of that it would be dropped on the floor and the next
   // Tab would start again from the top of the document, so it moves to the
   // control that caused it — which is also the control that undoes it.
@@ -99,8 +99,7 @@ function RailImpl({
     <aside className={`rail${collapsed ? " collapsed" : ""}`}>
       {/* Collapsed there is no word to show, and the band used to hold only
           the toggle — which put a control above Now playing, the first
-          destination. The toggle lives in the foot in both states, so it never
-          jumps between the two ends of the rail. */}
+          destination. The toggle sits under the nav in both states. */}
       {collapsed ? null : (
         <div className="rail-brand">
           <b>Peeq</b>
@@ -189,15 +188,16 @@ function RailImpl({
       {/* The dock says two sentences — a cookie's age, a yt-dlp release — and
           neither survives 64px. It goes when the rail collapses, the way it
           already goes on a phone. */}
-      <div className="rail-foot">
-        {/* Looks like a destination row — same glyph column and sizes, a word
-            when there is room, the icon alone collapsed — but is not one, so
-            it does not carry .rail-nav-item (the class App and the tests read
-            as "a destination"); the CSS gives .rail-collapse the same look.
-            The aria-label keeps the visible word in it ("Collapse sidebar").
-            First in the foot: above the status rows, next to the destinations
-            it resizes. */}
-        {onToggleCollapsed ? (
+      {/* Looks like a destination row — same glyph column and sizes, a word
+          when there is room, the icon alone collapsed — but is not one, so it
+          does not carry .rail-nav-item (the class App and the tests read as
+          "a destination") and sits outside the <nav>; the CSS gives
+          .rail-collapse the same look. The aria-label keeps the visible word
+          in it ("Collapse sidebar"). Directly under the destinations it
+          resizes, not in the bottom-pinned foot: there the status rows below
+          it (async, and gone when collapsed) pushed it up and down. */}
+      {onToggleCollapsed ? (
+        <div className="rail-toggle">
           <button
             ref={toggleRef}
             type="button"
@@ -211,17 +211,25 @@ function RailImpl({
             </span>
             {collapsed ? null : "Collapse"}
           </button>
-        ) : null}
-        {collapsed ? null : cookieStatus !== undefined ? (
-          <CookieStatus
-            status={cookieStatus}
-            updatedAtLabel={cookieUpdatedAtLabel}
-          />
-        ) : null}
-        {!collapsed && ytdlp?.update_available && ytdlp.latest ? (
-          <YtdlpStatus version={ytdlp.version} latest={ytdlp.latest} />
-        ) : null}
-      </div>
+        </div>
+      ) : null}
+
+      {/* The dock says two sentences — a cookie's age, a yt-dlp release — and
+          neither survives 64px. It goes when the rail collapses, the way it
+          already goes on a phone. */}
+      {collapsed ? null : (
+        <div className="rail-foot">
+          {cookieStatus !== undefined ? (
+            <CookieStatus
+              status={cookieStatus}
+              updatedAtLabel={cookieUpdatedAtLabel}
+            />
+          ) : null}
+          {ytdlp?.update_available && ytdlp.latest ? (
+            <YtdlpStatus version={ytdlp.version} latest={ytdlp.latest} />
+          ) : null}
+        </div>
+      )}
     </aside>
   );
 }

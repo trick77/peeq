@@ -289,7 +289,7 @@ describe("Rail", () => {
 
     // The toggle used to own a 44px band at the top of the collapsed rail,
     // pushing Now playing — the first destination — down under a control.
-    it("leads with Now playing, the toggle at the foot", () => {
+    it("leads with Now playing, the toggle under the nav", () => {
       const host = collapsedRail();
       expect(host.querySelector(".rail-brand")).toBeNull();
       const first = host.querySelector(".rail")?.firstElementChild;
@@ -297,26 +297,15 @@ describe("Rail", () => {
       expect(
         host.querySelector("button.rail-nav-item")?.getAttribute("aria-label"),
       ).toBe("Now playing");
-      expect(host.querySelector(".rail-foot .rail-collapse")).not.toBeNull();
+      expect(first?.nextElementSibling?.className).toBe("rail-toggle");
+      // Nothing left for the foot to hold.
+      expect(host.querySelector(".rail-foot")).toBeNull();
     });
 
-    it("keeps the toggle at the foot when expanded too", () => {
-      const host = document.createElement("div");
-      host.innerHTML = renderToStaticMarkup(
-        <Rail
-          active="library"
-          onNavigate={() => {}}
-          onToggleCollapsed={() => {}}
-        />,
-      );
-      expect(host.querySelector(".rail-brand .rail-collapse")).toBeNull();
-      expect(host.querySelectorAll(".rail-collapse")).toHaveLength(1);
-      expect(host.querySelector(".rail-foot .rail-collapse")).not.toBeNull();
-    });
-
-    // Above the status rows, not under them: the toggle stays next to the
-    // destinations it resizes, and the rows below it come and go.
-    it("puts the toggle above the status dock", () => {
+    // The foot is bottom-pinned and its status rows arrive late and vanish
+    // collapsed; a toggle among them moved with them. It sits between the nav
+    // and the foot instead, never inside either.
+    it("puts the toggle between the nav and the status dock", () => {
       const host = document.createElement("div");
       host.innerHTML = renderToStaticMarkup(
         <Rail
@@ -327,11 +316,19 @@ describe("Rail", () => {
           ytdlp={{ version: "1", latest: "2", update_available: true }}
         />,
       );
-      const foot = host.querySelector(".rail-foot");
-      expect(foot?.firstElementChild?.classList.contains("rail-collapse")).toBe(
-        true,
-      );
-      expect(foot?.querySelector(".cookie-status")).not.toBeNull();
+      const rail = host.querySelector(".rail");
+      expect(
+        Array.from(rail?.children ?? []).map((el) => el.className),
+      ).toEqual(["rail-brand", "rail-nav", "rail-toggle", "rail-foot"]);
+      expect(host.querySelectorAll(".rail-collapse")).toHaveLength(1);
+      expect(host.querySelector(".rail-toggle .rail-collapse")).not.toBeNull();
+      expect(host.querySelector(".rail-foot .rail-collapse")).toBeNull();
+      expect(host.querySelector(".rail-nav .rail-collapse")).toBeNull();
+      expect(
+        Array.from(host.querySelector(".rail-foot")?.children ?? []).map(
+          (el) => el.className.split(" ")[0],
+        ),
+      ).toEqual(["cookie-status", "ytdlp-status"]);
     });
 
     it("leaves the active item's class untouched", () => {
