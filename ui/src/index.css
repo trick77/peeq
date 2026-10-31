@@ -67,6 +67,9 @@
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
+  /* .page's top inset, shared with the collapsed rail so its first icon starts
+     on the page's first line. */
+  --page-pad-top: 32px;
   --font-mono:
     ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo,
     monospace;
@@ -459,12 +462,11 @@ button {
    box border-box, so the nav's content box is 63px: 44 + 10 + 10 overflows it
    by 1px and the rounded background bleeds over the border. 8px leaves 47px
    for a 44px item, which auto-centres with room to spare. */
-/* 32px on top: the brand band is gone when collapsed, so the first icon's box
-   starts on the same line as the page beside it — .page's 32px top padding,
-   which is where the video, a page title or a list's first row begins. The two
-   must move together. */
+/* The brand band is gone when collapsed, so the first icon's box starts on the
+   same line as the page beside it: .page's top inset, where the video, a page
+   title or a list's first row begins. One variable, so they cannot drift. */
 .rail.collapsed .rail-nav {
-  padding: 32px 8px 8px;
+  padding: var(--page-pad-top) 8px 8px;
 }
 .rail.collapsed .rail-nav-item,
 .rail.collapsed .rail-collapse {
@@ -1054,7 +1056,7 @@ button.srow:not(:disabled):hover {
    dock is on screen (see the block below), so a page with nothing playing
    keeps exactly the padding it always had. */
 .page {
-  padding: 32px 34px calc(90px + var(--dock-h, 0px));
+  padding: var(--page-pad-top) 34px calc(90px + var(--dock-h, 0px));
 }
 
 /* ── Now-playing dock ───────────────────────────────────────────────────────

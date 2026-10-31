@@ -54,18 +54,6 @@ function readRailCollapsed(): boolean {
   }
 }
 
-// isTouchDevice is asked once, when App mounts: a tablet opens with the rail
-// collapsed whatever storage says, and never writes its own choice back. The
-// iPad's few hundred pixels go to the page, not to labels its icons already
-// carry. Guarded like the storage accessors, for the same no-window render.
-function isTouchDevice(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia(TOUCH_QUERY).matches
-  );
-}
-
 // At module load, before any effect or route read can rewrite the URL — see
 // takeAuthFailed for why it is consumed rather than merely read.
 const AUTH_FAILED = takeAuthFailed();
@@ -369,17 +357,21 @@ export function App() {
   // derived value is false there while the stored preference stays untouched,
   // and a window dragged back to full width finds it exactly as it was left.
   // Forcing the flag itself on a narrow window would destroy that preference.
-  // A touch device (see isTouchDevice) starts collapsed and keeps its toggling
-  // to the visit: storage is neither read nor written there.
-  const [touch] = useState(isTouchDevice);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => touch || readRailCollapsed(),
-  );
+  //
+  // A touch device (TOUCH_QUERY: an iPad with no trackpad) has a third flag,
+  // touchCollapsed: it starts collapsed every visit — the page needs the width
+  // more than the labels its icons already carry — and is never stored, so the
+  // desktop preference is neither read nor overwritten there. Asked live, so
+  // docking or undocking a trackpad switches between the two flags mid-visit.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readRailCollapsed);
+  const [touchCollapsed, setTouchCollapsed] = useState(true);
   const isMobile = useMediaQuery(MOBILE_QUERY);
-  const railCollapsed = !isMobile && sidebarCollapsed;
+  const touch = useMediaQuery(TOUCH_QUERY);
+  const railCollapsed =
+    !isMobile && (touch ? touchCollapsed : sidebarCollapsed);
   useEffect(() => {
-    if (!touch) writeRailCollapsed(sidebarCollapsed);
-  }, [touch, sidebarCollapsed]);
+    writeRailCollapsed(sidebarCollapsed);
+  }, [sidebarCollapsed]);
   // The ids the Inbox grid is currently showing, in the order it shows them,
   // so a video's page can step through the inbox without going back to it.
   //
@@ -504,7 +496,11 @@ export function App() {
         : undefined,
     [readingSummaryFrom, navigate],
   );
-  const toggleCollapsed = useCallback(() => setSidebarCollapsed((v) => !v), []);
+  const toggleCollapsed = useCallback(
+    () =>
+      touch ? setTouchCollapsed((v) => !v) : setSidebarCollapsed((v) => !v),
+    [touch],
+  );
 
   // The public share page renders above everything else — no rail, no top bar,
   // and crucially before the auth gate below, since its whole point is to work
