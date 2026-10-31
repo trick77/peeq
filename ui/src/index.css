@@ -308,10 +308,6 @@ button {
   align-items: center;
   gap: 12px;
 }
-/* With the band gone, the first icon would sit 8px under the window edge. */
-.rail.collapsed .rail-nav {
-  padding-top: 12px;
-}
 /* Left in the foot when expanded, under the status rows; centred under the
    icons when collapsed, where the status rows are gone. */
 .rail-foot .rail-collapse {
@@ -466,8 +462,10 @@ button {
    box border-box, so the nav's content box is 63px: 44 + 10 + 10 overflows it
    by 1px and the rounded background bleeds over the border. 8px leaves 47px
    for a 44px item, which auto-centres with room to spare. */
+/* 12px on top: the brand band is gone when collapsed, and 8px put the first
+   icon hard under the window edge. */
 .rail.collapsed .rail-nav {
-  padding: 8px;
+  padding: 12px 8px 8px;
 }
 .rail.collapsed .rail-nav-item {
   width: 44px;

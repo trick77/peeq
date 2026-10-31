@@ -311,10 +311,6 @@ function PlayerImpl({
   // videoId may be null; null === null must not read as "closed".
   const summaryClosed =
     summaryClosedFor !== null && summaryClosedFor === videoId;
-  const closeSummary = useCallback(
-    () => setSummaryClosedFor(videoId),
-    [videoId],
-  );
   // confirmDelete drives the delete confirmation modal (ConfirmDialog),
   // opened from the ⋮ menu; deleting is its in-flight busy flag.
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -343,6 +339,13 @@ function PlayerImpl({
     null,
   );
   const videoRef = useRef<HTMLVideoElement>(null);
+  // The × hides itself along with the column, which would drop focus on
+  // <body> and restart Tab from the top of the document. The video is what
+  // the wider column is for, so focus goes there.
+  const closeSummary = useCallback(() => {
+    setSummaryClosedFor(videoId);
+    videoRef.current?.focus();
+  }, [videoId]);
   const {
     positionRef,
     positionKnownRef,

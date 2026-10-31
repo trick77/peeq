@@ -69,7 +69,8 @@ function RailImpl({
    */
   ytdlp?: YtdlpVersion;
 }) {
-  // Collapsing unmounts every label, the section headings and the foot dock. If
+  // Collapsing unmounts every label, the section headings, the brand row and
+  // the foot's status rows (the foot itself stays: it holds the toggle). If
   // focus was inside any of that it would be dropped on the floor and the next
   // Tab would start again from the top of the document, so it moves to the
   // control that caused it — which is also the control that undoes it.

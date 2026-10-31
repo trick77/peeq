@@ -3127,8 +3127,15 @@ describe("Player panel placement", () => {
     const grid = () => document.querySelector(".playgrid");
     expect(grid()?.classList.contains("noside")).toBe(false);
 
+    // The × hides itself with the column; focus goes to the video rather than
+    // falling back to <body>, where the next Tab would start from the top.
+    // jsdom does not count a <video> as focusable, so the call is what is
+    // asserted; a real browser focuses it (native controls).
+    const focus = vi.spyOn(HTMLMediaElement.prototype, "focus");
     fireEvent.click(screen.getByRole("button", { name: "Close summary" }));
     expect(grid()?.classList.contains("noside")).toBe(true);
+    expect(focus).toHaveBeenCalledTimes(1);
+    focus.mockRestore();
 
     vi.mocked(getVideo).mockResolvedValue(
       makeVideo({ id: "v2", title: "Second video", summary_status: "done" }),
