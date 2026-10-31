@@ -24,7 +24,11 @@ import { seekFromSearch, useRoute } from "./route";
 import { TabBar } from "./shell/TabBar";
 import { NowDock } from "./shell/NowDock";
 import { useSpaceToPlay } from "./shell/useSpaceToPlay";
-import { MOBILE_QUERY, useMediaQuery } from "./shell/useMediaQuery";
+import {
+  MOBILE_QUERY,
+  TOUCH_QUERY,
+  useMediaQuery,
+} from "./shell/useMediaQuery";
 import { hostedVideo } from "./videoHost";
 import type { NowPlaying } from "./nowPlaying";
 import { setPlaybackState } from "./api/playback";
@@ -353,9 +357,18 @@ export function App() {
   // derived value is false there while the stored preference stays untouched,
   // and a window dragged back to full width finds it exactly as it was left.
   // Forcing the flag itself on a narrow window would destroy that preference.
+  //
+  // A touch device (TOUCH_QUERY: an iPad with no trackpad) has a third flag,
+  // touchCollapsed: it starts collapsed every visit — the page needs the width
+  // more than the labels its icons already carry — and is never stored, so the
+  // desktop preference is neither read nor overwritten there. Asked live, so
+  // docking or undocking a trackpad switches between the two flags mid-visit.
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readRailCollapsed);
+  const [touchCollapsed, setTouchCollapsed] = useState(true);
   const isMobile = useMediaQuery(MOBILE_QUERY);
-  const railCollapsed = !isMobile && sidebarCollapsed;
+  const touch = useMediaQuery(TOUCH_QUERY);
+  const railCollapsed =
+    !isMobile && (touch ? touchCollapsed : sidebarCollapsed);
   useEffect(() => {
     writeRailCollapsed(sidebarCollapsed);
   }, [sidebarCollapsed]);
@@ -483,7 +496,11 @@ export function App() {
         : undefined,
     [readingSummaryFrom, navigate],
   );
-  const toggleCollapsed = useCallback(() => setSidebarCollapsed((v) => !v), []);
+  const toggleCollapsed = useCallback(
+    () =>
+      touch ? setTouchCollapsed((v) => !v) : setSidebarCollapsed((v) => !v),
+    [touch],
+  );
 
   // The public share page renders above everything else — no rail, no top bar,
   // and crucially before the auth gate below, since its whole point is to work
