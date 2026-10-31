@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import type { ComponentProps } from "react";
+import { COOKIE_STATUSES } from "../api/enums";
 import { Rail } from "./Rail";
 
 // Collapsing is not always the user's own click: App collapses the rail on its
@@ -33,7 +34,20 @@ function setup() {
   return { view, collapse };
 }
 
-const FOCUSABLE = "button, a[href], input, select, textarea, [tabindex]";
+const FOCUSABLE = [
+  "button",
+  "a[href]",
+  "area[href]",
+  "input",
+  "select",
+  "textarea",
+  "summary",
+  "audio[controls]",
+  "video[controls]",
+  "iframe",
+  "[contenteditable]",
+  "[tabindex]",
+].join(", ");
 
 describe("Rail focus across a collapse", () => {
   afterEach(cleanup);
@@ -67,12 +81,23 @@ describe("Rail focus across a collapse", () => {
   // Why the rail needs no focus rescue: nothing that can hold focus unmounts
   // when it collapses. A focusable added to the brand row or the foot (both
   // unmount) would strand keyboard focus on <body> — this fails first.
-  it("unmounts nothing focusable when it collapses", () => {
-    const { view, collapse } = setup();
-    const aside = view.container.querySelector("aside.rail");
-    const before = Array.from(aside?.querySelectorAll(FOCUSABLE) ?? []);
-    expect(before.length).toBeGreaterThan(0);
-    collapse();
-    expect(before.filter((el) => !el.isConnected)).toEqual([]);
-  });
+  // Every status the foot can show, so a control that renders only in one
+  // of them (a "fix cookie" link on stale, say) is checked too.
+  const states = COOKIE_STATUSES.flatMap((cookieStatus) =>
+    [true, false].map((update_available) => ({
+      cookieStatus,
+      ytdlp: { version: "1", latest: "2", update_available },
+    })),
+  );
+  it.each(states)(
+    "unmounts nothing focusable when it collapses (%o)",
+    (state) => {
+      const view = render(<Rail {...props} {...state} />);
+      const aside = view.container.querySelector("aside.rail");
+      const before = Array.from(aside?.querySelectorAll(FOCUSABLE) ?? []);
+      expect(before.length).toBeGreaterThan(0);
+      view.rerender(<Rail {...props} {...state} collapsed />);
+      expect(before.filter((el) => !el.isConnected)).toEqual([]);
+    },
+  );
 });
