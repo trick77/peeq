@@ -290,7 +290,10 @@ describe("Rail", () => {
     // The toggle used to own a 44px band at the top of the collapsed rail,
     // pushing Now playing — the first destination — down under a control.
     it("leads with Now playing, the toggle under the nav", () => {
-      const host = collapsedRail();
+      const host = collapsedRail({
+        cookieStatus: "valid",
+        ytdlp: { version: "1", latest: "2", update_available: true },
+      });
       expect(host.querySelector(".rail-brand")).toBeNull();
       const first = host.querySelector(".rail")?.firstElementChild;
       expect(first?.classList.contains("rail-nav")).toBe(true);
@@ -300,8 +303,10 @@ describe("Rail", () => {
       expect(first?.nextElementSibling?.classList.contains("rail-toggle")).toBe(
         true,
       );
-      // Nothing left for the foot to hold.
+      // Both status rows have something to say, and still no foot: neither
+      // fits 64px.
       expect(host.querySelector(".rail-foot")).toBeNull();
+      expect(host.querySelector(".ytdlp-status")).toBeNull();
     });
 
     // The foot is bottom-pinned and its status rows arrive late and vanish

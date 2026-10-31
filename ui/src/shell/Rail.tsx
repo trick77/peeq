@@ -80,10 +80,10 @@ function RailImpl({
   ytdlp?: YtdlpVersion;
 }) {
   // Collapsing unmounts every label, the section headings, the brand row and
-  // the foot with its status rows. If
-  // focus was inside any of that it would be dropped on the floor and the next
-  // Tab would start again from the top of the document, so it moves to the
-  // control that caused it — which is also the control that undoes it.
+  // the foot with its status rows. If focus was inside any of that it would be
+  // dropped on the floor and the next Tab would start again from the top of
+  // the document, so it moves to the control that caused it — which is also
+  // the control that undoes it.
   const toggleRef = useRef<HTMLButtonElement>(null);
   const wasCollapsed = useRef(collapsed);
   useEffect(() => {
@@ -96,8 +96,12 @@ function RailImpl({
   }, [collapsed]);
 
   const showCookie = cookieStatus !== undefined;
-  const ytdlpLatest = ytdlp?.update_available ? ytdlp.latest : undefined;
-  const showYtdlp = !!ytdlp && !!ytdlpLatest;
+  // One derivation for both "is there a foot" and "is there a yt-dlp row", so
+  // the two cannot drift into an empty, padded foot.
+  const ytdlpUpdate =
+    ytdlp?.update_available && ytdlp.latest
+      ? { version: ytdlp.version, latest: ytdlp.latest }
+      : undefined;
 
   return (
     <aside className={`rail${collapsed ? " collapsed" : ""}`}>
@@ -220,7 +224,7 @@ function RailImpl({
           already goes on a phone. With no row to show (status not loaded yet,
           no update waiting) there is no foot either: an empty one is still
           12px of padding plus the safe-area inset. */}
-      {!collapsed && (showCookie || showYtdlp) ? (
+      {!collapsed && (showCookie || ytdlpUpdate) ? (
         <div className="rail-foot">
           {showCookie ? (
             <CookieStatus
@@ -228,8 +232,11 @@ function RailImpl({
               updatedAtLabel={cookieUpdatedAtLabel}
             />
           ) : null}
-          {ytdlp && ytdlpLatest ? (
-            <YtdlpStatus version={ytdlp.version} latest={ytdlpLatest} />
+          {ytdlpUpdate ? (
+            <YtdlpStatus
+              version={ytdlpUpdate.version}
+              latest={ytdlpUpdate.latest}
+            />
           ) : null}
         </div>
       ) : null}

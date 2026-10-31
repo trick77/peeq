@@ -305,6 +305,9 @@ button {
      nav + toggle + foot; scrolling keeps all of it reachable, not cut off. */
   overflow-y: auto;
   overflow-x: hidden;
+  /* The iPad's home-indicator inset, added under whatever is last (the foot,
+     or the toggle when there is no foot), as the tab bar does it. */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* The brand row is loom's sidebar header geometry: a 44px band with 12px side
@@ -324,8 +327,9 @@ button {
    bottom-pinned foot on purpose: rows below it there moved it. */
 .rail-toggle {
   padding: 0 8px 8px;
-  display: flex;
-  flex-direction: column;
+  /* Pulls it up into the nav's 8px bottom padding: 2px from the last
+     destination, the same step as between destinations. */
+  margin-top: -6px;
 }
 /* Loom's wordmark exactly: Anthropic Serif at 21px/28px, weight 500, its own
    #f4f0e8 — a shade the peeq scale does not carry (ink #faf9f5 is brighter,
@@ -509,10 +513,9 @@ button {
 
 .rail-foot {
   margin-top: auto;
+  /* The iPad's home-indicator inset is .rail's padding, not this: the foot
+     is not always there (collapsed, or nothing to say). */
   padding: 12px;
-  /* The usual 12px, plus the iPad's home-indicator inset where there is one
-     (additive, as the tab bar does it). */
-  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: 10px;
