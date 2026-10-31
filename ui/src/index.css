@@ -298,18 +298,27 @@ button {
   position: sticky;
   top: 0;
   /* dvh second: on iPad Safari 100vh counts the toolbars, so the rail ran
-     past the visible area and cut the toggle at its foot in half. */
+     past the visible area and cut the foot in half. */
   height: 100vh;
   height: 100dvh;
   /* A short window (Split View, Stage Manager) can be shorter than brand +
-     nav + foot; scrolling keeps the toggle reachable rather than cut off. */
+     nav + toggle + foot; scrolling keeps all of it reachable, not cut off. */
   overflow-y: auto;
   overflow-x: hidden;
+}
+/* The iPad's home-indicator inset, under whatever is last (the foot, or the
+   toggle when there is no foot). A box, not .rail's padding-bottom: some
+   engines drop a scroll container's end padding once it overflows, which is
+   exactly the short-window case this is for. */
+.rail::after {
+  content: "";
+  flex: none;
+  height: env(safe-area-inset-bottom, 0px);
 }
 
 /* The brand row is loom's sidebar header geometry: a 44px band with 12px side
    padding around the wordmark. The collapse toggle no longer shares it — it
-   sits in .rail-foot, so the collapsed rail (which has no room for a word and
+   sits under .rail-nav, so the collapsed rail (which has no room for a word and
    drops the band) leads with Now playing instead of a control. */
 .rail-brand {
   height: 44px;
@@ -318,20 +327,15 @@ button {
   align-items: center;
   gap: 12px;
 }
-/* The toggle shares .rail-nav-item's look (selectors below). The foot
-   is padded 12px for its status rows, the nav 8px; -4px each side puts the
-   toggle's glyph in the same column as every destination's. Collapsed, the
-   foot drops to the nav's 8px, so the 44px button centres the same way. */
-.rail-foot .rail-collapse {
-  width: calc(100% + 8px);
-  margin-inline: -4px;
-}
-.rail.collapsed .rail-foot {
-  padding-inline: 8px;
-}
-.rail.collapsed .rail-foot .rail-collapse {
-  width: 44px;
-  margin-inline: auto;
+/* The toggle shares .rail-nav-item's look (selectors below). Its row takes
+   the nav's 8px inline padding, so the glyph sits in every destination's
+   column and, collapsed, the 44px button centres the same way. Outside the
+   bottom-pinned foot on purpose: rows below it there moved it. */
+.rail-toggle {
+  padding: 0 8px 8px;
+  /* Pulls it up into the nav's 8px bottom padding: 2px from the last
+     destination, the same step as between destinations. */
+  margin-top: -6px;
 }
 /* Loom's wordmark exactly: Anthropic Serif at 21px/28px, weight 500, its own
    #f4f0e8 — a shade the peeq scale does not carry (ink #faf9f5 is brighter,
@@ -361,6 +365,8 @@ button {
    which is where loom's sits — and 2px inside the wordmark's 12px, so the word
    still reads as the thing the list hangs under. It used to be 12 + 11 = 23px,
    which left the entries floating well right of the brand. */
+/* The 8px bottom padding (here and collapsed) is what .rail-toggle's -6px
+   margin pulls into; change one, change the other. */
 .rail-nav {
   padding: 8px 8px;
   display: flex;
@@ -515,10 +521,9 @@ button {
 
 .rail-foot {
   margin-top: auto;
+  /* The iPad's home-indicator inset is .rail's padding, not this: the foot
+     is not always there (collapsed, or nothing to say). */
   padding: 12px;
-  /* The usual 12px, plus the iPad's home-indicator inset where there is one
-     (additive, as the tab bar does it). */
-  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: 10px;

@@ -80,10 +80,10 @@ function RailImpl({
   ytdlp?: YtdlpVersion;
 }) {
   // Collapsing unmounts every label, the section headings, the brand row and
-  // the foot's status rows (the foot itself stays: it holds the toggle). If
-  // focus was inside any of that it would be dropped on the floor and the next
-  // Tab would start again from the top of the document, so it moves to the
-  // control that caused it — which is also the control that undoes it.
+  // the foot with its status rows. If focus was inside any of that it would be
+  // dropped on the floor and the next Tab would start again from the top of
+  // the document, so it moves to the control that caused it — which is also
+  // the control that undoes it.
   const toggleRef = useRef<HTMLButtonElement>(null);
   const wasCollapsed = useRef(collapsed);
   useEffect(() => {
@@ -95,12 +95,19 @@ function RailImpl({
     }
   }, [collapsed]);
 
+  const showCookie = cookieStatus !== undefined;
+  // One derivation for both "is there a foot" and "is there a yt-dlp row", so
+  // the two cannot drift into an empty, padded foot.
+  const ytdlpUpdate =
+    ytdlp?.update_available && ytdlp.latest
+      ? { version: ytdlp.version, latest: ytdlp.latest }
+      : undefined;
+
   return (
     <aside className={`rail${collapsed ? " collapsed" : ""}`}>
       {/* Collapsed there is no word to show, and the band used to hold only
           the toggle — which put a control above Now playing, the first
-          destination. The toggle lives in the foot in both states, so it never
-          jumps between the two ends of the rail. */}
+          destination. The toggle sits under the nav in both states. */}
       {collapsed ? null : (
         <div className="rail-brand">
           <b>Peeq</b>
@@ -186,25 +193,16 @@ function RailImpl({
         ))}
       </nav>
 
-      {/* The dock says two sentences — a cookie's age, a yt-dlp release — and
-          neither survives 64px. It goes when the rail collapses, the way it
-          already goes on a phone. */}
-      <div className="rail-foot">
-        {collapsed ? null : cookieStatus !== undefined ? (
-          <CookieStatus
-            status={cookieStatus}
-            updatedAtLabel={cookieUpdatedAtLabel}
-          />
-        ) : null}
-        {!collapsed && ytdlp?.update_available && ytdlp.latest ? (
-          <YtdlpStatus version={ytdlp.version} latest={ytdlp.latest} />
-        ) : null}
-        {/* Looks like a destination row — same glyph column and sizes, a word
-            when there is room, the icon alone collapsed — but is not one, so
-            it does not carry .rail-nav-item (the class App and the tests read
-            as "a destination"); the CSS gives .rail-collapse the same look.
-            The aria-label keeps the visible word in it ("Collapse sidebar"). */}
-        {onToggleCollapsed ? (
+      {/* Looks like a destination row — same glyph column and sizes, a word
+          when there is room, the icon alone collapsed — but is not one, so it
+          does not carry .rail-nav-item (the class App and the tests read as
+          "a destination") and sits outside the <nav>; the CSS gives
+          .rail-collapse the same look. The aria-label keeps the visible word
+          in it ("Collapse sidebar"). Directly under the destinations it
+          resizes, not in the bottom-pinned foot: there the status rows below
+          it (async, and gone when collapsed) pushed it up and down. */}
+      {onToggleCollapsed ? (
+        <div className="rail-toggle">
           <button
             ref={toggleRef}
             type="button"
@@ -218,8 +216,30 @@ function RailImpl({
             </span>
             {collapsed ? null : "Collapse"}
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
+
+      {/* The dock says two sentences — a cookie's age, a yt-dlp release — and
+          neither survives 64px. It goes when the rail collapses, the way it
+          already goes on a phone. With no row to show (status not loaded yet,
+          no update waiting) there is no foot either: an empty one is still
+          12px of padding plus the safe-area inset. */}
+      {!collapsed && (showCookie || ytdlpUpdate) ? (
+        <div className="rail-foot">
+          {showCookie ? (
+            <CookieStatus
+              status={cookieStatus}
+              updatedAtLabel={cookieUpdatedAtLabel}
+            />
+          ) : null}
+          {ytdlpUpdate ? (
+            <YtdlpStatus
+              version={ytdlpUpdate.version}
+              latest={ytdlpUpdate.latest}
+            />
+          ) : null}
+        </div>
+      ) : null}
     </aside>
   );
 }

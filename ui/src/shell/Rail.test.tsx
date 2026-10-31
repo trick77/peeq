@@ -289,29 +289,69 @@ describe("Rail", () => {
 
     // The toggle used to own a 44px band at the top of the collapsed rail,
     // pushing Now playing — the first destination — down under a control.
-    it("leads with Now playing, the toggle at the foot", () => {
-      const host = collapsedRail();
+    it("leads with Now playing, the toggle under the nav", () => {
+      const host = collapsedRail({
+        cookieStatus: "valid",
+        ytdlp: { version: "1", latest: "2", update_available: true },
+      });
       expect(host.querySelector(".rail-brand")).toBeNull();
       const first = host.querySelector(".rail")?.firstElementChild;
       expect(first?.classList.contains("rail-nav")).toBe(true);
       expect(
         host.querySelector("button.rail-nav-item")?.getAttribute("aria-label"),
       ).toBe("Now playing");
-      expect(host.querySelector(".rail-foot .rail-collapse")).not.toBeNull();
+      expect(first?.nextElementSibling?.classList.contains("rail-toggle")).toBe(
+        true,
+      );
+      // Both status rows have something to say, and still no foot: neither
+      // fits 64px.
+      expect(host.querySelector(".rail-foot")).toBeNull();
+      expect(host.querySelector(".ytdlp-status")).toBeNull();
     });
 
-    it("keeps the toggle at the foot when expanded too", () => {
+    // The foot is bottom-pinned and its status rows arrive late and vanish
+    // collapsed; a toggle among them moved with them. It sits between the nav
+    // and the foot instead, never inside either.
+    it("puts the toggle between the nav and the status dock", () => {
       const host = document.createElement("div");
       host.innerHTML = renderToStaticMarkup(
         <Rail
           active="library"
           onNavigate={() => {}}
           onToggleCollapsed={() => {}}
+          cookieStatus="valid"
+          ytdlp={{ version: "1", latest: "2", update_available: true }}
         />,
       );
-      expect(host.querySelector(".rail-brand .rail-collapse")).toBeNull();
+      // Order of the rail's blocks, read by class membership so a modifier
+      // class on any of them does not break it.
+      const blocks = ["rail-brand", "rail-nav", "rail-toggle", "rail-foot"];
+      const children = Array.from(host.querySelector(".rail")?.children ?? []);
+      expect(children).toHaveLength(blocks.length);
+      blocks.forEach((cls, i) =>
+        expect(children[i]?.classList.contains(cls)).toBe(true),
+      );
       expect(host.querySelectorAll(".rail-collapse")).toHaveLength(1);
-      expect(host.querySelector(".rail-foot .rail-collapse")).not.toBeNull();
+      expect(host.querySelector(".rail-toggle .rail-collapse")).not.toBeNull();
+      const rows = Array.from(host.querySelector(".rail-foot")?.children ?? []);
+      expect(rows).toHaveLength(2);
+      expect(rows[0]?.classList.contains("cookie-status")).toBe(true);
+      expect(rows[1]?.classList.contains("ytdlp-status")).toBe(true);
+    });
+
+    // An empty foot is still padding plus the safe-area inset at the bottom.
+    it("renders no foot while there is no status row to show", () => {
+      const host = document.createElement("div");
+      host.innerHTML = renderToStaticMarkup(
+        <Rail
+          active="library"
+          onNavigate={() => {}}
+          onToggleCollapsed={() => {}}
+          ytdlp={{ version: "1", latest: "1", update_available: false }}
+        />,
+      );
+      expect(host.querySelector(".rail-foot")).toBeNull();
+      expect(host.querySelector(".rail-toggle .rail-collapse")).not.toBeNull();
     });
 
     it("leaves the active item's class untouched", () => {
