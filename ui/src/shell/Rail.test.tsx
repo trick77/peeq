@@ -263,6 +263,33 @@ describe("Rail", () => {
       expect(toggle?.getAttribute("aria-label")).toBe("Hide sidebar");
     });
 
+    // The toggle used to own a 44px band at the top of the collapsed rail,
+    // pushing Now playing — the first destination — down under a control.
+    it("leads with Now playing, the toggle at the foot", () => {
+      const host = collapsedRail();
+      expect(host.querySelector(".rail-brand")).toBeNull();
+      const first = host.querySelector(".rail")?.firstElementChild;
+      expect(first?.classList.contains("rail-nav")).toBe(true);
+      expect(
+        host.querySelector("button.rail-nav-item")?.getAttribute("aria-label"),
+      ).toBe("Now playing");
+      expect(host.querySelector(".rail-foot .rail-collapse")).not.toBeNull();
+    });
+
+    it("keeps the toggle at the foot when expanded too", () => {
+      const host = document.createElement("div");
+      host.innerHTML = renderToStaticMarkup(
+        <Rail
+          active="library"
+          onNavigate={() => {}}
+          onToggleCollapsed={() => {}}
+        />,
+      );
+      expect(host.querySelector(".rail-brand .rail-collapse")).toBeNull();
+      expect(host.querySelectorAll(".rail-collapse")).toHaveLength(1);
+      expect(host.querySelector(".rail-foot .rail-collapse")).not.toBeNull();
+    });
+
     it("leaves the active item's class untouched", () => {
       // Collapsed styling hangs off .rail.collapsed, never off a modifier on
       // the item — App and the tests both read this class as the active marker.

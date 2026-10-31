@@ -86,21 +86,15 @@ function RailImpl({
 
   return (
     <aside className={`rail${collapsed ? " collapsed" : ""}`}>
-      <div className="rail-brand">
-        {collapsed ? null : <b>Peeq</b>}
-        {onToggleCollapsed ? (
-          <button
-            ref={toggleRef}
-            type="button"
-            className="rail-collapse"
-            onClick={onToggleCollapsed}
-            aria-label={collapsed ? "Show sidebar" : "Hide sidebar"}
-            aria-expanded={!collapsed}
-          >
-            <Icon name="panelLeft" size="18px" />
-          </button>
-        ) : null}
-      </div>
+      {/* Collapsed there is no word to show, and the band used to hold only
+          the toggle — which put a control above Now playing, the first
+          destination. The toggle lives in the foot in both states, so it never
+          jumps between the two ends of the rail. */}
+      {collapsed ? null : (
+        <div className="rail-brand">
+          <b>Peeq</b>
+        </div>
+      )}
 
       <nav className="rail-nav">
         {SECTIONS.map((section) => (
@@ -201,6 +195,18 @@ function RailImpl({
         ) : null}
         {!collapsed && ytdlp?.update_available && ytdlp.latest ? (
           <YtdlpStatus version={ytdlp.version} latest={ytdlp.latest} />
+        ) : null}
+        {onToggleCollapsed ? (
+          <button
+            ref={toggleRef}
+            type="button"
+            className="rail-collapse"
+            onClick={onToggleCollapsed}
+            aria-label={collapsed ? "Show sidebar" : "Hide sidebar"}
+            aria-expanded={!collapsed}
+          >
+            <Icon name="panelLeft" size="18px" />
+          </button>
         ) : null}
       </div>
     </aside>

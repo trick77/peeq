@@ -3117,6 +3117,26 @@ describe("Player panel placement", () => {
       "Transcript",
     ]);
   });
+
+  // × closes the Summary column so the video takes the full width. Nothing
+  // brings it back on the page: closed is for this viewing only, so the next
+  // video (and a reload) opens with the Summary again.
+  it("closes the Summary column for this video only", async () => {
+    const { rerender } = render(<Player videoId="v1" onDeleted={() => {}} />);
+    await screen.findByText("Highlights");
+    const grid = () => document.querySelector(".playgrid");
+    expect(grid()?.classList.contains("noside")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close summary" }));
+    expect(grid()?.classList.contains("noside")).toBe(true);
+
+    vi.mocked(getVideo).mockResolvedValue(
+      makeVideo({ id: "v2", title: "Second video", summary_status: "done" }),
+    );
+    rerender(<Player videoId="v2" onDeleted={() => {}} />);
+    expect(await screen.findByText("Second video")).toBeInTheDocument();
+    expect(grid()?.classList.contains("noside")).toBe(false);
+  });
 });
 
 // The <video> no longer belongs to this page: it is portalled into the shared
