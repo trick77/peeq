@@ -1,4 +1,4 @@
-import { useEffect, useRef, memo } from "react";
+import { memo } from "react";
 import type { YtdlpVersion } from "../api/ytdlp";
 import { Icon, type IconName } from "../icons";
 import { CookieStatus } from "./CookieStatus";
@@ -79,21 +79,12 @@ function RailImpl({
    */
   ytdlp?: YtdlpVersion;
 }) {
-  // Collapsing unmounts every label, the section headings, the brand row and
-  // the foot with its status rows. If focus was inside any of that it would be
-  // dropped on the floor and the next Tab would start again from the top of
-  // the document, so it moves to the control that caused it — which is also
-  // the control that undoes it.
-  const toggleRef = useRef<HTMLButtonElement>(null);
-  const wasCollapsed = useRef(collapsed);
-  useEffect(() => {
-    if (collapsed !== wasCollapsed.current) {
-      wasCollapsed.current = collapsed;
-      if (collapsed && toggleRef.current?.contains(document.activeElement))
-        return;
-      if (collapsed) toggleRef.current?.focus();
-    }
-  }, [collapsed]);
+  // No focus handling on collapse, deliberately. Collapsing unmounts labels,
+  // section headings, the brand row and the foot — none of them focusable —
+  // while the destinations and the toggle stay the same DOM nodes, so focus
+  // is never dropped. Moving it anyway stole it: App collapses the rail on
+  // its own when an iPad's trackpad is undocked, mid-typing in Search or Ask.
+  // RailFocus.test.tsx fails if something focusable starts to unmount.
 
   const showCookie = cookieStatus !== undefined;
   // One derivation for both "is there a foot" and "is there a yt-dlp row", so
@@ -204,7 +195,6 @@ function RailImpl({
       {onToggleCollapsed ? (
         <div className="rail-toggle">
           <button
-            ref={toggleRef}
             type="button"
             className="rail-collapse"
             onClick={onToggleCollapsed}
