@@ -1074,12 +1074,12 @@ describe("App rail collapse", () => {
     render(<App />);
     await screen.findByRole("button", { name: /Library/ }, { timeout: 8000 });
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide sidebar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
 
     await waitFor(() => expect(store.get("peeq.rail.collapsed")).toBe("1"));
     // Collapsed, the wordmark and every label are unmounted; the toggle is the
     // way back and names itself accordingly.
-    expect(screen.getByRole("button", { name: "Show sidebar" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeTruthy();
   }, 20000);
 
   it("opens collapsed when that is what was stored", async () => {
@@ -1088,7 +1088,7 @@ describe("App rail collapse", () => {
     render(<App />);
     await screen.findByRole(
       "button",
-      { name: "Show sidebar" },
+      { name: "Expand sidebar" },
       { timeout: 8000 },
     );
   }, 20000);

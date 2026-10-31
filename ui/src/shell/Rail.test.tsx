@@ -260,7 +260,31 @@ describe("Rail", () => {
       );
       const toggle = host.querySelector(".rail-collapse");
       expect(toggle?.getAttribute("aria-expanded")).toBe("true");
-      expect(toggle?.getAttribute("aria-label")).toBe("Hide sidebar");
+      expect(toggle?.getAttribute("aria-label")).toBe("Collapse sidebar");
+    });
+
+    // The toggle is a rail row like the destinations above it: same glyph
+    // column, a word when there is room for one, the icon alone collapsed.
+    it("reads as a rail row: a word expanded, the icon alone collapsed", () => {
+      const host = document.createElement("div");
+      host.innerHTML = renderToStaticMarkup(
+        <Rail
+          active="library"
+          onNavigate={() => {}}
+          onToggleCollapsed={() => {}}
+        />,
+      );
+      const open = host.querySelector(".rail-collapse");
+      expect(open?.textContent).toBe("Collapse");
+      // It looks like a destination but is not one: .rail-nav-item is what
+      // App and these tests read as "a destination" (and the active marker).
+      expect(open?.classList.contains("rail-nav-item")).toBe(false);
+      expect(open?.querySelector(".rail-nav-ic svg")).not.toBeNull();
+
+      const shut = collapsedRail().querySelector(".rail-collapse");
+      expect(shut?.classList.contains("rail-nav-item")).toBe(false);
+      expect(shut?.textContent).toBe("");
+      expect(shut?.getAttribute("aria-label")).toBe("Expand sidebar");
     });
 
     // The toggle used to own a 44px band at the top of the collapsed rail,

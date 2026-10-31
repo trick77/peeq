@@ -1,6 +1,6 @@
 import { useEffect, useRef, memo } from "react";
 import type { YtdlpVersion } from "../api/ytdlp";
-import { Icon } from "../icons";
+import { Icon, type IconName } from "../icons";
 import { CookieStatus } from "./CookieStatus";
 import { YtdlpStatus } from "./YtdlpStatus";
 import { SECTIONS, type ViewId } from "./nav";
@@ -8,6 +8,16 @@ import { SECTIONS, type ViewId } from "./nav";
 // ViewId and the nav list moved to ./nav, which the mobile tab bar reads too.
 // Re-exported here because Rail was where the rest of the app imported it from.
 export type { ViewId } from "./nav";
+
+// railGlyph is every rail icon: the destinations' and the toggle's. Sized
+// inline because an inline width/height beats any rule in index.css (see
+// .rail-nav-ic); one helper so the toggle cannot drift out of the column.
+function railGlyph(name: IconName, collapsed: boolean) {
+  const px = collapsed ? 22 : 18;
+  return (
+    <Icon name={name} size={`${px}px`} style={{ width: px, height: px }} />
+  );
+}
 
 function RailImpl({
   active,
@@ -150,15 +160,7 @@ function RailImpl({
                   aria-label={ariaLabel}
                 >
                   <span className="rail-nav-ic">
-                    <Icon
-                      name={item.icon}
-                      size={collapsed ? "22px" : "18px"}
-                      style={
-                        collapsed
-                          ? { width: 22, height: 22 }
-                          : { width: 18, height: 18 }
-                      }
-                    />
+                    {railGlyph(item.icon, collapsed)}
                     {/* Collapsed there is no room beside a centred icon for the
                         count pill, and dropping the signal outright would cost
                         the rail the one thing it says about the Inbox. The dot
@@ -197,16 +199,24 @@ function RailImpl({
         {!collapsed && ytdlp?.update_available && ytdlp.latest ? (
           <YtdlpStatus version={ytdlp.version} latest={ytdlp.latest} />
         ) : null}
+        {/* Looks like a destination row — same glyph column and sizes, a word
+            when there is room, the icon alone collapsed — but is not one, so
+            it does not carry .rail-nav-item (the class App and the tests read
+            as "a destination"); the CSS gives .rail-collapse the same look.
+            The aria-label keeps the visible word in it ("Collapse sidebar"). */}
         {onToggleCollapsed ? (
           <button
             ref={toggleRef}
             type="button"
             className="rail-collapse"
             onClick={onToggleCollapsed}
-            aria-label={collapsed ? "Show sidebar" : "Hide sidebar"}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             aria-expanded={!collapsed}
           >
-            <Icon name="panelLeft" size="18px" />
+            <span className="rail-nav-ic">
+              {railGlyph("panelLeft", collapsed)}
+            </span>
+            {collapsed ? null : "Collapse"}
           </button>
         ) : null}
       </div>
