@@ -95,6 +95,10 @@ function RailImpl({
     }
   }, [collapsed]);
 
+  const showCookie = cookieStatus !== undefined;
+  const ytdlpLatest = ytdlp?.update_available ? ytdlp.latest : undefined;
+  const showYtdlp = !!ytdlp && !!ytdlpLatest;
+
   return (
     <aside className={`rail${collapsed ? " collapsed" : ""}`}>
       {/* Collapsed there is no word to show, and the band used to hold only
@@ -185,9 +189,6 @@ function RailImpl({
         ))}
       </nav>
 
-      {/* The dock says two sentences — a cookie's age, a yt-dlp release — and
-          neither survives 64px. It goes when the rail collapses, the way it
-          already goes on a phone. */}
       {/* Looks like a destination row — same glyph column and sizes, a word
           when there is room, the icon alone collapsed — but is not one, so it
           does not carry .rail-nav-item (the class App and the tests read as
@@ -216,20 +217,22 @@ function RailImpl({
 
       {/* The dock says two sentences — a cookie's age, a yt-dlp release — and
           neither survives 64px. It goes when the rail collapses, the way it
-          already goes on a phone. */}
-      {collapsed ? null : (
+          already goes on a phone. With no row to show (status not loaded yet,
+          no update waiting) there is no foot either: an empty one is still
+          12px of padding plus the safe-area inset. */}
+      {!collapsed && (showCookie || showYtdlp) ? (
         <div className="rail-foot">
-          {cookieStatus !== undefined ? (
+          {showCookie ? (
             <CookieStatus
               status={cookieStatus}
               updatedAtLabel={cookieUpdatedAtLabel}
             />
           ) : null}
-          {ytdlp?.update_available && ytdlp.latest ? (
-            <YtdlpStatus version={ytdlp.version} latest={ytdlp.latest} />
+          {ytdlp && ytdlpLatest ? (
+            <YtdlpStatus version={ytdlp.version} latest={ytdlpLatest} />
           ) : null}
         </div>
-      )}
+      ) : null}
     </aside>
   );
 }

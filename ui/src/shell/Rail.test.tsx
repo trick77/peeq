@@ -297,7 +297,9 @@ describe("Rail", () => {
       expect(
         host.querySelector("button.rail-nav-item")?.getAttribute("aria-label"),
       ).toBe("Now playing");
-      expect(first?.nextElementSibling?.className).toBe("rail-toggle");
+      expect(first?.nextElementSibling?.classList.contains("rail-toggle")).toBe(
+        true,
+      );
       // Nothing left for the foot to hold.
       expect(host.querySelector(".rail-foot")).toBeNull();
     });
@@ -316,19 +318,35 @@ describe("Rail", () => {
           ytdlp={{ version: "1", latest: "2", update_available: true }}
         />,
       );
-      const rail = host.querySelector(".rail");
-      expect(
-        Array.from(rail?.children ?? []).map((el) => el.className),
-      ).toEqual(["rail-brand", "rail-nav", "rail-toggle", "rail-foot"]);
+      // Order of the rail's blocks, read by class membership so a modifier
+      // class on any of them does not break it.
+      const blocks = ["rail-brand", "rail-nav", "rail-toggle", "rail-foot"];
+      const children = Array.from(host.querySelector(".rail")?.children ?? []);
+      expect(children).toHaveLength(blocks.length);
+      blocks.forEach((cls, i) =>
+        expect(children[i]?.classList.contains(cls)).toBe(true),
+      );
       expect(host.querySelectorAll(".rail-collapse")).toHaveLength(1);
       expect(host.querySelector(".rail-toggle .rail-collapse")).not.toBeNull();
-      expect(host.querySelector(".rail-foot .rail-collapse")).toBeNull();
-      expect(host.querySelector(".rail-nav .rail-collapse")).toBeNull();
-      expect(
-        Array.from(host.querySelector(".rail-foot")?.children ?? []).map(
-          (el) => el.className.split(" ")[0],
-        ),
-      ).toEqual(["cookie-status", "ytdlp-status"]);
+      const rows = Array.from(host.querySelector(".rail-foot")?.children ?? []);
+      expect(rows).toHaveLength(2);
+      expect(rows[0]?.classList.contains("cookie-status")).toBe(true);
+      expect(rows[1]?.classList.contains("ytdlp-status")).toBe(true);
+    });
+
+    // An empty foot is still padding plus the safe-area inset at the bottom.
+    it("renders no foot while there is no status row to show", () => {
+      const host = document.createElement("div");
+      host.innerHTML = renderToStaticMarkup(
+        <Rail
+          active="library"
+          onNavigate={() => {}}
+          onToggleCollapsed={() => {}}
+          ytdlp={{ version: "1", latest: "1", update_available: false }}
+        />,
+      );
+      expect(host.querySelector(".rail-foot")).toBeNull();
+      expect(host.querySelector(".rail-toggle .rail-collapse")).not.toBeNull();
     });
 
     it("leaves the active item's class untouched", () => {

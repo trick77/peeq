@@ -298,11 +298,11 @@ button {
   position: sticky;
   top: 0;
   /* dvh second: on iPad Safari 100vh counts the toolbars, so the rail ran
-     past the visible area and cut the toggle at its foot in half. */
+     past the visible area and cut the foot in half. */
   height: 100vh;
   height: 100dvh;
   /* A short window (Split View, Stage Manager) can be shorter than brand +
-     nav + foot; scrolling keeps the toggle reachable rather than cut off. */
+     nav + toggle + foot; scrolling keeps all of it reachable, not cut off. */
   overflow-y: auto;
   overflow-x: hidden;
 }
