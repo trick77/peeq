@@ -302,6 +302,15 @@ function PlayerImpl({
   // loadedmetadata against the new video's state, which sets resumeAppliedRef
   // and costs the new video its resume position. null until minted.
   const [grant, setGrant] = useState<{ id: string; url: string } | null>(null);
+  // The Summary column closed with its ×, so the video takes the full width.
+  // Deliberately not persisted and with no control to undo it: closed is for
+  // this viewing only, and the next video or a reload opens with the Summary
+  // back. Keyed on the video id, like subtitlesReadyFor below, so switching
+  // videos resets it without an effect.
+  const [summaryClosedFor, setSummaryClosedFor] = useState<string | null>(null);
+  // videoId may be null; null === null must not read as "closed".
+  const summaryClosed =
+    summaryClosedFor !== null && summaryClosedFor === videoId;
   // confirmDelete drives the delete confirmation modal (ConfirmDialog),
   // opened from the ⋮ menu; deleting is its in-flight busy flag.
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -330,6 +339,13 @@ function PlayerImpl({
     null,
   );
   const videoRef = useRef<HTMLVideoElement>(null);
+  // The × hides itself along with the column, which would drop focus on
+  // <body> and restart Tab from the top of the document. The video is what
+  // the wider column is for, so focus goes there.
+  const closeSummary = useCallback(() => {
+    setSummaryClosedFor(videoId);
+    videoRef.current?.focus();
+  }, [videoId]);
   const {
     positionRef,
     positionKnownRef,
@@ -1331,7 +1347,7 @@ function PlayerImpl({
   }
 
   return (
-    <div className="playgrid">
+    <div className={`playgrid${summaryClosed ? " noside" : ""}`}>
       <div className="leftcol">
         <div className="stage stage-wrap">
           {/* Without a poster the stage is a bare black rectangle until the
@@ -1663,7 +1679,7 @@ function PlayerImpl({
       </div>
 
       <aside className="side">
-        <SummaryCard video={video} />
+        <SummaryCard video={video} onClose={closeSummary} />
       </aside>
       {video ? (
         <ConfirmDialog

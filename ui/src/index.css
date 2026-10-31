@@ -297,23 +297,24 @@ button {
   height: 100vh;
 }
 
-/* The brand row is loom's sidebar header, geometry included: a 44px band with
-   12px side padding, the wordmark at one end and the collapse toggle at the
-   other. The mark that used to lead it is gone — loom's header carries a word
-   and its controls, nothing else — and with it .rail-logo and the accent span
-   that painted "ee". Collapsed there is no room for a word, so the row centres
-   on the toggle alone. */
+/* The brand row is loom's sidebar header geometry: a 44px band with 12px side
+   padding around the wordmark. The collapse toggle no longer shares it — it
+   sits in .rail-foot, so the collapsed rail (which has no room for a word and
+   drops the band) leads with Now playing instead of a control. */
 .rail-brand {
   height: 44px;
   padding: 0 12px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
 }
-.rail.collapsed .rail-brand {
-  justify-content: center;
-  padding: 0 10px;
+/* Left in the foot when expanded, under the status rows; centred under the
+   icons when collapsed, where the status rows are gone. */
+.rail-foot .rail-collapse {
+  align-self: flex-start;
+}
+.rail.collapsed .rail-foot .rail-collapse {
+  align-self: center;
 }
 .rail-collapse {
   display: grid;
@@ -461,8 +462,10 @@ button {
    box border-box, so the nav's content box is 63px: 44 + 10 + 10 overflows it
    by 1px and the rounded background bleeds over the border. 8px leaves 47px
    for a 44px item, which auto-centres with room to spare. */
+/* 12px on top: the brand band is gone when collapsed, and 8px put the first
+   icon hard under the window edge. */
 .rail.collapsed .rail-nav {
-  padding: 8px;
+  padding: 12px 8px 8px;
 }
 .rail.collapsed .rail-nav-item {
   width: 44px;
@@ -2644,6 +2647,41 @@ button.sleeppick.armed {
   gap: 26px;
   align-items: start;
 }
+/* The Summary's × closed the column: the video takes the full width. Two-column
+   layout only — in one column (below) the Summary sits under the video, there
+   is no column to close, and the × is hidden. */
+@media (min-width: 1041px) {
+  .playgrid.noside {
+    grid-template-columns: 1fr;
+  }
+  .playgrid.noside > .side {
+    display: none;
+  }
+}
+/* Shaped like the rail's toggle: a 28px hit area whose negative margins keep
+   the header at its usual height. Grey, not the accent the header's own glyph
+   wears — it is furniture, not the card's identity. */
+.card .hd .summary-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: -6px -6px -6px auto;
+  flex: none;
+  border: none;
+  border-radius: var(--radius-ui-sm);
+  background: none;
+  cursor: pointer;
+}
+.card .hd .summary-close svg {
+  color: var(--color-muted);
+}
+.card .hd .summary-close:hover {
+  background: var(--color-active);
+}
+.card .hd .summary-close:hover svg {
+  color: var(--color-ink-dim);
+}
 /* Single column: the sidebar stops being a sidebar, so its panels have to earn
    their place in the reading order instead of inheriting one from the markup.
    In source order the whole left column comes first, which put Summary below
@@ -2701,6 +2739,11 @@ button.sleeppick.armed {
   }
   .playgrid .transcriptpanel {
     order: 8;
+  }
+  /* No column to close here: the Summary already sits under the video.
+     Qualified past `.card .hd .summary-close`, which sets display: grid. */
+  .playgrid .card .hd .summary-close {
+    display: none;
   }
   /* .leftcol carried min-width: 0 to stop a long unbroken transcript line
      widening the column; with its box gone, the panels it held carry it. */

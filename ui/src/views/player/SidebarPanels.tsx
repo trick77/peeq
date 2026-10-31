@@ -17,7 +17,15 @@ const DONE_STATUSES = new Set([
 ]);
 
 // SummaryCard renders the prose summary and every non-done state it can be in.
-function SummaryCardImpl({ video }: { video: Video }) {
+// onClose, when given, adds the × that closes the Summary column (Player);
+// in one column there is no column to close, and CSS hides the × there.
+function SummaryCardImpl({
+  video,
+  onClose,
+}: {
+  video: Video;
+  onClose?: () => void;
+}) {
   return (
     /* summarypanel is a placement hook, not a style: in one column the four
        panels are ordered individually (see .playgrid's media query), and both
@@ -26,6 +34,17 @@ function SummaryCardImpl({ video }: { video: Video }) {
       <div className="hd">
         <Icon name="alignLeft" size="16px" />
         <span className="lbl">Summary</span>
+        {onClose ? (
+          <button
+            type="button"
+            className="summary-close"
+            onClick={onClose}
+            aria-label="Close summary"
+            title="Close summary"
+          >
+            <Icon name="x" size="16px" />
+          </button>
+        ) : null}
       </div>
       <div className="tabbody summ">
         {video.summary_status === "done" &&
