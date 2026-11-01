@@ -3,14 +3,14 @@
 # (`docker network create traefik`) shared with your Traefik instance.
 #
 #   cp .env.example .env   # fill in the values, especially PUBLIC_FQDN and the OIDC block
-#   mkdir -p data/media && sudo chown -R 1000:1000 data   # or MEDIA_HOST_DIR, if set elsewhere
+#   mkdir -p data/media && sudo chown -R 65532:65532 data  # or MEDIA_HOST_DIR, if set elsewhere
 #   docker compose up -d
 services:
   peeq:
     image: ghcr.io/trick77/peeq:latest
     restart: unless-stopped
 
-    user: "1000:1000"
+    user: "65532:65532"
     cap_drop:
       - ALL
     security_opt:

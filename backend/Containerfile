@@ -111,14 +111,16 @@ COPY --from=denoland/deno:bin-2.9.3@sha256:eb93e70bd53efec4be113d997410784075655
 # an image that silently degrades extraction in production.
 RUN deno --version
 COPY --from=build /out/peeq /usr/local/bin/peeq
-# Non-root, the uid compose runs it as (user: "1000:1000"), so the image's own
+# Non-root, the uid compose runs it as (user: "65532:65532"; never 1000, the
+# host's first user, who would own every file chowned for it), so the image's own
 # default never runs ffmpeg or yt-dlp as root either. /data is its own, for a
 # run that mounts no volume there; HOME and TMPDIR are /tmp, as compose sets
 # them, because yt-dlp writes its cache and the cookie temp file there and a
 # read-only rootfs has no other writable place.
-RUN useradd --uid 1000 --user-group --no-create-home --shell /usr/sbin/nologin peeq \
-    && mkdir /data && chown 1000:1000 /data
+RUN groupadd --gid 65532 peeq \
+    && useradd --uid 65532 --gid 65532 --no-create-home --shell /usr/sbin/nologin peeq \
+    && mkdir /data && chown 65532:65532 /data
 ENV HOME=/tmp TMPDIR=/tmp
-USER 1000:1000
+USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/peeq"]

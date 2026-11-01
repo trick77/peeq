@@ -10,10 +10,10 @@
 # bind inside a bridge-network container is unreachable via -p).
 services:
   # Pre-creates ./data with the right ownership for the container's non-root
-  # uid:gid (matches the "user: 1000:1000" set on peeq below).
+  # uid:gid (matches the "user: 65532:65532" set on peeq below).
   peeq-init:
     image: alpine
-    command: chown -R 1000:1000 /data
+    command: chown -R 65532:65532 /data
     volumes:
       - ./data:/data
 
@@ -22,7 +22,7 @@ services:
       context: .
       dockerfile: backend/Containerfile
     network_mode: host
-    user: "1000:1000"
+    user: "65532:65532"
     # Every variable in .env reaches the container: the model ids and whichever
     # LLMWIRE_<PROVIDER>_API_KEY the models need — see .env.example. Optional
     # so the file still parses without one; peeq refuses to boot without the
