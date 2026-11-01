@@ -6,6 +6,7 @@ swept off disk. Go backend serving a JSON API + an embedded React SPA, backed by
 ## Working conventions
 - Docs, specs, and code comments are **English only**.
 - Commit subjects + PR titles: Go style `area: what` (`ytdlp: …`, `httpapi: …`, `llm: …`, `summarize: …`, `ui: …`, `extension: …`), gated by ship; release notes list them by area.
+- Fresh clone: `ship hooks` before the first push (check, conform and init install it too); without the pre-push hook a push skips the gate.
 - Gate: `ship check` (`make check`): conform, lint, tests, coverage floors 75 (Go, UI) and patch 75, the `ship.yaml` steps. `ship hooks` once per clone runs it on every push. Raise tests, never a floor. The extension's Playwright e2e is CI only (`extension-e2e.yaml`, PRs touching `extension/`): too slow for the hook.
 - Release by hand only, on GitHub (images are built and signed there): `gh workflow run Release -f bump=auto`. auto = patch, or a commit's `Release: minor` + `Release-note: …` lines.
 - Stays in peeq, not kit: the yt-dlp throttle and serial queue (one global gated gap, not a per-key throttle), the `sched` slot math, the yt-dlp selfupdate symlink swap.
