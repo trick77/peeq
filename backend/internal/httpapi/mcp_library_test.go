@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trick77/common/mcpserver"
 	"github.com/trick77/peeq/internal/channels"
-	"github.com/trick77/peeq/internal/mcpserver"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/videos"
 )

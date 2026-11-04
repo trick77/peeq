@@ -7,23 +7,25 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+
+	mcp "github.com/trick77/common/mcpserver"
 )
 
 // channelDescriptionRunes trims a description in list_youtube_channels.
 const channelDescriptionRunes = 240
 
-func runListYouTubeChannels(ctx context.Context, h *handler, raw json.RawMessage) toolResult {
+func runListYouTubeChannels(ctx context.Context, h *handler, raw json.RawMessage) mcp.Result {
 	var a struct{}
-	if err := decodeArgs(raw, &a); err != nil {
-		return errorResult("invalid arguments: " + err.Error())
+	if err := mcp.DecodeArgs(raw, &a); err != nil {
+		return mcp.ErrorResult("invalid arguments: " + err.Error())
 	}
 	chans, err := h.lib.Channels(ctx)
 	if err != nil {
 		slog.Warn("mcp: list channels failed", "err", err)
-		return errorResult("reading the channel list failed; try again")
+		return mcp.ErrorResult("reading the channel list failed; try again")
 	}
 	if len(chans) == 0 {
-		return toolResult{Text: "peeq has no channels yet."}
+		return mcp.Result{Text: "peeq has no channels yet."}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d channels. Every downloaded or summarized video stays searchable, after its file is deleted too unless its channel is set to forget deleted videos; "+
@@ -52,11 +54,11 @@ func runListYouTubeChannels(ctx context.Context, h *handler, raw json.RawMessage
 		if yt := joinCounts(c.TopYouTubeCategories, 3, true); yt != "" {
 			b.WriteString("\n  youtube: " + yt)
 		}
-		if d := trimRunes(c.Description, channelDescriptionRunes); d != "" {
+		if d := mcp.OneLine(c.Description, channelDescriptionRunes); d != "" {
 			b.WriteString("\n  " + d)
 		}
 	}
-	return toolResult{Text: b.String()}
+	return mcp.Result{Text: b.String()}
 }
 
 // subcategoriesInUse is every channel subcategory the list carries, sorted:

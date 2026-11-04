@@ -1,22 +1,14 @@
 package mcpserver
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	mcp "github.com/trick77/common/mcpserver"
 	"github.com/trick77/peeq/internal/tokenauth"
 )
-
-// maxBodyBytes bounds one request body. Tool arguments are a query and a few
-// filters; a megabyte is far past anything legitimate.
-const maxBodyBytes = 1 << 20
 
 // Deps configures the handler.
 type Deps struct {
@@ -31,11 +23,11 @@ type Deps struct {
 	Version string
 }
 
+// handler holds what peeq's tools and per-request texts read; the protocol is
+// kit's mcpserver.
 type handler struct {
 	lib       Library
-	origin    string
 	publicURL string
-	version   string
 
 	// hint caches channelHint for hintTTL: discovery, initialize and
 	// tools/list all want it, and a burst of them must not each re-read
@@ -45,67 +37,19 @@ type handler struct {
 	hintExpires time.Time
 }
 
-// New returns the /mcp handler: origin check, then bearer auth, then the
-// method, size and JSON-RPC handling.
+// New returns the /mcp handler: origin check, then bearer auth, then kit's
+// MCP server with peeq's tools.
 func New(d Deps) http.Handler {
-	h := &handler{
-		lib:       d.Library,
-		origin:    originOf(d.PublicURL),
-		publicURL: strings.TrimRight(d.PublicURL, "/"),
-		version:   d.Version,
-	}
-	authed := tokenauth.NewStaticTokenMiddleware(d.Token).RequireToken(http.HandlerFunc(h.serve))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Before auth: a page on another origin (DNS rebinding included) learns
-		// nothing, not even whether a guessed token was right.
-		if o := r.Header.Get("Origin"); o != "" && (h.origin == "" || !strings.EqualFold(o, h.origin)) {
-			http.Error(w, "forbidden origin", http.StatusForbidden)
-			return
-		}
-		authed.ServeHTTP(w, r)
+	h := &handler{lib: d.Library, publicURL: strings.TrimRight(d.PublicURL, "/")}
+	return mcp.New(mcp.Server{
+		Name:             "peeq",
+		Version:          d.Version,
+		InstructionsFunc: h.instructions,
+		Tools:            h.tools(),
+		Aliases:          toolAliases,
+		ToolsTTL:         toolsTTL,
+		MaxTextBytes:     maxToolTextBytes,
+		AllowedOrigin:    d.PublicURL,
+		Auth:             tokenauth.NewStaticTokenMiddleware(d.Token).RequireToken,
 	})
-}
-
-// originOf reduces a base URL to scheme://host[:port], or "" when it is not
-// an absolute URL.
-func originOf(raw string) string {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return ""
-	}
-	return u.Scheme + "://" + u.Host
-}
-
-func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		// Stateless and JSON-only: no GET stream to open, no session to DELETE.
-		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	if err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-			return
-		}
-		writeRPCError(w, http.StatusBadRequest, nil, codeParseError, "could not read the request body", nil)
-		return
-	}
-	trimmed := bytes.TrimSpace(body)
-	if len(trimmed) > 0 && trimmed[0] == '[' {
-		writeRPCError(w, http.StatusBadRequest, nil, codeInvalidRequest, "batch requests are not supported", nil)
-		return
-	}
-	var req request
-	if err := json.Unmarshal(trimmed, &req); err != nil {
-		writeRPCError(w, http.StatusBadRequest, nil, codeParseError, "parse error", nil)
-		return
-	}
-	if req.JSONRPC != "2.0" || req.Method == "" {
-		writeRPCError(w, http.StatusBadRequest, req.ID, codeInvalidRequest, "invalid request", nil)
-		return
-	}
-	h.dispatch(w, r, req)
 }

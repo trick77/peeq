@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	mcp "github.com/trick77/common/mcpserver"
 )
 
 // maxVideoTags trims yt-dlp's tag list, which can run to dozens of SEO terms.
@@ -15,22 +17,22 @@ type videoArgs struct {
 	ID string `json:"id"`
 }
 
-func runGetVideo(ctx context.Context, h *handler, raw json.RawMessage) toolResult {
+func runGetVideo(ctx context.Context, h *handler, raw json.RawMessage) mcp.Result {
 	var a videoArgs
-	if err := decodeArgs(raw, &a); err != nil {
-		return errorResult("invalid arguments: " + err.Error())
+	if err := mcp.DecodeArgs(raw, &a); err != nil {
+		return mcp.ErrorResult("invalid arguments: " + err.Error())
 	}
 	id := strings.TrimSpace(a.ID)
 	if id == "" {
-		return errorResult("id is required")
+		return mcp.ErrorResult("id is required")
 	}
 	v, err := h.lib.Video(ctx, id)
 	if err != nil {
 		slog.Warn("mcp: get video failed", "video_id", id, "err", err)
-		return errorResult("reading the video failed; try again")
+		return mcp.ErrorResult("reading the video failed; try again")
 	}
 	if v == nil {
-		return errorResult(fmt.Sprintf("No video with id %q in peeq. Use the id from a search result.", id))
+		return mcp.ErrorResult(fmt.Sprintf("No video with id %q in peeq. Use the id from a search result.", id))
 	}
 
 	var b strings.Builder
@@ -70,13 +72,13 @@ func runGetVideo(ctx context.Context, h *handler, raw json.RawMessage) toolResul
 	if v.InDepth != "" {
 		b.WriteString("\nIn-depth summary:\n" + strings.TrimSpace(v.InDepth) + "\n")
 	}
-	return toolResult{
+	return mcp.Result{
 		Text: strings.TrimRight(b.String(), "\n"),
-		Sources: []Source{{
+		Sources: []mcp.Source{{
 			URL:     h.videoURL(v.ID, 0),
 			Title:   title,
 			Label:   sourceLabel(v.Channel),
-			Snippet: trimRunes(v.Summary, snippetRunes),
+			Snippet: mcp.OneLine(v.Summary, snippetRunes),
 			Image:   thumbnailURL(v.ID),
 		}},
 	}

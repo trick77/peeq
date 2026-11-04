@@ -9,6 +9,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	mcp "github.com/trick77/common/mcpserver"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/subtitles"
 )
@@ -19,10 +20,10 @@ func callTool(t *testing.T, lib Library, name string, args map[string]any) rpcRe
 }
 
 type sourcesBody struct {
-	Sources []Source `json:"sources"`
+	Sources []mcp.Source `json:"sources"`
 }
 
-func sourcesOf(t *testing.T, r rpcReply) []Source {
+func sourcesOf(t *testing.T, r rpcReply) []mcp.Source {
 	t.Helper()
 	raw, err := json.Marshal(r.body.Result["structuredContent"])
 	if err != nil {
@@ -124,7 +125,7 @@ func TestSearchSchemaListsEveryArgument(t *testing.T) {
 			t.Errorf("%s enum does not list the vocabulary: %v", k, p["enum"])
 		}
 	}
-	if d := tools["search"].description; !strings.Contains(d, "subcategory") || !strings.Contains(d, "channel_subcategory") {
+	if d := searchDescription; !strings.Contains(d, "subcategory") || !strings.Contains(d, "channel_subcategory") {
 		t.Errorf("search description does not say subcategory filters exist: %q", d)
 	}
 }

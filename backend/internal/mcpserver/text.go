@@ -5,43 +5,14 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/trick77/peeq/internal/rag"
 )
 
-// maxToolTextBytes caps one tool's text. The calling client truncates at
-// 32 KB; staying well under it keeps the cut ours, at a line we chose.
+// maxToolTextBytes caps one tool's text (Server.MaxTextBytes). The calling
+// client truncates at 32 KB; staying well under it keeps the cut ours, at a
+// line we chose. Tools that page (search, transcript) budget against it.
 const maxToolTextBytes = 24 * 1024
-
-const truncatedNote = "\n[output truncated]"
-
-// capText trims s to at most max bytes on a line boundary when it can, a rune
-// boundary otherwise, and says so.
-func capText(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	cut := max - len(truncatedNote)
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	if nl := strings.LastIndexByte(s[:cut], '\n'); nl > cut/2 {
-		cut = nl
-	}
-	return s[:cut] + truncatedNote
-}
-
-// trimRunes shortens s to at most n runes, ending in an ellipsis when cut,
-// and folds its whitespace onto one line.
-func trimRunes(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	rs := []rune(s)
-	return strings.TrimSpace(string(rs[:n-1])) + "…"
-}
 
 // clock renders seconds as mm:ss, or h:mm:ss from an hour on.
 func clock(sec int) string {
