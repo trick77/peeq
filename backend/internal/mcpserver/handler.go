@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	mcp "github.com/trick77/common/mcpserver"
 	"github.com/trick77/peeq/internal/tokenauth"
-	mcp "github.com/trick77/ship/kit/mcpserver"
 )
 
 // Deps configures the handler.

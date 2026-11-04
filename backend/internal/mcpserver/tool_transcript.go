@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"strings"
 
+	mcp "github.com/trick77/common/mcpserver"
 	"github.com/trick77/peeq/internal/subtitles"
-	mcp "github.com/trick77/ship/kit/mcpserver"
 )
 
 const (

@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	mcp "github.com/trick77/ship/kit/mcpserver"
+	mcp "github.com/trick77/common/mcpserver"
 )
 
 // channelDescriptionRunes trims a description in list_youtube_channels.

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	mcp "github.com/trick77/common/mcpserver"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/videos"
-	mcp "github.com/trick77/ship/kit/mcpserver"
 )
 
 const (

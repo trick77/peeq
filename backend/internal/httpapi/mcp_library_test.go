@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/trick77/common/mcpserver"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/videos"
-	"github.com/trick77/ship/kit/mcpserver"
 )
 
 const mcpTestToken = "mcp-integration-token"

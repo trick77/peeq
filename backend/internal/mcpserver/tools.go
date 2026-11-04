@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
+	mcp "github.com/trick77/common/mcpserver"
 	"github.com/trick77/peeq/internal/videos"
-	mcp "github.com/trick77/ship/kit/mcpserver"
 )
 
 // toolsTTL is how long a client may cache tools/list (and discovery): long
