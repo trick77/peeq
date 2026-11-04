@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trick77/llmwire"
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/subtitles"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/toolkit/llmwire"
 )
 
 // fakeCompleter dispatches on the system prompt rather than call order: the

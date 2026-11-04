@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trick77/llmwire"
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/videos"
+	"github.com/trick77/toolkit/llmwire"
 )
 
 // Both subcategory calls are labels no reader sees, persisted for good: the

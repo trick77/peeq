@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
-	mcp "github.com/trick77/common/mcpserver"
+	mcp "github.com/trick77/toolkit/mcpserver"
 )
 
 // maxVideoTags trims yt-dlp's tag list, which can run to dozens of SEO terms.

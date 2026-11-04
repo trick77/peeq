@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trick77/llmwire"
 	"github.com/trick77/peeq/internal/config"
 	"github.com/trick77/peeq/internal/httpapi"
 	"github.com/trick77/peeq/internal/llm"
 	"github.com/trick77/peeq/internal/ytdlp"
 	"github.com/trick77/ship/kit/sse"
+	"github.com/trick77/toolkit/llmwire"
 )
 
 // The hosts are llmwire's profiles' and the keys are llmwire's to read from

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trick77/llmwire/llmwiretest"
+	"github.com/trick77/toolkit/llmwire/llmwiretest"
 )
 
 // The SSE framing the fixtures build. These used to be package constants next to

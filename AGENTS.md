@@ -33,7 +33,7 @@
 - Embed model switch with vectors stored = new migration rebuilding `vec_chunks`, clearing `vec_model`, setting `embed_rev = 0` (else nothing re-embeds). No auto re-index. Empty library may switch same-width.
 
 ## Chat model
-- **The wire protocol is `github.com/trick77/llmwire`.** Never reimplement here: SSE parsing,
+- **The wire protocol is `github.com/trick77/toolkit/llmwire`.** Never reimplement here: SSE parsing,
   header/idle/call bounds, the request body (no `ExtraBody`, ever), usage decoding, reasoning and
   cap rendering, opencode identity. One `llmwire.Client` per `llm.Client`, never one per call: the
   session id lives on it.

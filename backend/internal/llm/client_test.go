@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trick77/llmwire"
-	"github.com/trick77/llmwire/llmwiretest"
+	"github.com/trick77/toolkit/llmwire"
+	"github.com/trick77/toolkit/llmwire/llmwiretest"
 )
 
 // The tests here assert what peeq ASKS for — which model, which reasoning
