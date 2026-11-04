@@ -3,7 +3,7 @@ package llm
 import (
 	"context"
 
-	"github.com/trick77/llmwire"
+	"github.com/trick77/toolkit/llmwire"
 )
 
 // Per-call knobs carried on the context, same pattern as CallInfo: they keep

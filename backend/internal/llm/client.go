@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/trick77/llmwire"
 	"github.com/trick77/ship/kit/run"
+	"github.com/trick77/toolkit/llmwire"
 )
 
 // Three bounds replace the single whole-request timeout this client used while

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trick77/llmwire"
 	"github.com/trick77/peeq/internal/llm"
+	"github.com/trick77/toolkit/llmwire"
 )
 
 // TestSummarizeText_mapCallsAreCapped: every chat call carries an answer cap

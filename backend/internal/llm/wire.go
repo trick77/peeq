@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
-	"github.com/trick77/llmwire"
+	"github.com/trick77/toolkit/llmwire"
 )
 
 // The seam onto llmwire.

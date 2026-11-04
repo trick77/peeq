@@ -9,9 +9,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	mcp "github.com/trick77/common/mcpserver"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/subtitles"
+	mcp "github.com/trick77/toolkit/mcpserver"
 )
 
 func callTool(t *testing.T, lib Library, name string, args map[string]any) rpcReply {

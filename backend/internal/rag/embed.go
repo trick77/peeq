@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/trick77/llmwire"
+	"github.com/trick77/toolkit/llmwire"
 	// For the shared logging vocabulary: the call identity the worker puts on
 	// the context, the heartbeat, and the token formatting, so an embed line
 	// reads like a chat line. llm depends on nothing in peeq, so no cycle.

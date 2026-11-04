@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trick77/llmwire/llmwiretest"
 	"github.com/trick77/peeq/internal/llm"
+	"github.com/trick77/toolkit/llmwire/llmwiretest"
 )
 
 // stubGateModel is the gate model the stub client is built with: a different

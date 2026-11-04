@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	mcp "github.com/trick77/common/mcpserver"
+	mcp "github.com/trick77/toolkit/mcpserver"
 )
 
 const testToken = "test-mcp-token"
