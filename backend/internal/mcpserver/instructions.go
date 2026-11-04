@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	mcp "github.com/trick77/ship/kit/mcpserver"
 )
 
 const (
@@ -105,7 +107,7 @@ func buildChannelHint(chans []Channel) string {
 	lines := make([]string, len(bases))
 	for i, base := range bases {
 		lines[i] = base
-		if d := trimRunes(chans[i].Description, hintDescriptionRunes); d != "" {
+		if d := mcp.OneLine(chans[i].Description, hintDescriptionRunes); d != "" {
 			extra := " — " + d
 			if used+len(extra) <= budget-40 {
 				lines[i] += extra

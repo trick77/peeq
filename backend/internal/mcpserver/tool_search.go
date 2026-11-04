@@ -12,6 +12,7 @@ import (
 
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/videos"
+	mcp "github.com/trick77/ship/kit/mcpserver"
 )
 
 const (
@@ -41,10 +42,10 @@ type searchArgs struct {
 	K               *int   `json:"k"`
 }
 
-func runSearch(ctx context.Context, h *handler, raw json.RawMessage) toolResult {
+func runSearch(ctx context.Context, h *handler, raw json.RawMessage) mcp.Result {
 	var a searchArgs
-	if err := decodeArgs(raw, &a); err != nil {
-		return errorResult("invalid arguments: " + err.Error())
+	if err := mcp.DecodeArgs(raw, &a); err != nil {
+		return mcp.ErrorResult("invalid arguments: " + err.Error())
 	}
 	q := SearchQuery{
 		Text:               strings.TrimSpace(a.Query),
@@ -55,15 +56,16 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) toolResult 
 		Videos:             defaultSearchVideos,
 	}
 	if q.Text == "" {
-		return errorResult("query is required")
+		return mcp.ErrorResult("query is required")
 	}
 	if q.Category != "" && !videos.ValidCategory(q.Category) {
-		return errorResult(fmt.Sprintf("unknown category %q; use one of: %s", q.Category, strings.Join(videos.CategoryIDs(), ", ")))
+		return mcp.ErrorResult(fmt.Sprintf("unknown category %q; use one of: %s", q.Category, strings.Join(videos.CategoryIDs(), ", ")))
 	}
 	for _, s := range []struct{ name, val string }{{"subcategory", q.Subcategory}, {"channel_subcategory", q.ChannelSubcategory}} {
 		if s.val != "" && !videos.ValidSubcategory(s.val) {
-			return errorResult(fmt.Sprintf("unknown %s %q; use a category/subcategory key: %s", s.name, s.val,
+			return mcp.ErrorResult(fmt.Sprintf("unknown %s %q; use a category/subcategory key: %s", s.name, s.val,
 				strings.Join(videos.SubcategoryKeys(), ", ")))
+
 		}
 	}
 	for _, d := range []struct{ name, val string }{{"after", a.After}, {"before", a.Before}} {
@@ -71,7 +73,7 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) toolResult 
 			continue
 		}
 		if _, err := time.Parse("2006-01-02", d.val); err != nil {
-			return errorResult(fmt.Sprintf("%s must be a date as YYYY-MM-DD, got %q", d.name, d.val))
+			return mcp.ErrorResult(fmt.Sprintf("%s must be a date as YYYY-MM-DD, got %q", d.name, d.val))
 		}
 	}
 	q.After, q.Before = a.After, a.Before
@@ -80,7 +82,7 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) toolResult 
 	case "keyword":
 		q.Keyword = true
 	default:
-		return errorResult(fmt.Sprintf("mode must be hybrid or keyword, got %q", a.Mode))
+		return mcp.ErrorResult(fmt.Sprintf("mode must be hybrid or keyword, got %q", a.Mode))
 	}
 	if a.K != nil {
 		q.Videos = min(max(*a.K, 1), maxSearchVideos)
@@ -89,19 +91,19 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) toolResult 
 		scope, err := h.lib.ResolveChannel(ctx, name)
 		if err != nil {
 			slog.Warn("mcp: channel resolve failed", "err", err)
-			return errorResult("search failed: the channel list could not be read")
+			return mcp.ErrorResult("search failed: the channel list could not be read")
 		}
 		if !scope.Resolved() {
 			msg := fmt.Sprintf("No channel in peeq matches %q.", name)
 			if len(scope.Suggestions) > 0 {
 				msg += " Closest: " + strings.Join(scope.Suggestions, ", ") + "."
 			}
-			return errorResult(msg + " Call list_youtube_channels for every channel, or search without a channel.")
+			return mcp.ErrorResult(msg + " Call list_youtube_channels for every channel, or search without a channel.")
 		}
 		if scope.NoVideos {
-			return toolResult{
+			return mcp.Result{
 				Text:    fmt.Sprintf("No videos yet in %s: peeq follows the channel but holds none of its videos so far.", strings.Join(scope.Matched, ", ")),
-				Sources: []Source{},
+				Sources: []mcp.Source{},
 			}
 		}
 		q.Channel = scope
@@ -114,13 +116,13 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) toolResult 
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			reason = "timed out"
 		}
-		return errorResult("search failed (" + reason + "), try again, or narrow the query")
+		return mcp.ErrorResult("search failed (" + reason + "), try again, or narrow the query")
 	}
 	return h.renderSearch(q, res)
 }
 
-func (h *handler) renderSearch(q SearchQuery, res SearchResult) toolResult {
-	sources := make([]Source, 0, len(res.Videos))
+func (h *handler) renderSearch(q SearchQuery, res SearchResult) mcp.Result {
+	sources := make([]mcp.Source, 0, len(res.Videos))
 	var b strings.Builder
 	if res.SemanticDegraded && !q.Keyword {
 		b.WriteString("Note: semantic search was unavailable, so these are keyword-only results.\n\n")
@@ -137,7 +139,7 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) toolResult {
 			q.Subcategory != "" || q.ChannelSubcategory != "" {
 			b.WriteString(" Try again without some of the filters.")
 		}
-		return toolResult{Text: b.String(), Sources: sources}
+		return mcp.Result{Text: b.String(), Sources: sources}
 	}
 	// Items are added whole while they fit, so the size cap never cuts one in
 	// half and sources[i] always belongs to the complete i-th item. Every field
@@ -148,11 +150,11 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) toolResult {
 		best := bestMoment(vh.Matches)
 		var item strings.Builder
 		fmt.Fprintf(&item, "- %s\n", resultHeader(v))
-		if s := trimRunes(v.Summary, summaryRunes); s != "" {
+		if s := mcp.OneLine(v.Summary, summaryRunes); s != "" {
 			item.WriteString("   summary: " + s + "\n")
 		}
 		for _, m := range vh.Matches {
-			snip := trimRunes(boldHighlights(m.Snippet), snippetRunes)
+			snip := mcp.OneLine(boldHighlights(m.Snippet), snippetRunes)
 			if m.Kind == rag.KindSummary {
 				item.WriteString("   summary match: " + snip + "\n")
 				continue
@@ -168,17 +170,17 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) toolResult {
 
 		snippet := ""
 		if len(vh.Matches) > 0 {
-			snippet = trimRunes(stripHighlights(vh.Matches[0].Snippet), snippetRunes)
+			snippet = mcp.OneLine(stripHighlights(vh.Matches[0].Snippet), snippetRunes)
 		}
-		sources = append(sources, Source{
+		sources = append(sources, mcp.Source{
 			URL:     h.videoURL(v.ID, best),
-			Title:   cmp.Or(trimRunes(v.Title, titleRunes), v.ID),
+			Title:   cmp.Or(mcp.OneLine(v.Title, titleRunes), v.ID),
 			Label:   sourceLabel(v.Channel),
 			Snippet: snippet,
 			Image:   thumbnailURL(v.ID),
 		})
 	}
-	return toolResult{Text: strings.TrimRight(b.String(), "\n"), Sources: sources}
+	return mcp.Result{Text: strings.TrimRight(b.String(), "\n"), Sources: sources}
 }
 
 // resultHeader is "<title> — <channel>, <date>, category <c> · youtube: <yt>,
@@ -203,7 +205,7 @@ func resultHeader(v Video) string {
 	if len(v.Subcategories) > 0 {
 		meta = append(meta, "subcategories: "+strings.Join(v.Subcategories, ", "))
 	}
-	title := trimRunes(v.Title, titleRunes)
+	title := mcp.OneLine(v.Title, titleRunes)
 	if title == "" {
 		title = v.ID
 	}

@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	mcp "github.com/trick77/ship/kit/mcpserver"
 )
 
 const testToken = "test-mcp-token"
@@ -56,7 +58,7 @@ func newTestHandler(lib Library) http.Handler {
 // modernMeta is the _meta block every 2026-07-28 request carries.
 func modernMeta() map[string]any {
 	return map[string]any{
-		"io.modelcontextprotocol/protocolVersion":    ModernProtocolVersion,
+		"io.modelcontextprotocol/protocolVersion":    mcp.ModernProtocolVersion,
 		"io.modelcontextprotocol/clientInfo":         map[string]any{"name": "test", "version": "0"},
 		"io.modelcontextprotocol/clientCapabilities": map[string]any{},
 	}
@@ -122,7 +124,7 @@ func modernCall(t *testing.T, h http.Handler, method string, params map[string]a
 	}
 	params["_meta"] = modernMeta()
 	headers := map[string]string{
-		"MCP-Protocol-Version": ModernProtocolVersion,
+		"MCP-Protocol-Version": mcp.ModernProtocolVersion,
 		"Mcp-Method":           method,
 	}
 	if name, ok := params["name"].(string); ok {
