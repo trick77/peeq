@@ -32,6 +32,8 @@
   --color-ink-dim: #e4e1d8;
   --color-muted: #9c9a92;
   --color-faint: #6f6d66;
+  /* the rail's section titles: ../loom's sidebar section title color. */
+  --color-rail-label: #97958c;
   --color-accent: #c6613f;
   --color-accent-strong: #d97757;
   /* accent roles: fill = active/primary, strong = interactive text. */
@@ -373,11 +375,13 @@ button {
   flex-direction: column;
   gap: 2px;
 }
+/* ../loom's sidebar section title: 12/16, weight 400, sentence case, no
+   tracking. Never an uppercase tracked eyebrow. */
 .rail-nav-label {
-  font-size: 10.5px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: var(--color-faint);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  color: var(--color-rail-label);
   padding: 10px 6px 4px;
 }
 .rail-nav-item,
