@@ -108,8 +108,8 @@ function RailImpl({
       <nav className="rail-nav">
         {SECTIONS.map((section) => (
           // display:contents keeps each section's items as direct flex
-          // children of .rail-nav, so the 2px gap applies within a section
-          // (not just between sections) — matches the mockup.
+          // children of .rail-nav, so the nav's gap (none expanded, 2px
+          // between collapsed tiles) applies within a section too.
           <div key={section.label} style={{ display: "contents" }}>
             {collapsed ? null : (
               <div className="rail-nav-label">{section.label}</div>
