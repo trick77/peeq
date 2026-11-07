@@ -32,8 +32,12 @@
   --color-ink-dim: #e4e1d8;
   --color-muted: #9c9a92;
   --color-faint: #6f6d66;
-  /* the rail's section titles: ../loom's sidebar section title color. */
+  /* The rail's own colors, ../loom's sidebar values (same names as gallery,
+     scener and rongo): section titles, entry text, entry hover, selected entry. */
   --color-rail-label: #97958c;
+  --color-rail: #c7c5bd;
+  --color-rail-hover: #2a2a28;
+  --color-rail-sel: #10100f;
   --color-accent: #c6613f;
   --color-accent-strong: #d97757;
   /* accent roles: fill = active/primary, strong = interactive text. */
@@ -335,9 +339,10 @@ button {
    bottom-pinned foot on purpose: rows below it there moved it. */
 .rail-toggle {
   padding: 0 8px 8px;
-  /* Pulls it up into the nav's 8px bottom padding: 2px from the last
-     destination, the same step as between destinations. */
-  margin-top: -6px;
+  /* Pulls it up into the nav's 8px bottom padding, so it sits the same step
+     from the last destination as destinations sit from each other: flush
+     expanded, 2px collapsed (see .rail.collapsed .rail-toggle). */
+  margin-top: -8px;
 }
 /* Loom's wordmark exactly: Anthropic Serif at 21px/28px, weight 500, its own
    #f4f0e8 — a shade the peeq scale does not carry (ink #faf9f5 is brighter,
@@ -369,36 +374,45 @@ button {
    which left the entries floating well right of the brand. */
 /* The 8px bottom padding (here and collapsed) is what .rail-toggle's -6px
    margin pulls into; change one, change the other. */
+/* Destinations stack flush, as ../loom's sidebar entries do. */
 .rail-nav {
   padding: 8px 8px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
 }
 /* ../loom's sidebar section title: 12/16, weight 400, sentence case, no
-   tracking. Never an uppercase tracked eyebrow. */
+   tracking. Never an uppercase tracked eyebrow. Loom's spacing too: 20px
+   above a title that follows entries, 8px below. The first one sits under the
+   brand band, not under entries, and keeps its 10px. */
 .rail-nav-label {
   font-size: 12px;
   line-height: 16px;
   font-weight: 400;
   color: var(--color-rail-label);
-  padding: 10px 6px 4px;
+  padding: 20px 6px 8px;
 }
+.rail-nav > div:first-child .rail-nav-label {
+  padding-top: 10px;
+}
+/* ../loom's sidebar nav entry (SidebarPrimaryItem): 26px, 14/20/400 in the
+   rail color. Hover only lights the background; selected darkens it and keeps
+   the text color. No border, no accent bar: loom marks the page with the
+   background alone. */
 .rail-nav-item,
 .rail-collapse {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 6px;
+  height: 26px;
+  padding: 0 6px;
   border-radius: var(--radius-ui-sm);
-  color: var(--color-muted);
+  color: var(--color-rail);
   text-decoration: none;
-  font-size: 14.5px;
-  /* tighter than the body's 1.5 — the rail holds nine items and the looser
-     leading made the list read as loose rather than airy. */
-  line-height: 1.3;
-  font-weight: 500;
-  border: 1px solid transparent;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+  border: 0;
   position: relative;
   transition:
     background 0.15s,
@@ -434,8 +448,7 @@ button {
 }
 .rail-nav-item:hover:not(:disabled),
 .rail-collapse:hover {
-  color: var(--color-ink-dim);
-  background: var(--color-active);
+  background: var(--color-rail-hover);
 }
 /* "Now playing" with nothing playing. Unlike an empty Inbox this is not a page
    worth opening, so it reads as unavailable rather than merely quiet. */
@@ -445,24 +458,7 @@ button {
   cursor: default;
 }
 .rail-nav-item.active {
-  color: var(--color-ink);
-  background: var(--color-active);
-  border-color: var(--color-border);
-}
-.rail-nav-item.active::before {
-  content: "";
-  position: absolute;
-  /* tracks .rail-nav's side padding — the bar sits against the rail's edge, so
-     when that padding moves this must move with it. */
-  left: -8px;
-  /* inset tracks .rail-nav-item's vertical padding — keep them in step or
-     the bar drifts off-centre within the item. */
-  top: 7px;
-  bottom: 7px;
-  width: 3px;
-  border-radius: 3px;
-  background: var(--color-accent);
-  box-shadow: 0 0 10px var(--glow-accent);
+  background: var(--color-rail-sel);
 }
 /* ── Collapsed rail: ../music's icon column, 64px of it ──────────────────── */
 
@@ -475,8 +471,14 @@ button {
 /* The brand band is gone when collapsed, so the first icon's box starts on the
    same line as the page beside it: .page's top inset, where the video, a page
    title or a list's first row begins. One variable, so they cannot drift. */
+/* The 44px tiles keep a 2px step between them: loom's flush rows are 26px
+   text rows, and tiles this size touching read as one slab. */
 .rail.collapsed .rail-nav {
   padding: var(--page-pad-top) 8px 8px;
+  gap: 2px;
+}
+.rail.collapsed .rail-toggle {
+  margin-top: -6px;
 }
 .rail.collapsed .rail-nav-item,
 .rail.collapsed .rail-collapse {
@@ -487,12 +489,6 @@ button {
   margin-inline: auto;
   justify-content: center;
   border-radius: var(--radius-ui-lg);
-}
-/* No accent bar when collapsed: at 64px it would sit outside the track, and the
-   rounded active background is doing the same job that music's rail asks of it
-   alone. */
-.rail.collapsed .rail-nav-item.active::before {
-  content: none;
 }
 /* Inbox and Up next used to fade to 42% when empty, so the rail read as a
    to-do list. They no longer do: an empty page is not a lesser page, and a
@@ -515,6 +511,11 @@ button {
   padding: 1px 7px;
   border-radius: 20px;
   border: 1px solid var(--color-border);
+}
+/* The row's 20px line-height would inherit into the pill and blow it up to
+   24px in a 26px row; 14px keeps the pill the size it had at the old leading. */
+.rail-nav-item .rail-nav-count {
+  line-height: 14px;
 }
 .rail-nav-item .rail-nav-count.hot,
 .tabbar-sheet-item .rail-nav-count.hot {
