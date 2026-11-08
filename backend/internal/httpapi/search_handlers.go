@@ -394,13 +394,15 @@ func (s *server) askLanes(ctx context.Context, q, topic string, filter rag.Filte
 	// production the floor ran 23 s of a 25 s tool deadline and the KNN was
 	// interrupted after 0 s, failing a search the vector lane could answer.
 	start := time.Now()
+	// reuse is the one place "this pass embeds or reuses the memo" is decided.
+	reuse := qv != nil && qv.done
 	var semantic chan semanticResult
 	if s.embedder != nil {
 		// Set whether the vectors are computed here or reused from the first pass
 		// of a relaxed search: either way this question got embedded.
 		diag.embedQueried = true
 		var memo *queryVectors
-		if qv != nil && qv.done {
+		if reuse {
 			m := *qv
 			memo = &m
 		}
@@ -489,7 +491,7 @@ func (s *server) askLanes(ctx context.Context, q, topic string, filter rag.Filte
 
 	if semantic != nil {
 		got := <-semantic
-		if got.embedded && qv != nil {
+		if !reuse && qv != nil {
 			*qv = got.vectors
 		}
 		diag.embedMs, diag.vectorMs = got.waitSpans(ladderEnd)
@@ -544,10 +546,8 @@ func (s *server) floorBudgetFor(ctx context.Context) (budget time.Duration, ok b
 // semanticResult is the vector half of one retrieval, built beside the keyword
 // ladder and handed back whole: the goroutine never writes the shared askDiag.
 type semanticResult struct {
-	// vectors are this pass's embedding; embedded says this pass made it (the
-	// caller memoizes it then) rather than reusing a memoized one.
-	vectors  queryVectors
-	embedded bool
+	// vectors are this pass's embedding, made here or the reused memo.
+	vectors queryVectors
 
 	raw, topic       rag.Lane
 	rawOK, topicOK   bool
@@ -600,7 +600,6 @@ func (s *server) semanticLanes(ctx context.Context, q, topic string, filter rag.
 		}
 		vecs, err := s.embedder.Embed(ctx, inputs)
 		r.vectors = queryVectors{done: true, vecs: vecs, err: err}
-		r.embedded = true
 	}
 	r.embedEnd = time.Now()
 	r.vectorEnd = r.embedEnd

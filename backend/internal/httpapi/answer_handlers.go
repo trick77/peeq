@@ -317,6 +317,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 			narrowFTS, narrowVector, narrowRetrieval := diag.ftsMs, diag.vectorMs, diag.retrievalMs
 			narrowEmbed, narrowEmbedTook, narrowVectorTook := diag.embedMs, diag.embedTookMs, diag.vectorTookMs
 			narrowQueried, narrowSem := diag.ftsQueried, semanticRan(diag)
+			narrowFailed, narrowTimedOut := diag.ftsFailed, diag.ftsTimedOut
 			// Both ladders' rungs, in the order they ran, separated by the
 			// marker. ftsMs below is the sum of TWO ladders, so carrying only
 			// the wide one's rungs would print a total the rungs cannot
@@ -332,6 +333,9 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 			diag.embedTookMs = narrowEmbedTook
 			diag.vectorTookMs += narrowVectorTook
 			diag.ftsQueried = wideQueried || narrowQueried
+			// Either ladder cut or failed makes the merged keyword lane partial.
+			diag.ftsFailed = diag.ftsFailed || narrowFailed
+			diag.ftsTimedOut = diag.ftsTimedOut || narrowTimedOut
 			diag.understand, diag.understandMs = string(ud.status), ud.ms
 			diag.counting = ud.counting
 			diag.filters, diag.filtersDropped = strings.Join(applied, "|"), ud.dropped
@@ -350,6 +354,8 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 			diag.vectorTookMs += wdiag.vectorTookMs
 			diag.retrievalMs += wideRetrieval
 			diag.ftsQueried = diag.ftsQueried || wideQueried
+			diag.ftsFailed = diag.ftsFailed || wdiag.ftsFailed
+			diag.ftsTimedOut = diag.ftsTimedOut || wdiag.ftsTimedOut
 			if wideSem {
 				diag.semRaw.ran = true
 			}
