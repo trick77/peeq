@@ -497,10 +497,13 @@ func (s *Store) SearchFTSFiltered(ctx context.Context, match string, n int, f Fi
 // ftsQuery renders the ranked keyword query.
 //
 // ORDER BY rank (bm25, no rank override is configured) is consumed by FTS5
-// itself, so rows come out ranked and LIMIT stops after n of them; snippet() is
-// only computed for a row that is returned. ORDER BY bm25(fts_chunks) was not
-// consumed: SQLite sorted every match in a temp b-tree, computing snippet() for
-// each, and the OR floor matches most of a large library (23 s on production).
+// itself: it still scores every match internally, but it hands rows out
+// ranked, so the chunk join and snippet() run only for the n rows LIMIT keeps.
+// ORDER BY bm25(fts_chunks) was not consumed: SQLite sorted every match in a
+// temp b-tree, joining and computing snippet() for each first. Measured on the
+// production DB with the floor of the query that timed out: 17.5 s before,
+// 1.6 s after, cold. Scoring every match is still the floor's cost, which is
+// why askLanes keeps a budget on it.
 //
 // CROSS JOIN pins fts_chunks as the outer loop, which is what keeps the order
 // FTS5's; the join drops an fts row with no chunk before LIMIT counts it.

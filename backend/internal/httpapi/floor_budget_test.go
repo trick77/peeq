@@ -207,6 +207,21 @@ func TestMCPSearchSlowFloorWithoutSemanticReportsATimeout(t *testing.T) {
 	}
 }
 
+// With almost nothing left of the deadline the floor is skipped, not started
+// and cut at once.
+func TestAskLanesSkipsTheFloorWithNoTimeLeft(t *testing.T) {
+	testee := slowFloorServer(t)
+	testee.embedder = nil
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+
+	_, diag := testee.askLanes(ctx, "electrolytes replace", "", rag.Filter{}, nil)
+	last := diag.rungs[len(diag.rungs)-1]
+	if !diag.ftsTimedOut || last != "w0.4=skipped/0ms" {
+		t.Errorf("timedOut=%v rungs=%v, want the floor skipped", diag.ftsTimedOut, diag.rungs)
+	}
+}
+
 // A timed-out floor over a BROKEN vector lane is both lanes failing, not a
 // query to narrow.
 func TestMCPSearchSlowFloorWithABrokenVectorLaneFails(t *testing.T) {
@@ -234,10 +249,15 @@ func TestSemanticWaitSpansAreAdditive(t *testing.T) {
 		{"KNN ran past the ladder", 100, 800, 500, 0, 300},
 		{"embed ran past the ladder", 700, 900, 500, 200, 200},
 	} {
-		r := semanticResult{embedEnd: at(tc.embedEnd), vectorEnd: at(tc.vectorEnd)}
+		r := semanticResult{start: t0, embedEnd: at(tc.embedEnd), vectorEnd: at(tc.vectorEnd)}
 		embed, vector := r.waitSpans(at(tc.ladder))
 		if embed != tc.embed || vector != tc.vector {
 			t.Errorf("%s: embed=%d vector=%d, want %d/%d", tc.name, embed, vector, tc.embed, tc.vector)
+		}
+		// What each really took is logged whatever the overlap.
+		tookEmbed, tookVector := r.tookSpans()
+		if tookEmbed != int64(tc.embedEnd) || tookVector != int64(tc.vectorEnd-tc.embedEnd) {
+			t.Errorf("%s: took embed=%d vector=%d", tc.name, tookEmbed, tookVector)
 		}
 	}
 }

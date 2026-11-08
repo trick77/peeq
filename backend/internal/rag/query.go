@@ -232,22 +232,22 @@ func BuildFTSQueries(q string) []FTSTier {
 }
 
 // floorWorthy reports whether a bare term may stand alone in the OR floor. The
-// two-rune rule is for Latin noise ("ai", "of", "2"); a two-rune CJK token is
-// usually a whole word ("東京") and stays.
+// two-rune rule is for alphabetic noise ("ai", "of", "où", "2"); a two-rune
+// CJK token is usually a whole word ("東京") and stays.
 func floorWorthy(term string) bool {
-	ascii, digits := true, true
+	digits, cjk := true, false
 	for _, r := range term {
-		if r > unicode.MaxASCII {
-			ascii = false
-		}
 		if !unicode.IsDigit(r) {
 			digits = false
+		}
+		if unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul) {
+			cjk = true
 		}
 	}
 	if digits {
 		return false
 	}
-	return !ascii || len(term) > 2
+	return cjk || len([]rune(term)) > 2
 }
 
 // queryToken is one recognized unit of a Find-mode query: either an operator

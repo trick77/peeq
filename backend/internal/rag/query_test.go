@@ -264,6 +264,10 @@ func TestBuildFTSQueriesFloorAfterDroppingTokens(t *testing.T) {
 	if len(got) != 3 || got[2] != (FTSTier{Match: `"workforce"*`, Weight: WeightKeywordAny}) {
 		t.Errorf("want a one-term floor, got %+v", got)
 	}
+	// A short accented word is noise like a short ASCII one.
+	if floor := BuildFTSQueries("où énergie solaire"); strings.Contains(floor[len(floor)-1].Match, `"où"`) {
+		t.Errorf("floor kept a two-rune accented token: %+v", floor)
+	}
 	// A two-rune CJK token is a word, not noise.
 	if got := BuildFTSQueries("東京 旅行"); got[len(got)-1] != (FTSTier{Match: `"東京" OR "旅行"`, Weight: WeightKeywordAny}) {
 		t.Errorf("CJK floor = %+v", got)

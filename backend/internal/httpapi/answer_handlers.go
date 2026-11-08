@@ -315,7 +315,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 			// because that is what it cost. Adding the two would bill the reader
 			// twice for one embedding.
 			narrowFTS, narrowVector, narrowRetrieval := diag.ftsMs, diag.vectorMs, diag.retrievalMs
-			narrowEmbed := diag.embedMs
+			narrowEmbed, narrowEmbedTook, narrowVectorTook := diag.embedMs, diag.embedTookMs, diag.vectorTookMs
 			narrowQueried, narrowSem := diag.ftsQueried, semanticRan(diag)
 			// Both ladders' rungs, in the order they ran, separated by the
 			// marker. ftsMs below is the sum of TWO ladders, so carrying only
@@ -329,6 +329,8 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 			diag.vectorMs = wideVector + narrowVector
 			diag.retrievalMs = wideRetrieval + narrowRetrieval
 			diag.embedMs = narrowEmbed
+			diag.embedTookMs = narrowEmbedTook
+			diag.vectorTookMs += narrowVectorTook
 			diag.ftsQueried = wideQueried || narrowQueried
 			diag.understand, diag.understandMs = string(ud.status), ud.ms
 			diag.counting = ud.counting
@@ -345,6 +347,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 			diag.rungs = append(append(diag.rungs, secondLadderMarker), wdiag.rungs...)
 			diag.ftsMs += wideFTS
 			diag.vectorMs += wideVector
+			diag.vectorTookMs += wdiag.vectorTookMs
 			diag.retrievalMs += wideRetrieval
 			diag.ftsQueried = diag.ftsQueried || wideQueried
 			if wideSem {

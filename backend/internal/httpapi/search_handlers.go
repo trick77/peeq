@@ -421,7 +421,16 @@ func (s *server) askLanes(ctx context.Context, q, topic string, filter rag.Filte
 		// answer semantic-only.
 		rungCtx, cancelRung := ctx, context.CancelFunc(func() {})
 		if tier.Weight == rag.WeightKeywordAny {
-			rungCtx, cancelRung = s.floorContext(ctx)
+			budget, ok := s.floorBudgetFor(ctx)
+			if !ok {
+				// Too little left to finish a floor (1.6 s cold on production):
+				// a round-trip that is cut at once is all cost, no rows.
+				slog.Warn("search: keyword floor skipped, no time left", "budget_ms", budget.Milliseconds())
+				diag.ftsTimedOut = true
+				diag.rungs = append(diag.rungs, fmt.Sprintf("w%.1f=skipped/0ms", tier.Weight))
+				break
+			}
+			rungCtx, cancelRung = context.WithTimeout(ctx, budget)
 		}
 		rungStart := time.Now()
 		hits, err := s.rag.SearchFTSFiltered(rungCtx, tier.Match, searchCandidates, filter)
@@ -484,6 +493,7 @@ func (s *server) askLanes(ctx context.Context, q, topic string, filter rag.Filte
 			*qv = got.vectors
 		}
 		diag.embedMs, diag.vectorMs = got.waitSpans(ladderEnd)
+		diag.embedTookMs, diag.vectorTookMs = got.tookSpans()
 		diag.semRaw, diag.semTopic = got.semRaw, got.semTopic
 		// Keyword lanes first, then raw, then topic: the order the lanes always
 		// had, so fusion ties break the same way.
@@ -507,18 +517,28 @@ func (s *server) askLanes(ctx context.Context, q, topic string, filter rag.Filte
 // vector lane, and kept out of the coverage list (relevantVideos).
 const floorBudgetMax = 10 * time.Second
 
-// floorContext bounds the floor rung: floorBudgetMax, or half of what is left
+// floorBudgetMin is the least a caller's deadline may leave the floor; below
+// it the floor is skipped and the search reported partial, as if it had timed
+// out.
+const floorBudgetMin = 250 * time.Millisecond
+
+// floorBudgetFor bounds the floor rung: floorBudgetMax, or half of what is left
 // when the caller's deadline (the MCP tool's) is nearer, so the vector lane and
-// the result assembly keep the rest.
-func (s *server) floorContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	budget := s.floorBudget
+// the result assembly keep the rest. ok is false when that half is under
+// floorBudgetMin.
+func (s *server) floorBudgetFor(ctx context.Context) (budget time.Duration, ok bool) {
+	budget = s.floorBudget
 	if budget <= 0 {
 		budget = floorBudgetMax
 	}
-	if dl, ok := ctx.Deadline(); ok {
-		budget = min(budget, time.Until(dl)/2)
+	if dl, has := ctx.Deadline(); has {
+		half := time.Until(dl) / 2
+		if half < floorBudgetMin {
+			return half, false
+		}
+		budget = min(budget, half)
 	}
-	return context.WithTimeout(ctx, budget)
+	return budget, true
 }
 
 // semanticResult is the vector half of one retrieval, built beside the keyword
@@ -533,9 +553,17 @@ type semanticResult struct {
 	rawOK, topicOK   bool
 	semRaw, semTopic semLaneDiag
 
-	// When the embedding and the KNN finished, so askLanes can bill only the
-	// part the reader waited for beyond the ladder (see waitSpans).
-	embedEnd, vectorEnd time.Time
+	// When the vector half started and when the embedding and the KNN
+	// finished, so askLanes can bill only the part the reader waited for beyond
+	// the ladder (waitSpans) and still log what each really cost (tookSpans).
+	start, embedEnd, vectorEnd time.Time
+}
+
+// tookSpans is what the embedding and the KNN really cost, overlap or not. A
+// slow KNN hidden behind a slower ladder bills 0 in waitSpans; this is where
+// it still shows.
+func (r semanticResult) tookSpans() (embedMs, vectorMs int64) {
+	return r.embedEnd.Sub(r.start).Milliseconds(), r.vectorEnd.Sub(r.embedEnd).Milliseconds()
 }
 
 // waitSpans splits the time the reader waited on the vector half, after the
@@ -560,7 +588,7 @@ func maxTime(a, b time.Time) time.Time {
 // lanes. BOTH vector queries go out in ONE embedding request: the topic lane
 // costs a lane, not a round-trip.
 func (s *server) semanticLanes(ctx context.Context, q, topic string, filter rag.Filter, memo *queryVectors) semanticResult {
-	var r semanticResult
+	r := semanticResult{start: time.Now()}
 	if memo != nil {
 		// Second pass over the same question: reuse rather than re-embed.
 		// Billed as 0ms, which is what it cost.
@@ -708,7 +736,7 @@ type askDiag struct {
 	// shrugs it off; the MCP search tool must not report "no results" when
 	// both lanes actually failed.
 	ftsFailed bool
-	// ftsTimedOut is the floor's own budget running out (floorContext), a
+	// ftsTimedOut is the floor's own budget running out (floorBudgetFor), a
 	// separate state from ftsFailed: the rungs above stand and the search is
 	// partial, not failed. Without it a slow floor read as "both lanes failed".
 	ftsTimedOut bool
@@ -741,6 +769,10 @@ type askDiag struct {
 	// it added past the ladder's end (semanticResult.waitSpans): 0 when it was
 	// done first.
 	embedMs, ftsMs, vectorMs, retrievalMs int64
+	// What the embedding and the KNN really took, logged beside the additive
+	// spans: a KNN overlapped by a slower ladder bills vectorMs 0 but is still
+	// the number to read when vector search itself is slow.
+	embedTookMs, vectorTookMs int64
 
 	// Whether each retrieval step ACTUALLY HAPPENED, as opposed to how long it
 	// took. The two are not the same question and a duration cannot answer it: a
@@ -950,6 +982,7 @@ func (d askDiag) log(q string, fused []rag.Hit) {
 		"fused", fmt.Sprintf("%dh/%dv", len(fused), distinctVideos(fused)),
 		"excerpts", excerpts,
 		"ms", fmt.Sprintf("embed=%d fts=%d vector=%d retrieval=%d", d.embedMs, d.ftsMs, d.vectorMs, d.retrievalMs),
+		"semantic_took_ms", fmt.Sprintf("embed=%d vector=%d", d.embedTookMs, d.vectorTookMs),
 	)
 	// Which passages, in reading order, for the case where the shape above is not
 	// enough and the excerpts themselves have to be pulled from the database.
