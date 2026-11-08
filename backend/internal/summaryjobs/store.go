@@ -57,17 +57,6 @@ func backoffFor(ladder []time.Duration, attempts int) time.Duration {
 	return ladder[attempts-1] //nolint:gosec // attempts is clamped to >= 1 above and the > len(ladder) case returned already, so this index is in range
 }
 
-// Job is one video's summarization work item, with the retry bookkeeping the
-// worker uses to decide between another attempt and a permanent failure.
-type Job struct {
-	ID          int64
-	VideoID     string
-	State       string
-	Attempts    int
-	MaxAttempts int
-	LastError   string
-}
-
 // Store is the summary job queue, backed by the summary_jobs table.
 type Store struct {
 	db *sql.DB

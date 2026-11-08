@@ -5,14 +5,6 @@ import (
 	"fmt"
 )
 
-// SponsorblockCandidate is one video due a SponsorBlock segment lookup.
-// DurationSeconds travels with it because the client needs it to reject
-// segments submitted against a differently-cut copy of the video.
-type SponsorblockCandidate struct {
-	ID              string
-	DurationSeconds int64
-}
-
 // SponsorblockRefreshInterval is how long stored segments are allowed to stand
 // before they are re-read. Segments keep being submitted and voted on after a
 // video is published, so a video peeq downloaded on release day is exactly the

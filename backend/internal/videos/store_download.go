@@ -208,14 +208,6 @@ func (s *Store) Tombstone(id string) error {
 	return nil
 }
 
-// MediaRef is what the media range handler needs from a video: where the
-// file is and what to call it on a save-to-disk.
-type MediaRef struct {
-	ID        string
-	Title     string
-	MediaPath string
-}
-
 // MediaRef reads just the three columns the range handler uses. A player
 // re-issues range requests throughout playback, and the full row (with its
 // correlated subqueries and the summary text) was read on every one of

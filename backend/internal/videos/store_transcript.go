@@ -24,17 +24,6 @@ const (
 // Nothing capped the .vtt file at all before.
 const MaxTranscriptBytes = 8 << 20 // 8 MiB
 
-// Transcript is one stored WebVTT track.
-type Transcript struct {
-	// Source is TranscriptSourceDownload or TranscriptSourceCaption.
-	Source string
-	// VTT is the raw WebVTT text, stored verbatim. The <track> element, the
-	// browser-side parser and the user-facing .vtt download all want the bytes
-	// exactly as yt-dlp wrote them, so this is never normalized or re-rendered.
-	VTT       string
-	UpdatedAt string
-}
-
 // SetTranscript stores (or replaces) a video's transcript.
 //
 // The conflict clause OVERWRITES source rather than keeping the old value: a

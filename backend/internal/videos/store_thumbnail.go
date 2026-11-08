@@ -12,13 +12,6 @@ import (
 // the cap is skipped, not truncated — half an image is worse than none.
 const MaxThumbnailBytes = 2 << 20 // 2 MiB
 
-// Thumbnail is one stored poster: the bytes plus what is needed to serve them.
-type Thumbnail struct {
-	Mime      string
-	Bytes     []byte
-	UpdatedAt string
-}
-
 // SetThumbnail stores (or replaces) the poster for a video. The bytes live in
 // the database rather than the media tree so they cannot drift away from the
 // row that references them — see migration 0026 for why.

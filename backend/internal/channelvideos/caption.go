@@ -22,24 +22,6 @@ const CaptionExhausted = 99
 // retries. See captionfetch.Backoff for the delays and why they exist.
 const CaptionMaxAttempts = 5
 
-// CaptionCandidate is a ledger row that is due a caption fetch. It is a
-// narrower shape than Entry on purpose: adding the caption columns to Entry
-// would change scanRow and every reader of it, for the benefit of exactly one
-// caller.
-type CaptionCandidate struct {
-	VideoID         string
-	ChannelID       string
-	Title           string
-	URL             string
-	DurationSeconds int
-	PublishedAt     string
-	ThumbnailURL    string
-	// Attempts is the count BEFORE this fetch. The worker needs it to know
-	// whether the attempt it is about to make is the last one, and therefore
-	// whether a miss should settle the row as having no transcript.
-	Attempts int
-}
-
 // NextCaptionCandidate returns the oldest pending ledger row that is due a
 // caption fetch, or nil when there is nothing to do.
 //

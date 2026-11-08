@@ -22,8 +22,8 @@
 // see media.RemoveTombstonedVideoFiles).
 //
 // The store's methods are grouped across sibling files by the lifecycle stage
-// they serve, all on the same *Store: this file holds the row shape, the
-// shared read machinery and the two whole-library reads (Get, List);
+// they serve, all on the same *Store: model.go holds the row shapes; this file
+// the shared read machinery and the two whole-library reads (Get, List);
 // store_download.go the download lifecycle; store_probe.go the ffprobe
 // backfill; store_sponsorblock.go the segment refresh; store_summary.go the
 // summarize/classify pipeline; store_watch.go the watched/resume/retention
@@ -37,122 +37,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/store"
 )
-
-// Video mirrors the columns of the videos table this package reads or
-// writes. Fields left at their zero value on Upsert fall back to the
-// column defaults on insert.
-type Video struct {
-	ID              string
-	URL             string
-	Title           string
-	ChannelID       string
-	ChannelName     string
-	DurationSeconds int64
-	PublishedAt     string
-	Description     string
-	// HasThumbnail is whether a poster is stored for this video (see
-	// videoColumns). Migration 0028 took the thumbnail_path column that used to
-	// stand in for this: a string claiming a file exists was something any
-	// metadata write could blank out from under a perfectly good image, and did.
-	HasThumbnail bool
-	// ThumbnailVersion is the poster's updated_at as a unix stamp, empty when
-	// there is none. It exists so the frontend can put it in the thumbnail URL:
-	// a URL that changes when the bytes change is what lets the response say
-	// "immutable" and be believed, and it is also what makes a re-downloaded
-	// poster appear at once instead of after the cache window.
-	ThumbnailVersion      string
-	MediaPath             string
-	FilesizeBytes         int64
-	FormatUsed            string
-	RequestedFormat       string
-	Availability          string
-	Status                string
-	ErrorMessage          string
-	SponsorblockSegments  string
-	Watched               bool
-	WatchedAt             string
-	ResumePositionSeconds float64
-	// StateVersion is the row's watched-state generation counter (migration
-	// 0014). It is read-only from this struct's point of view: only SetWatched
-	// and SetResume's auto-watch path bump it, and both return the new value
-	// rather than expecting a caller to set this field.
-	StateVersion  int64
-	Favorite      bool
-	FavoritedAt   string
-	CreatedAt     string
-	DownloadedAt  string
-	AudioLanguage string
-	// HasTranscript is whether captions are stored for this video, the same
-	// shape as HasThumbnail and for the same reason.
-	HasTranscript bool
-	Summary       string
-	Chapters      string
-	KeyPoints     string
-	SummaryStatus string
-	SummaryError  string
-	EmbedModel    string
-	EmbedDim      int
-	// EmbedRev is the CONTENT recipe the stored chunks follow (which kinds of
-	// chunk exist), as opposed to EmbedModel/EmbedDim which describe the model.
-	// Below rag.SearchableRecipeRev means the index is unusable and needs
-	// rebuilding; below rag.ChunkRecipeRev only that it lacks a newer kind.
-	// Ask Indexed() rather than comparing here — see the note on that method.
-	EmbedRev int
-	Category string
-	// ChatUsage is what the chat model has spent analysing this video, summed
-	// over every attempt. Zero on a video analysed before migration 0032.
-	ChatUsage ChatUsage
-	// MediaContainer, VideoCodec, VideoHeight and AudioCodec are what the
-	// downloaded file actually is, filled in by mediaprobe. They carry
-	// ffprobe's raw values ("mp4", "h264", 1080, "aac"); the UI does the
-	// friendly naming. All are empty/zero until the file has been probed.
-	MediaContainer string
-	VideoCodec     string
-	VideoHeight    int64
-	AudioCodec     string
-	// ProbedAt is when the probe was last ATTEMPTED, success or failure.
-	// Empty means never attempted, which is what the backfill sweep selects.
-	ProbedAt string
-	// MediaType/LiveStatus/YTTags/YTCategories come straight from yt-dlp (see
-	// ytdlp.Meta). YTTags/YTCategories are JSON arrays stored as TEXT, like
-	// Chapters and KeyPoints, and are YouTube's own labels — not Category,
-	// which is peeq's classification enum.
-	MediaType    string
-	LiveStatus   string
-	YTTags       string
-	YTCategories string
-	// ChannelKeepReads is the owning channel's keep_reads setting, read through
-	// the join videoColumns already makes rather than through a channels store
-	// the readers would otherwise have to hold — the same way ChannelName
-	// arrives. It belongs to the channel, not the video: no write path on this
-	// struct touches it, and COALESCE makes a video whose channel row was never
-	// created read as on: off purges on delete, and purging a video no switch
-	// was ever shown for is the wrong default.
-	ChannelKeepReads bool
-}
-
-// Indexed reports whether the video's stored chunks are usable by search right
-// now: embedded at all, and against a recipe search can still use
-// (rag.SearchableRecipeRev, which trails rag.ChunkRecipeRev when a recipe only
-// added a kind).
-//
-// Both halves are needed, and this is the single definition of that pair. Model
-// alone is not enough because embed_model is set once and never cleared, so a
-// video whose chapters changed under it (SetKeyPoints zeroes embed_rev in the
-// same statement that writes them) would still claim to be indexed while search
-// served chunks built from an older analysis. Rev alone is not enough because a
-// video that was never embedded has rev 0 for a different reason.
-//
-// The summarize worker asks this before its fallback embed, and the video DTO
-// reports it to the Player — which needs it because an embedding failure no
-// longer shows up as a summary failure, and "here is your summary, but this
-// video is not findable yet" is otherwise unsayable.
-func (v Video) Indexed() bool {
-	return v.EmbedModel != "" && v.EmbedRev >= rag.SearchableRecipeRev
-}
 
 // Store persists video rows.
 type Store struct {
@@ -778,14 +664,6 @@ func countsQuery(query string) (string, []any) {
 	}
 	b.WriteString(" GROUP BY v.category")
 	return b.String(), args
-}
-
-// ChannelRef is one channel as it appears in the library, for resolving a name
-// a reader typed back to the id searches filter on.
-type ChannelRef struct {
-	ID     string
-	Name   string
-	Handle string
 }
 
 // ChannelDirectory lists every channel that actually has videos here.

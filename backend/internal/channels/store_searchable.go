@@ -5,21 +5,6 @@ import (
 	"fmt"
 )
 
-// SearchableChannel is a channel whose videos the MCP server offers: the
-// narrow projection the channel hint and list_youtube_channels read.
-type SearchableChannel struct {
-	ID          string
-	Handle      string
-	Name        string
-	Description string
-	Subscribed  bool
-	// KeepReads is whether videos peeq only read (never downloaded) stay
-	// searchable: keep_reads AND auto_summary. keep_reads alone is on for
-	// nearly every channel since 0042, and with auto_summary off nothing is
-	// read to keep.
-	KeepReads bool
-}
-
 // Searchable lists the subscribed channels plus every channel whose
 // keep_reads is on (its deleted videos stay searchable, whatever
 // auto_summary says), ordered by display name, under List's own base predicate (added

@@ -34,12 +34,6 @@ WHERE id = ?`,
 	return nil
 }
 
-// ProbeCandidate is one video whose media file has never been probed.
-type ProbeCandidate struct {
-	ID        string
-	MediaPath string
-}
-
 // UnprobedDownloaded returns up to limit downloaded videos that still have a
 // media file and have never been probed. Selecting on probed_at IS NULL (not
 // on the value columns) is what makes the sweep converge: a file that yields

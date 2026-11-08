@@ -7,25 +7,6 @@ import (
 	"github.com/trick77/peeq/internal/rag"
 )
 
-// StorageGroup is what peeq stores for a set of videos: their media files on
-// disk, and in the database their transcripts, summaries (prose, chapters, key
-// points, in-depth text), search index and posters.
-type StorageGroup struct {
-	Videos          int   `json:"videos"`
-	FileBytes       int64 `json:"file_bytes"`
-	TranscriptBytes int64 `json:"transcript_bytes"`
-	SummaryBytes    int64 `json:"summary_bytes"`
-	// SearchTextBytes is the chunk text, counted twice: transcript_chunks
-	// holds it and the full-text index keeps its own copy. FTS5's inverted
-	// index on top is not attributable to a channel and is left out.
-	SearchTextBytes int64 `json:"search_text_bytes"`
-	// VectorBytes is chunks × vector width × 4 (float32): the live payload.
-	// Space vec0 keeps after deletes belongs to no channel
-	// (rag.CompactVectors reclaims it at boot).
-	VectorBytes int64 `json:"vector_bytes"`
-	PosterBytes int64 `json:"poster_bytes"`
-}
-
 // ChannelStorage splits a channel's storage by what the keep_reads switch is
 // about: OnDisk is the downloaded videos, Kept is what survives a file and
 // what turning the switch off purges (tombstones and ignored reads, by the

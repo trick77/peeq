@@ -14,16 +14,6 @@ import (
 // enough titles that growth adds nothing but calls.
 const regrowBelow = 20
 
-// SubcategorizeCandidate is a channel the subcategory sweep owes an answer,
-// with what the classifier reads.
-type SubcategorizeCandidate struct {
-	ID          string
-	Name        string
-	Handle      string
-	Description string
-	Videos      int
-}
-
 // SetSubcategoriesIfAuto is the classifier's write: it replaces the channel's
 // subcategories with keys (primary first) and records the video count they
 // were chosen from, unless the user has set them by hand, and reports whether
