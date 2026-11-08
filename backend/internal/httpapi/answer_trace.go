@@ -66,9 +66,8 @@ type answerTrace struct {
 // channel" is worth saying even when it took no measurable time.
 func (t *answerTrace) add(key, tool, kind string, ms int64) {
 	if ms < 0 {
-		// Derived spans can go negative when two clocks disagree by a tick (see
-		// the vector stage, which is a subtraction). Report zero rather than a
-		// bar that draws backwards.
+		// A derived span can go negative when two clocks disagree by a tick.
+		// Report zero rather than a bar that draws backwards.
 		ms = 0
 	}
 	t.stages = append(t.stages, traceStage{Key: key, Ms: ms, Tool: tool, Kind: kind})
@@ -122,7 +121,7 @@ func (t answerTrace) log(q string, ttft time.Duration, cov coverageDiag) {
 		return
 	}
 	// Packed into one field rather than spread across many, matching the
-	// "embed=%d fts=%d retrieval=%d" shape askDiag.log already uses: the stage
+	// "embed=%d fts=%d vector=%d retrieval=%d" shape askDiag.log already uses: the stage
 	// list is variable-length, and a line whose KEYS change per request is one
 	// no log query can group.
 	parts := make([]string, 0, len(t.stages))

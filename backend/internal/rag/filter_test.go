@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/trick77/peeq/internal/store"
@@ -194,6 +195,68 @@ func TestSearchFTSFiltered(t *testing.T) {
 	}
 	if len(unwatched) != 1 || unwatched[0].VideoID != "b1" {
 		t.Fatalf("unwatched FTS = %d hits, want 1 (b1)", len(unwatched))
+	}
+}
+
+// FTS5 hands rows out ranked and LIMIT stops after n, so the filter must be
+// probed per row before LIMIT counts it: 100 Alpha chunks outrank or tie the one
+// Beta chunk, and a filter applied after the top 10 were picked would find no
+// Beta at all.
+func TestSearchFTSFilteredFiltersBeforeTheLimit(t *testing.T) {
+	_, s, _ := filterFixture(t)
+	beta, err := s.SearchFTSFiltered(context.Background(), "ontology", 10, Filter{ChannelIDs: []string{"UCB"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beta) != 1 || beta[0].VideoID != "b1" || beta[0].Snippet == "" {
+		t.Fatalf("channel-filtered FTS under a small limit = %+v, want one b1 hit with a snippet", beta)
+	}
+}
+
+// An fts row whose chunk is gone (a cascade that skipped DeleteChunksTx) must
+// not take one of the n slots: the join drops it before LIMIT counts it.
+func TestSearchFTSSkipsAnOrphanedRowBeforeTheLimit(t *testing.T) {
+	db, s, _ := filterFixture(t)
+	if _, err := db.Exec(`INSERT INTO fts_chunks(rowid, text) VALUES (999999, 'ontology ontology ontology')`); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := s.SearchFTS(context.Background(), "ontology", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("got %d hits, want 1: the orphan took the only slot", len(hits))
+	}
+}
+
+// The OR floor matches most of a large library. With the sort left to SQLite
+// (a temp b-tree), snippet() and the joins ran for every match before LIMIT cut
+// them: 23 s on production. FTS5 consuming ORDER BY rank is what lets LIMIT stop
+// after n rows, so the plan must carry no temp b-tree for the ORDER BY.
+func TestSearchFTSPlanSortsInsideFTS5(t *testing.T) {
+	db, _, _ := filterFixture(t)
+	for name, f := range map[string]Filter{
+		"unfiltered": {},
+		"filtered":   {ChannelIDs: []string{"UCB"}, Watched: boolPtr(false)},
+	} {
+		q, args := ftsQuery(`"ontology"*`, 10, f)
+		rows, err := db.Query("EXPLAIN QUERY PLAN "+q, args...)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var plan []string
+		for rows.Next() {
+			var id, parent, notused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan = append(plan, detail)
+		}
+		rows.Close()
+		if joined := strings.Join(plan, "\n"); strings.Contains(joined, "TEMP B-TREE") {
+			t.Errorf("%s: the keyword query sorts in a temp b-tree:\n%s", name, joined)
+		}
 	}
 }
 

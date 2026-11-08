@@ -224,6 +224,63 @@ func TestBuildFTSQueriesSkipsAPrefixRungThatWidensNothing(t *testing.T) {
 	}
 }
 
+// A number or a one- or two-rune token in the OR floor matches a large share of
+// the library on its own: "70% of workforce will be agents in 2-3 years" put
+// "2" and "3" in the floor, and that rung ran 23 s on production before the
+// search timed out. The AND rungs keep them, where they narrow instead.
+func TestBuildFTSQueriesKeepsDigitsAndShortTokensOutOfTheFloor(t *testing.T) {
+	got := BuildFTSQueries("70% of workforce will be agents in 2-3 years prediction")
+	floor := got[len(got)-1]
+	if floor.Weight != WeightKeywordAny {
+		t.Fatalf("last tier is not the floor: %+v", got)
+	}
+	for _, dropped := range []string{`"70"`, `"2"`, `"3"`} {
+		if strings.Contains(floor.Match, dropped) {
+			t.Errorf("floor %q carries %s", floor.Match, dropped)
+		}
+	}
+	if !strings.Contains(floor.Match, `"workforce"*`) || !strings.Contains(floor.Match, `"prediction"*`) {
+		t.Errorf("floor %q lost a content term", floor.Match)
+	}
+	for _, tier := range got[:len(got)-1] {
+		if !strings.Contains(tier.Match, `"70"`) || !strings.Contains(tier.Match, `"2"`) {
+			t.Errorf("AND rung %q dropped a number", tier.Match)
+		}
+	}
+
+	// Two runes: "ai" stays out of the floor, "car" (three) stays in.
+	got = BuildFTSQueries("ai car agents")
+	floor = got[len(got)-1]
+	if floor.Weight != WeightKeywordAny || strings.Contains(floor.Match, `"ai"`) ||
+		!strings.Contains(floor.Match, `"car"`) {
+		t.Errorf("floor = %+v", floor)
+	}
+}
+
+// A floor left with one term is still wider than the AND rungs, so it runs; a
+// floor left with none, or one that equals the prefix rung, does not.
+func TestBuildFTSQueriesFloorAfterDroppingTokens(t *testing.T) {
+	got := BuildFTSQueries("70 workforce")
+	if len(got) != 3 || got[2] != (FTSTier{Match: `"workforce"*`, Weight: WeightKeywordAny}) {
+		t.Errorf("want a one-term floor, got %+v", got)
+	}
+	// A short accented word is noise like a short ASCII one.
+	if floor := BuildFTSQueries("où énergie solaire"); strings.Contains(floor[len(floor)-1].Match, `"où"`) {
+		t.Errorf("floor kept a two-rune accented token: %+v", floor)
+	}
+	// A two-rune CJK token is a word, not noise.
+	if got := BuildFTSQueries("東京 旅行"); got[len(got)-1] != (FTSTier{Match: `"東京" OR "旅行"`, Weight: WeightKeywordAny}) {
+		t.Errorf("CJK floor = %+v", got)
+	}
+	for _, q := range []string{"70 2", "ai 70"} {
+		for _, tier := range BuildFTSQueries(q) {
+			if tier.Weight == WeightKeywordAny {
+				t.Errorf("%q: floor with no usable term: %+v", q, tier)
+			}
+		}
+	}
+}
+
 func TestBuildFTSQueriesAllStopwords(t *testing.T) {
 	// Nothing survives the stopword filter, so the strict tier must stand alone
 	// rather than relaxing to an empty (and invalid) expression.

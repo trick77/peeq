@@ -243,6 +243,18 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 			if err := ctx.Err(); err != nil {
 				return res, fmt.Errorf("mcp search: %w", err)
 			}
+			// A floor that ran out of its own budget is partial, not failed:
+			// a vector lane that ran and found nothing makes this a real
+			// "nothing matches", with the partial note below. With no vector
+			// lane configured it is a timeout the caller can fix by narrowing
+			// the query; with a broken one (embed or KNN failed) both lanes
+			// failed, which needs an operator, not a narrower query.
+			if diag.ftsTimedOut && !diag.semRaw.ran {
+				if diag.embedQueried {
+					return res, errSearchLanesFailed
+				}
+				return res, fmt.Errorf("mcp search: keyword floor out of time: %w", context.DeadlineExceeded)
+			}
 			if diag.ftsFailed || (diag.semRaw.failed && !diag.ftsQueried) {
 				return res, errSearchLanesFailed
 			}
@@ -255,7 +267,7 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 		}
 		res.SemanticDegraded = !diag.semRaw.ran
 		res.KeywordFailed = diag.ftsFailed && keywordLanes == 0
-		res.KeywordPartial = diag.ftsFailed && keywordLanes > 0
+		res.KeywordPartial = (diag.ftsFailed && keywordLanes > 0) || diag.ftsTimedOut
 	}
 
 	byID, err := s.videos.GetManyCtx(ctx, idsOf(hits, func(h rag.Hit) string { return h.VideoID }))

@@ -318,12 +318,15 @@ type server struct {
 	rag               RagStore
 	embedder          SearchEmbedder
 	searchMaxDistance float64
-	ask               StreamCompleter
-	understand        Completer
-	summaryJobs       SummaryEnqueuer
-	summaryList       SummaryLister
-	activity          ActivityReader
-	activityWrite     ActivityWriter
+	// floorBudget caps the keyword floor rung; zero is floorBudgetMax. A
+	// field so tests can shorten it.
+	floorBudget   time.Duration
+	ask           StreamCompleter
+	understand    Completer
+	summaryJobs   SummaryEnqueuer
+	summaryList   SummaryLister
+	activity      ActivityReader
+	activityWrite ActivityWriter
 
 	allowAnonymous bool
 

@@ -387,22 +387,27 @@ func (s *server) askLanes(ctx context.Context, q, topic string, filter rag.Filte
 	// Widening the bar is what to revisit if focused answers turn out to suffer.
 	diag := askDiag{topic: topic, rawLane: -1, topicLane: -1}
 
-	// The embedding request leaves BEFORE the keyword ladder, not after it. It
-	// is the one network call in retrieval and depends on nothing the ladder
-	// produces, so the two overlap and the reader waits for the slower of them
-	// rather than for both. BOTH vector queries go out in that ONE request: the
-	// topic lane costs a lane, not a round-trip.
-	var embedding chan queryVectors
-	if s.embedder != nil && (qv == nil || !qv.done) {
-		inputs := []string{q}
-		if topic != "" {
-			inputs = append(inputs, topic)
+	// The vector half (embed, then both KNN lanes) runs BESIDE the keyword
+	// ladder, never after it. It depends on nothing the ladder produces, so the
+	// reader waits for the slower of the two rather than for both — and a slow
+	// floor rung can no longer leave the vector lane no time at all: in
+	// production the floor ran 23 s of a 25 s tool deadline and the KNN was
+	// interrupted after 0 s, failing a search the vector lane could answer.
+	start := time.Now()
+	// reuse is the one place "this pass embeds or reuses the memo" is decided.
+	reuse := qv != nil && qv.done
+	var semantic chan semanticResult
+	if s.embedder != nil {
+		// Set whether the vectors are computed here or reused from the first pass
+		// of a relaxed search: either way this question got embedded.
+		diag.embedQueried = true
+		var memo *queryVectors
+		if reuse {
+			m := *qv
+			memo = &m
 		}
-		embedding = make(chan queryVectors, 1) // buffered: the send never blocks
-		go func() {
-			vecs, err := s.embedder.Embed(ctx, inputs)
-			embedding <- queryVectors{done: true, vecs: vecs, err: err}
-		}()
+		semantic = make(chan semanticResult, 1) // buffered: the send never blocks
+		go func() { semantic <- s.semanticLanes(ctx, q, topic, filter, memo) }()
 	}
 
 	ftsStart := time.Now()
@@ -411,9 +416,37 @@ func (s *server) askLanes(ctx context.Context, q, topic string, filter rag.Filte
 		// Before the call, not after: a rung that errors still queried sqlite and
 		// still cost the reader the wait.
 		diag.ftsQueried = true
+		// The floor gets its own budget, so a floor that matches most of the
+		// library degrades to the rungs above it instead of eating the deadline
+		// the vector lane and the caller need. The AND rungs keep ctx: they are
+		// the precise matches, and cutting them on a cold disk would leave the
+		// answer semantic-only.
+		rungCtx, cancelRung := ctx, context.CancelFunc(func() {})
+		if tier.Weight == rag.WeightKeywordAny {
+			budget, ok := s.floorBudgetFor(ctx)
+			if !ok {
+				// Too little left to finish a floor (1.6 s cold on production):
+				// a round-trip that is cut at once is all cost, no rows.
+				slog.Warn("search: keyword floor skipped, no time left", "budget_ms", budget.Milliseconds())
+				diag.ftsTimedOut = true
+				diag.rungs = append(diag.rungs, fmt.Sprintf("w%.1f=skipped/0ms", tier.Weight))
+				break
+			}
+			rungCtx, cancelRung = context.WithTimeout(ctx, budget)
+		}
 		rungStart := time.Now()
-		hits, err := s.rag.SearchFTSFiltered(ctx, tier.Match, searchCandidates, filter)
+		hits, err := s.rag.SearchFTSFiltered(rungCtx, tier.Match, searchCandidates, filter)
 		rungMs := time.Since(rungStart).Milliseconds()
+		timedOut := err != nil && rungCtx.Err() != nil && ctx.Err() == nil
+		cancelRung()
+		if timedOut {
+			// The floor's own budget, not the caller giving up: the rungs above
+			// stand, and the search goes on with them and the vector lane.
+			slog.Warn("search: keyword floor out of time", "rung", tier.Weight, "ms", rungMs)
+			diag.ftsTimedOut = true
+			diag.rungs = append(diag.rungs, fmt.Sprintf("w%.1f=timeout/%dms", tier.Weight, rungMs))
+			break
+		}
 		if err != nil {
 			slog.Warn("search: FTS degraded", "err", err, "rung", tier.Weight, "ms", rungMs)
 			// Recorded like any other rung that ran. ftsMs below counts the time
@@ -453,63 +486,148 @@ func (s *server) askLanes(ctx context.Context, q, topic string, filter rag.Filte
 		}
 	}
 
-	diag.ftsMs = time.Since(ftsStart).Milliseconds()
+	ladderEnd := time.Now()
+	diag.ftsMs = ladderEnd.Sub(ftsStart).Milliseconds()
 
-	if s.embedder != nil {
-		// Set whether the vectors are computed here or reused from the first pass
-		// of a relaxed search: either way this question got embedded.
-		diag.embedQueried = true
-		var got queryVectors
-		if embedding != nil {
-			// embedMs is what the embedding cost the READER: the wait left over
-			// once the ladder was done, which is zero when the reply was already
-			// in. That keeps the trace's spans additive (keyword + embed + vector
-			// = retrieval) now that the call overlaps the ladder.
-			waitStart := time.Now()
-			got = <-embedding
-			diag.embedMs = time.Since(waitStart).Milliseconds()
-			if qv != nil {
-				*qv = got
-			}
-		} else {
-			// Second pass over the same question: reuse rather than re-embed.
-			// Recorded as 0ms, which is what it cost.
-			got = *qv
+	if semantic != nil {
+		got := <-semantic
+		if !reuse && qv != nil {
+			*qv = got.vectors
 		}
-		if got.err != nil {
-			// Semantic unavailable (endpoint down/misconfigured); fall back to
-			// FTS-only rather than failing the whole search.
-			slog.Warn("search: semantic degraded, using FTS only", "err", got.err)
-		} else if len(got.vecs) > 0 {
-			// The two vector queries are independent reads, so they run side by
-			// side. A reply too short to hold the second vector is a misbehaving
-			// endpoint, not a reason to fail: the topic lane simply does not run
-			// and the log says it returned nothing.
-			var rawLane, topicLane rag.Lane
-			var rawOK, topicOK bool
-			var wg sync.WaitGroup
-			wg.Go(func() {
-				rawLane, rawOK = s.semanticLane(ctx, got.vecs[0], rag.WeightSemantic, filter, &diag.semRaw)
-			})
-			if topic != "" && len(got.vecs) > 1 {
-				wg.Go(func() {
-					topicLane, topicOK = s.semanticLane(ctx, got.vecs[1], rag.WeightSemanticTopic, filter, &diag.semTopic)
-				})
-			}
-			wg.Wait()
-			if rawOK {
-				diag.rawLane = len(lanes)
-				lanes = append(lanes, rawLane)
-			}
-			if topicOK {
-				diag.topicLane = len(lanes)
-				lanes = append(lanes, topicLane)
-			}
+		diag.embedMs, diag.vectorMs = got.waitSpans(ladderEnd)
+		diag.embedTookMs, diag.vectorTookMs = got.tookSpans()
+		diag.semRaw, diag.semTopic = got.semRaw, got.semTopic
+		// Keyword lanes first, then raw, then topic: the order the lanes always
+		// had, so fusion ties break the same way.
+		if got.rawOK {
+			diag.rawLane = len(lanes)
+			lanes = append(lanes, got.raw)
+		}
+		if got.topicOK {
+			diag.topicLane = len(lanes)
+			lanes = append(lanes, got.topic)
 		}
 	}
 
-	diag.retrievalMs = time.Since(ftsStart).Milliseconds()
+	diag.retrievalMs = time.Since(start).Milliseconds()
 	return lanes, diag
+}
+
+// floorBudgetMax caps the OR floor rung. Past it the floor is cut and the
+// answer is built from the rungs above it and the vector lanes. The floor-only
+// passages that costs are the loosest the search has: weight 0.4, below the
+// vector lane, and kept out of the coverage list (relevantVideos).
+const floorBudgetMax = 10 * time.Second
+
+// floorBudgetMin is the least a caller's deadline may leave the floor; below
+// it the floor is skipped and the search reported partial, as if it had timed
+// out.
+const floorBudgetMin = 250 * time.Millisecond
+
+// floorBudgetFor bounds the floor rung: floorBudgetMax, or half of what is left
+// when the caller's deadline (the MCP tool's) is nearer, so the vector lane and
+// the result assembly keep the rest. ok is false when that half is under
+// floorBudgetMin.
+func (s *server) floorBudgetFor(ctx context.Context) (budget time.Duration, ok bool) {
+	budget = s.floorBudget
+	if budget <= 0 {
+		budget = floorBudgetMax
+	}
+	if dl, has := ctx.Deadline(); has {
+		half := time.Until(dl) / 2
+		if half < floorBudgetMin {
+			return half, false
+		}
+		budget = min(budget, half)
+	}
+	return budget, true
+}
+
+// semanticResult is the vector half of one retrieval, built beside the keyword
+// ladder and handed back whole: the goroutine never writes the shared askDiag.
+type semanticResult struct {
+	// vectors are this pass's embedding, made here or the reused memo.
+	vectors queryVectors
+
+	raw, topic       rag.Lane
+	rawOK, topicOK   bool
+	semRaw, semTopic semLaneDiag
+
+	// When the vector half started and when the embedding and the KNN
+	// finished, so askLanes can bill only the part the reader waited for beyond
+	// the ladder (waitSpans) and still log what each really cost (tookSpans).
+	start, embedEnd, vectorEnd time.Time
+}
+
+// tookSpans is what the embedding and the KNN really cost, overlap or not. A
+// slow KNN hidden behind a slower ladder bills 0 in waitSpans; this is where
+// it still shows.
+func (r semanticResult) tookSpans() (embedMs, vectorMs int64) {
+	return r.embedEnd.Sub(r.start).Milliseconds(), r.vectorEnd.Sub(r.embedEnd).Milliseconds()
+}
+
+// waitSpans splits the time the reader waited on the vector half, after the
+// ladder ended, into its embed and KNN parts. The vector half runs beside the
+// ladder, and the answer panel draws stages as a sequence that sums to the
+// wall clock, so a span counts only what it added past ladderEnd:
+// fts + embed + vector ≈ retrieval.
+func (r semanticResult) waitSpans(ladderEnd time.Time) (embedMs, vectorMs int64) {
+	embedMs = max(0, r.embedEnd.Sub(ladderEnd).Milliseconds())
+	vectorMs = max(0, r.vectorEnd.Sub(maxTime(ladderEnd, r.embedEnd)).Milliseconds())
+	return embedMs, vectorMs
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+// semanticLanes embeds the question (or reuses memo) and runs both vector
+// lanes. BOTH vector queries go out in ONE embedding request: the topic lane
+// costs a lane, not a round-trip.
+func (s *server) semanticLanes(ctx context.Context, q, topic string, filter rag.Filter, memo *queryVectors) semanticResult {
+	r := semanticResult{start: time.Now()}
+	if memo != nil {
+		// Second pass over the same question: reuse rather than re-embed.
+		// Billed as 0ms, which is what it cost.
+		r.vectors = *memo
+	} else {
+		inputs := []string{q}
+		if topic != "" {
+			inputs = append(inputs, topic)
+		}
+		vecs, err := s.embedder.Embed(ctx, inputs)
+		r.vectors = queryVectors{done: true, vecs: vecs, err: err}
+	}
+	r.embedEnd = time.Now()
+	r.vectorEnd = r.embedEnd
+	if r.vectors.err != nil {
+		// Semantic unavailable (endpoint down/misconfigured); fall back to
+		// FTS-only rather than failing the whole search.
+		slog.Warn("search: semantic degraded, using FTS only", "err", r.vectors.err)
+		return r
+	}
+	if len(r.vectors.vecs) == 0 {
+		return r
+	}
+	// The two vector queries are independent reads, so they run side by side. A
+	// reply too short to hold the second vector is a misbehaving endpoint, not a
+	// reason to fail: the topic lane simply does not run and the log says it
+	// returned nothing.
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		r.raw, r.rawOK = s.semanticLane(ctx, r.vectors.vecs[0], rag.WeightSemantic, filter, &r.semRaw)
+	})
+	if topic != "" && len(r.vectors.vecs) > 1 {
+		wg.Go(func() {
+			r.topic, r.topicOK = s.semanticLane(ctx, r.vectors.vecs[1], rag.WeightSemanticTopic, filter, &r.semTopic)
+		})
+	}
+	wg.Wait()
+	r.vectorEnd = time.Now()
+	return r
 }
 
 // semanticLane runs one vector query and records what the two bounds did to it.
@@ -617,8 +735,12 @@ type askDiag struct {
 	// shrugs it off; the MCP search tool must not report "no results" when
 	// both lanes actually failed.
 	ftsFailed bool
-	semRaw    semLaneDiag
-	semTopic  semLaneDiag
+	// ftsTimedOut is the floor's own budget running out (floorBudgetFor), a
+	// separate state from ftsFailed: the rungs above stand and the search is
+	// partial, not failed. Without it a slow floor read as "both lanes failed".
+	ftsTimedOut bool
+	semRaw      semLaneDiag
+	semTopic    semLaneDiag
 
 	// The query-understanding step, filled by the caller that ran it.
 	topic        string
@@ -640,7 +762,16 @@ type askDiag struct {
 	unresolved     []string
 	relaxed        bool
 
-	embedMs, ftsMs, retrievalMs int64
+	// The spans are additive (fts + embed + vector ≈ retrieval), because the
+	// answer panel draws them as a sequence summing to the wall clock. The
+	// vector half runs beside the ladder, so embed and vector bill only the wait
+	// it added past the ladder's end (semanticResult.waitSpans): 0 when it was
+	// done first.
+	embedMs, ftsMs, vectorMs, retrievalMs int64
+	// What the embedding and the KNN really took, logged beside the additive
+	// spans: a KNN overlapped by a slower ladder bills vectorMs 0 but is still
+	// the number to read when vector search itself is slow.
+	embedTookMs, vectorTookMs int64
 
 	// Whether each retrieval step ACTUALLY HAPPENED, as opposed to how long it
 	// took. The two are not the same question and a duration cannot answer it: a
@@ -849,7 +980,8 @@ func (d askDiag) log(q string, fused []rag.Hit) {
 		"semantic_topic", d.semTopic.String(),
 		"fused", fmt.Sprintf("%dh/%dv", len(fused), distinctVideos(fused)),
 		"excerpts", excerpts,
-		"ms", fmt.Sprintf("embed=%d fts=%d retrieval=%d", d.embedMs, d.ftsMs, d.retrievalMs),
+		"ms", fmt.Sprintf("embed=%d fts=%d vector=%d retrieval=%d", d.embedMs, d.ftsMs, d.vectorMs, d.retrievalMs),
+		"semantic_took_ms", fmt.Sprintf("embed=%d vector=%d", d.embedTookMs, d.vectorTookMs),
 	)
 	// Which passages, in reading order, for the case where the shape above is not
 	// enough and the excerpts themselves have to be pulled from the database.

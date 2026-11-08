@@ -154,9 +154,8 @@ func (f Filter) predicates(alias string) ([]string, []any) {
 }
 
 // chunkSubquery renders the id set this filter admits, as a subquery over
-// transcript_chunks. Callers splice it into `rowid IN (...)` for the vector lane;
-// the FTS lane joins videos directly instead, because FTS5 is not a top-k
-// operator and a plain join there is already a pre-filter.
+// transcript_chunks. Both lanes splice it into `rowid IN (...)` ahead of their
+// top-k, so it filters before the k is picked (see ftsQuery for the FTS side).
 func (f Filter) chunkSubquery() (string, []any) {
 	conds, args := f.predicates("fv")
 	return `SELECT ftc.id FROM transcript_chunks ftc
