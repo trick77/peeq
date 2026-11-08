@@ -214,29 +214,6 @@ UPDATE videos
 	return nil
 }
 
-// ChatUsage is what the chat model has spent on one video, in tokens.
-//
-// The two token lanes are not disjoint: CachedTokens is a SUBSET of
-// PromptTokens, and the completion count already includes the model's reasoning
-// tokens. Anything deriving a figure from these has to know that.
-//
-// Deliberately plain int64s rather than an llm.Usage. This package must not
-// import internal/llm — it is the storage layer, and a dependency on the client
-// that happens to produce the numbers would invert that.
-type ChatUsage struct {
-	PromptTokens     int64
-	CachedTokens     int64
-	CompletionTokens int64
-}
-
-// Empty reports whether nothing has been accounted for this video, which is the
-// state of every row analysed before migration 0032 as well as of any video the
-// endpoint never reported usage for. Callers use it to omit a figure rather than
-// display a confident zero.
-func (u ChatUsage) Empty() bool {
-	return u.PromptTokens == 0 && u.CachedTokens == 0 && u.CompletionTokens == 0
-}
-
 // AddChatUsage folds one analysis run's chat spend into a video's running
 // totals.
 //

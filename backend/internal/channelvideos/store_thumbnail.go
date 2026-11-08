@@ -10,14 +10,6 @@ import (
 // media.FetchImage enforces on the wire.
 const MaxThumbnailBytes = 8 << 20 // 8 MiB
 
-// Thumbnail is one cached inbox poster: the copy peeq serves so the browser
-// never loads an inbox card's image from YouTube's CDN directly.
-type Thumbnail struct {
-	Mime      string
-	Bytes     []byte
-	UpdatedAt string
-}
-
 // SetThumbnail stores (or replaces) the cached poster for a pending video.
 func (s *Store) SetThumbnail(videoID, mime string, data []byte) error {
 	if videoID == "" {

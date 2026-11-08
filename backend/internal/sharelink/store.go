@@ -39,15 +39,6 @@ func New(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
-// Link is a share link as stored: the raw token, the video it grants access to,
-// its expiry (empty string = never), and when it was created.
-type Link struct {
-	Token     string
-	VideoID   string
-	ExpiresAt string
-	CreatedAt string
-}
-
 // generateToken reads tokenBytes of entropy from r and base64url-encodes it. A
 // short read is an error — a truncated token would be a weak credential.
 func generateToken(r io.Reader) (string, error) {

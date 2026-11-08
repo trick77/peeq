@@ -17,13 +17,6 @@ const (
 // is there so a hostile or broken server cannot bloat the database.
 const MaxImageBytes = 8 << 20 // 8 MiB
 
-// Image is one stored channel avatar or banner.
-type Image struct {
-	Mime      string
-	Bytes     []byte
-	UpdatedAt string
-}
-
 // SetImage stores (or replaces) one of a channel's images.
 //
 // Only ever called with bytes actually fetched: a failed refresh must skip this

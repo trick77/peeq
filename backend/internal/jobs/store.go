@@ -25,26 +25,6 @@ import (
 // settled elsewhere and it must not write any further terminal state.
 var ErrNotRunning = errors.New("jobs: job not in running state")
 
-// Job mirrors one row of the download_jobs table. StartedAt and FinishedAt
-// are empty strings when the underlying column is NULL (job not yet
-// started / not yet finished).
-type Job struct {
-	ID          int64
-	VideoID     string
-	State       string
-	Priority    int
-	Attempts    int
-	MaxAttempts int
-	LastError   string
-	LogTail     string
-	EnqueuedAt  string
-	StartedAt   string
-	FinishedAt  string
-	// NextAttemptAt is the wall-clock floor before which a requeued job is
-	// not claimable (see BumpAfter); empty means claimable now.
-	NextAttemptAt string
-}
-
 // Store persists the download queue.
 type Store struct {
 	db *sql.DB

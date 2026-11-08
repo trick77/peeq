@@ -230,12 +230,14 @@ func adoptLegacy(ctx context.Context, db *sql.DB) error {
 // legacyObjects' stored SQL and the lookup rows.
 func readLegacyState(ctx context.Context, q querier) (legacyState, error) {
 	var s legacyState
+	var hasVersion, hasName bool
 	if err := q.QueryRowContext(ctx, `SELECT
 		(SELECT count(*) > 0 FROM pragma_table_info('schema_migrations') WHERE name = 'version'),
 		(SELECT count(*) > 0 FROM pragma_table_info('schema_migrations') WHERE name = 'name')`,
-	).Scan(&s.hasVersion, &s.hasName); err != nil {
+	).Scan(&hasVersion, &hasName); err != nil {
 		return s, fmt.Errorf("read schema_migrations: %w", err)
 	}
+	s.hasVersion, s.hasName = hasVersion, hasName
 	if s.hasName && !s.hasVersion {
 		return s, errors.New("schema_migrations has no version column: created by an unreleased build, recreate the database")
 	}

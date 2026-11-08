@@ -17,14 +17,6 @@ const DeadScanThreshold = 3
 // describe restricted content on a living channel; private can revert.
 const ReasonDeleted = "deleted"
 
-// AutoUnsubscribed is a channel joined with the record of why (and when)
-// peeq unsubscribed it on its own.
-type AutoUnsubscribed struct {
-	Channel
-	Reason string
-	At     string
-}
-
 // RecordDeadScan increments channelID's consecutive dead-scan count and
 // returns the NEW count. Callers compare the result against
 // DeadScanThreshold to decide whether to act.
@@ -157,14 +149,6 @@ func (s *Store) ClearAutoUnsubscribe(channelID string) error {
 // raises a flag for a human — see DormantChannels — and never acts on its
 // own the way ReasonDeleted does.
 const DormantAfter = "-6 months"
-
-// Dormant is a subscribed channel that has gone quiet for longer than
-// DormantAfter, surfaced for a human to review and decide on.
-type Dormant struct {
-	ChannelID   string
-	Name        string
-	LastVideoAt string
-}
 
 // DormantChannels returns every subscribed channel whose most recently
 // discovered video is older than DormantAfter relative to now, excluding

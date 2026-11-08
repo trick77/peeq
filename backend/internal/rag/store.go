@@ -33,21 +33,6 @@ type ChunkRow struct {
 	TokenCount   int
 }
 
-// Hit is one retrieved chunk with its cosine/L2 distance (smaller == closer).
-//
-// Snippet is set only by the keyword lane, which knows which part of the chunk
-// actually matched; the vector lane matches a chunk as a whole and leaves it
-// empty for the caller to fall back to Text.
-type Hit struct {
-	VideoID      string
-	Ordinal      int
-	Text         string
-	Kind         string
-	StartSeconds int
-	Distance     float64
-	Snippet      string
-}
-
 // Matched terms inside a Snippet are delimited by these two ASCII control
 // characters rather than by markup. FTS5's snippet() requires some start/end
 // marker, and anything HTML-shaped would have to be either escaped downstream
@@ -306,14 +291,6 @@ func (s *Store) HasChunks(ctx context.Context, videoID string) (bool, error) {
 		return false, fmt.Errorf("rag: has chunks %s: %w", videoID, err)
 	}
 	return n != 0, nil
-}
-
-// KindCount is how many chunks of one kind a video contributed to the index,
-// and how much text they carry.
-type KindCount struct {
-	Kind   string
-	Count  int
-	Tokens int
 }
 
 // ChunkStats reports a video's chunks grouped by kind, newest recipe first in

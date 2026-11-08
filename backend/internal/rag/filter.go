@@ -163,14 +163,6 @@ func (f Filter) chunkSubquery() (string, []any) {
 			WHERE ` + strings.Join(conds, " AND "), args
 }
 
-// LibraryCount is what the library holds under a filter, for a question asking
-// how much of something there is rather than what it says.
-type LibraryCount struct {
-	Videos          int `json:"videos"`
-	DurationSeconds int `json:"duration_seconds"`
-	Channels        int `json:"channels"`
-}
-
 // CountVideos answers an inventory question directly instead of leaving the
 // model to estimate it from a dozen excerpts.
 //
