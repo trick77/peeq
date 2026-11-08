@@ -302,7 +302,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		// first pass — and billing it only when it succeeded understated exactly
 		// the wait most worth knowing about by roughly half.
 		mergeMs += time.Since(wideStart).Milliseconds()
-		wideFTS, wideRetrieval := wdiag.ftsMs, wdiag.retrievalMs
+		wideFTS, wideVector, wideRetrieval := wdiag.ftsMs, wdiag.vectorMs, wdiag.retrievalMs
 		wideQueried, wideSem := wdiag.ftsQueried, semanticRan(wdiag)
 		if len(wideHits) > 0 {
 			relaxed = applied
@@ -314,7 +314,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 			// pass reuses the memoized vectors (see queryVectors) and records 0ms
 			// because that is what it cost. Adding the two would bill the reader
 			// twice for one embedding.
-			narrowFTS, narrowRetrieval := diag.ftsMs, diag.retrievalMs
+			narrowFTS, narrowVector, narrowRetrieval := diag.ftsMs, diag.vectorMs, diag.retrievalMs
 			narrowEmbed := diag.embedMs
 			narrowQueried, narrowSem := diag.ftsQueried, semanticRan(diag)
 			// Both ladders' rungs, in the order they ran, separated by the
@@ -326,6 +326,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 			lanes, diag, hits = wide, wdiag, wideHits
 			diag.rungs = append(narrowRungs, wdiag.rungs...)
 			diag.ftsMs = wideFTS + narrowFTS
+			diag.vectorMs = wideVector + narrowVector
 			diag.retrievalMs = wideRetrieval + narrowRetrieval
 			diag.embedMs = narrowEmbed
 			diag.ftsQueried = wideQueried || narrowQueried
@@ -343,6 +344,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 			// diag that stays — its rungs with it, for the same reason.
 			diag.rungs = append(append(diag.rungs, secondLadderMarker), wdiag.rungs...)
 			diag.ftsMs += wideFTS
+			diag.vectorMs += wideVector
 			diag.retrievalMs += wideRetrieval
 			diag.ftsQueried = diag.ftsQueried || wideQueried
 			if wideSem {
@@ -353,10 +355,9 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 
 	// The two searches and the merge, in the order they happened.
 	//
-	// The vector span is DERIVED, not measured: retrievalMs runs from the same
-	// start as ftsMs (see askLanes), so it is a total that already contains the
-	// keyword ladder and the embedding. Reporting all three as siblings would
-	// draw bars summing to nearly twice the wall clock.
+	// The spans are additive (see askDiag): the vector half runs beside the
+	// keyword ladder, and embed and vector bill only the wait it added past the
+	// ladder, so the bars still sum to the wall clock.
 	//
 	// Each gated on whether it HAPPENED, never on its duration — a step that
 	// never ran and one that ran in under a millisecond both report 0ms, so a
@@ -373,7 +374,7 @@ func (s *server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		tr.add("embed", s.embedder.Model(), traceKindModel, diag.embedMs)
 	}
 	if semanticRan(diag) {
-		tr.add("vector", "sqlite-vec", traceKindLocal, diag.retrievalMs-diag.ftsMs-diag.embedMs)
+		tr.add("vector", "sqlite-vec", traceKindLocal, diag.vectorMs)
 	}
 
 	// A comparison is two channels the library actually HAS, named deliberately.

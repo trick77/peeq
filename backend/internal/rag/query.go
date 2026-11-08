@@ -210,15 +210,44 @@ func BuildFTSQueries(q string) []FTSTier {
 			Weight: WeightKeywordPrefix,
 		})
 	}
-	// ORing a single term reproduces the AND tier exactly; only add the recall
-	// floor when it actually widens the match.
-	if len(content) > 1 {
+	// The floor ORs, so every term in it matches on its own. A number or a
+	// two-rune token matches a large share of the library alone: "2" and "3"
+	// from "in 2-3 years" made the floor run 23 s on production. The AND rungs
+	// above keep them, where they narrow.
+	floorTerms := make([]string, 0, len(prefixed))
+	for _, t := range prefixed {
+		if floorWorthy(strings.Trim(t, `"*`)) {
+			floorTerms = append(floorTerms, t)
+		}
+	}
+	// A floor equal to the prefix rung (one term, nothing dropped) adds nothing
+	// and would fuse the same rows in twice.
+	if floor := strings.Join(floorTerms, " OR "); floor != "" && floor != prefixedAnd {
 		tiers = append(tiers, FTSTier{
-			Match:  strings.Join(prefixed, " OR "),
+			Match:  floor,
 			Weight: WeightKeywordAny,
 		})
 	}
 	return tiers
+}
+
+// floorWorthy reports whether a bare term may stand alone in the OR floor. The
+// two-rune rule is for Latin noise ("ai", "of", "2"); a two-rune CJK token is
+// usually a whole word ("東京") and stays.
+func floorWorthy(term string) bool {
+	ascii, digits := true, true
+	for _, r := range term {
+		if r > unicode.MaxASCII {
+			ascii = false
+		}
+		if !unicode.IsDigit(r) {
+			digits = false
+		}
+	}
+	if digits {
+		return false
+	}
+	return !ascii || len(term) > 2
 }
 
 // queryToken is one recognized unit of a Find-mode query: either an operator

@@ -468,11 +468,8 @@ func (s *Store) SearchFTS(ctx context.Context, match string, n int) ([]Hit, erro
 	return s.SearchFTSFiltered(ctx, match, n, Filter{})
 }
 
-// SearchFTSFiltered is SearchFTS scoped to the videos f admits.
-//
-// No vec0-style care is needed here: FTS5 is not a top-k operator, so joining
-// videos and constraining it in the WHERE happens before ORDER BY bm25 … LIMIT
-// ever runs. This is a pre-filter by construction.
+// SearchFTSFiltered is SearchFTS scoped to the videos f admits, filtered before
+// LIMIT like the vector lane (see ftsQuery).
 func (s *Store) SearchFTSFiltered(ctx context.Context, match string, n int, f Filter) ([]Hit, error) {
 	if strings.TrimSpace(match) == "" {
 		return nil, nil
@@ -480,33 +477,7 @@ func (s *Store) SearchFTSFiltered(ctx context.Context, match string, n int, f Fi
 	if n <= 0 {
 		n = 10
 	}
-	// snippet() returns the window of the chunk AROUND the match, with the
-	// matched terms delimited. Taking the head of the chunk instead — as this
-	// did before — shows a preview that usually does not contain the searched
-	// word at all: a chunk is ~600 tokens and a hit is rarely in its first
-	// line. Column 0 is fts_chunks' only column; 32 is the token budget for the
-	// window (FTS5 caps it at 64).
-	q := `
-		SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds,
-		       snippet(fts_chunks, 0, ?, ?, '…', 32)
-		FROM fts_chunks f
-		JOIN transcript_chunks c ON c.id = f.rowid`
-	args := []any{HighlightStart, HighlightEnd}
-	where := []string{"f.text MATCH ?"}
-	if !f.Empty() {
-		q += "\n\t\tJOIN videos fv ON fv.id = c.video_id"
-	}
-	args = append(args, match)
-	if !f.Empty() {
-		conds, fargs := f.predicates("fv")
-		where = append(where, conds...)
-		args = append(args, fargs...)
-	}
-	const ftsTail = `
-		ORDER BY bm25(fts_chunks)
-		LIMIT ?`
-	q += "\n\t\tWHERE " + strings.Join(where, " AND ") + ftsTail //nolint:gosec // only fixed SQL structure is interpolated (literal conditions, a ?-placeholder list, or a closed switch); every value is a bound ? parameter
-	args = append(args, n)
+	q, args := ftsQuery(match, n, f)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("fts search: %w", err)
@@ -521,6 +492,48 @@ func (s *Store) SearchFTSFiltered(ctx context.Context, match string, n int, f Fi
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// ftsQuery renders the ranked keyword query.
+//
+// ORDER BY rank (bm25, no rank override is configured) is consumed by FTS5
+// itself, so rows come out ranked and LIMIT stops after n of them; snippet() is
+// only computed for a row that is returned. ORDER BY bm25(fts_chunks) was not
+// consumed: SQLite sorted every match in a temp b-tree, computing snippet() for
+// each, and the OR floor matches most of a large library (23 s on production).
+//
+// CROSS JOIN pins fts_chunks as the outer loop, which is what keeps the order
+// FTS5's; the join drops an fts row with no chunk before LIMIT counts it.
+//
+// The filter is the vector lane's id set (chunkSubquery), built once per query
+// from indexes, probed per ranked row before LIMIT counts it: a pre-filter.
+// Not a join against videos: a narrow filter would then read a videos row per
+// match walked, and its small columns sit behind description and analysis
+// text (overflow pages, on 7200rpm disks). +rowid keeps the IN out of FTS5's
+// xBestIndex: handed to FTS5 it becomes one unranked rowid= lookup per admitted
+// chunk, and the temp b-tree comes back.
+//
+// snippet() returns the window AROUND the match, with the matched terms
+// delimited; the head of a ~600-token chunk rarely holds the searched word.
+// Column 0 is fts_chunks' only column; 32 is the token budget for the window
+// (FTS5 caps it at 64).
+func ftsQuery(match string, n int, f Filter) (string, []any) {
+	q := `
+		SELECT c.video_id, c.ordinal, c.text, c.kind, c.start_seconds,
+		       snippet(fts_chunks, 0, ?, ?, '…', 32)
+		FROM fts_chunks
+		CROSS JOIN transcript_chunks c ON c.id = fts_chunks.rowid
+		WHERE fts_chunks MATCH ?`
+	args := []any{HighlightStart, HighlightEnd, match}
+	if !f.Empty() {
+		sub, subArgs := f.chunkSubquery()
+		q += "\n\t\t  AND +fts_chunks.rowid IN (" + sub + ")"
+		args = append(args, subArgs...)
+	}
+	// Qualified: an unqualified rank would turn ambiguous, or bind to another
+	// table's column, the day a joined table grows one.
+	q += "\n\t\tORDER BY fts_chunks.rank\n\t\tLIMIT ?"
+	return q, append(args, n)
 }
 
 // BuiltDim reports the dimension the vec_chunks table was created with, so the
