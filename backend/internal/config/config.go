@@ -89,12 +89,13 @@ type Config struct {
 	// summarizer's default.
 	SummaryChunkTokens int
 
-	// ChatStreamIdleTimeout is how long a started chat stream may go completely
-	// silent before the call is abandoned and retried. Tunable because it is the
-	// one bound whose right value depends on the endpoint: it must sit above the
-	// longest gap that endpoint leaves between events while thinking, and below
-	// the point where waiting is pointless. The header bound is fixed in
-	// internal/llm; the whole-call cap is ChatCallTimeout below.
+	// ChatStreamIdleTimeout is how long a started chat stream may go without a
+	// data frame (keepalive pings do not count) before the call is abandoned and
+	// retried. Tunable because it is the one bound whose right value depends on
+	// the endpoint: it must sit above the longest gap that endpoint leaves
+	// between data frames while thinking, and below the point where waiting is
+	// pointless. The header bound is fixed in internal/llm; the whole-call cap
+	// is ChatCallTimeout below.
 	ChatStreamIdleTimeout time.Duration
 
 	// ChatCallTimeout is the backstop on a single chat call's total duration.
