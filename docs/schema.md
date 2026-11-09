@@ -442,6 +442,7 @@ Virtual table: `vec0(embedding float[1536])`.
 
 | Column | Type | Null | Default | PK |
 | --- | --- | --- | --- | --- |
+| `rowid` | INTEGER | no |  | 1 |
 | `embedding` |  | yes |  |  |
 
 ## vec_model
@@ -863,6 +864,7 @@ erDiagram
         INTEGER token_count
     }
     vec_chunks {
+        INTEGER rowid PK
         ANY embedding
     }
     vec_model {
@@ -946,23 +948,23 @@ erDiagram
         INTEGER chat_cached_tokens
         INTEGER chat_completion_tokens
     }
-    auto_unsubscribes }o--o| channels : "channel_id"
+    auto_unsubscribes |o--o| channels : "channel_id"
     channel_images }o--|| channels : "channel_id"
     channel_subcategories }o--|| channels : "channel_id"
-    channel_subcategory_state }o--o| channels : "channel_id"
+    channel_subcategory_state |o--o| channels : "channel_id"
     channel_videos }o--|| channels : "channel_id"
     download_jobs }o--|| videos : "video_id"
-    in_depth_retry }o--o| videos : "video_id"
-    pending_thumbnails }o--o| channel_videos : "video_id"
+    in_depth_retry |o--o| videos : "video_id"
+    pending_thumbnails |o--o| channel_videos : "video_id"
     playback_grants }o--|| videos : "video_id"
     playback_state }o--o| videos : "video_id"
-    share_links }o--|| videos : "video_id"
-    subscriptions }o--o| channels : "channel_id"
+    share_links |o--|| videos : "video_id"
+    subscriptions |o--o| channels : "channel_id"
     summary_jobs }o--|| videos : "video_id"
     transcript_chunks }o--|| videos : "video_id"
-    video_in_depth }o--o| videos : "video_id"
+    video_in_depth |o--o| videos : "video_id"
     video_subcategories }o--|| videos : "video_id"
-    video_subcategory_state }o--o| videos : "video_id"
-    video_thumbnails }o--o| videos : "video_id"
-    video_transcripts }o--o| videos : "video_id"
+    video_subcategory_state |o--o| videos : "video_id"
+    video_thumbnails |o--o| videos : "video_id"
+    video_transcripts |o--o| videos : "video_id"
 ```
