@@ -208,6 +208,7 @@ Virtual table: `fts5(text)`.
 
 | Column | Type | Null | Default | PK |
 | --- | --- | --- | --- | --- |
+| `rowid` | INTEGER | no |  | 1 |
 | `text` |  | yes |  |  |
 
 ## in_depth_retry
@@ -770,6 +771,7 @@ erDiagram
         TEXT next_attempt_at
     }
     fts_chunks {
+        INTEGER rowid PK
         ANY text
     }
     in_depth_retry {
