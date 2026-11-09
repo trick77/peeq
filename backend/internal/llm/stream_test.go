@@ -286,7 +286,9 @@ func TestComplete_namesTheCallCapWhenAStreamNeverFinishes(t *testing.T) {
 				return
 			default:
 			}
-			flush(t, w, ": ping\n\n")
+			// Endless reasoning: data frames re-arm the idle bound, so only the
+			// cap can end this. Comment pings would be the idle bound's job.
+			flush(t, w, sseEvent(`{"choices":[{"delta":{"reasoning_content":"thinking"},"index":0}]}`))
 			time.Sleep(10 * time.Millisecond)
 		}
 	}))

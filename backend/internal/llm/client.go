@@ -27,7 +27,7 @@ import (
 // answered" and "the model is thinking hard", so it could only ever be wrong
 // for one of them — and when it fired, five minutes in, the log could not say
 // which had happened. Streaming separates them: headers arrive in seconds, and
-// silence afterwards is measurable per event.
+// silence afterwards is measurable per data frame.
 //
 // A whole-request http.Client.Timeout is deliberately NOT set: it caps body
 // reads too, so it would cut a legitimately long stream mid-answer.
@@ -36,14 +36,17 @@ const (
 	// headers. Generous next to the few seconds a healthy endpoint takes, because
 	// it competes with nothing — a stall costs a minute now instead of five.
 	defaultHeaderTimeout = 60 * time.Second
-	// defaultIdleTimeout is how long a started stream may go completely silent.
-	// Any event re-arms it, including reasoning deltas and keepalives, so this
-	// bounds a dead socket rather than a slow model.
+	// defaultIdleTimeout is how long a started stream may go without a data
+	// frame; which frames count is llmwire's rule, and keepalive pings never
+	// do. Streamed reasoning deltas count, so a long visible think re-arms it,
+	// while a stalled model behind a pinging upstream fails here rather than at
+	// the call cap.
 	defaultIdleTimeout = 90 * time.Second
-	// defaultCallTimeout is the backstop for a stream that stays alive forever
-	// without finishing — dribbling keepalives past any sane summary length. The
-	// summarize worker sets no deadline of its own, so without this there would
-	// be no cap at all.
+	// defaultCallTimeout is the backstop for a stream that keeps sending data
+	// frames forever without finishing — reasoning or content past any sane
+	// summary length. The summarize worker sets no deadline of its own, so this
+	// cap is the only one; production passes BACKEND_CHAT_CALL_TIMEOUT or
+	// BACKEND_ASK_CALL_TIMEOUT, and this default covers a zero value.
 	defaultCallTimeout = 15 * time.Minute
 	pacedLogThreshold  = time.Second
 	maxRawUsage        = 1 << 10
@@ -83,15 +86,15 @@ func wantsJSONObject(ctx context.Context) bool { return jsonObjectFrom(ctx) }
 // rate-limited endpoint; 0 disables it. Logger defaults to slog.Default().
 // HeartbeatInterval is how often an in-flight request logs that it is still
 // waiting (0 uses the default; negative disables the heartbeat).
-// StreamIdleTimeout is how long a started stream may go silent before the call
-// is abandoned, HeaderTimeout how long the endpoint may take to answer at all,
-// and CallTimeout the cap on the whole call; each uses its default above when
-// left at 0.
+// StreamIdleTimeout is how long a started stream may go without a data frame
+// (keepalive pings do not count) before the call is abandoned, HeaderTimeout how
+// long the endpoint may take to answer at all, and CallTimeout the cap on the
+// whole call; each uses its default above when left at 0.
 //
-// All three are settable, but only StreamIdleTimeout is wired to an
-// environment variable — the other two exist as fields so a test can drive them
-// without mutating package state, which is the difference between a test that
-// proves the header bound fires and a test that waits sixty real seconds.
+// StreamIdleTimeout and CallTimeout are wired to environment variables;
+// HeaderTimeout is not, and exists as a field so a test can drive it without
+// mutating package state, which is the difference between a test that proves
+// the header bound fires and a test that waits sixty real seconds.
 type Config struct {
 	Model             string
 	GateModel         string
