@@ -2,6 +2,7 @@ package summarize
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,9 +25,13 @@ func (c *countingCompleter) Complete(_ context.Context, m []llm.Message) (string
 	c.calls++
 	// The classify step wants a bare category id, and NormalizeCategory would
 	// turn prose into "uncategorized" — which is also what a skipped classify
-	// leaves behind. Answering it properly keeps the two distinguishable, so a
-	// test asserting "no classify happened" is asserting something.
-	if strings.Contains(m[0].Content, "category id") {
+	// leaves behind. Answering it properly keeps the two distinguishable. The
+	// subcategory prompt is checked first: "subcategory ids" contains
+	// "category id".
+	switch {
+	case strings.Contains(m[0].Content, "subcategory ids"):
+		return `{"subcategories":["models"]}`, nil
+	case strings.Contains(m[0].Content, "category id"):
 		return "ai", nil
 	}
 	return c.reply, nil
@@ -102,13 +107,13 @@ func seedChannel(t *testing.T, h *workerHarness, channelID, videoID string, keep
 	}
 }
 
-// TestInboxVideoStopsAfterTheSummary is the cost promise. A video peeq read to
-// help decide whether to download it gets the prose, short and in depth, and nothing else: no
-// classify call, no embeddings, no key points. Every one of those is an
-// investment in a video the library keeps, and this one may still be ignored.
-//
-// This is a channel that has turned keep_reads off.
-func TestInboxVideoStopsAfterTheSummary(t *testing.T) {
+// TestInboxVideoIsCategorizedButNotIndexed is the inbox read's cost line. A
+// video peeq read to help decide whether to download it gets the prose (short
+// and in depth) and its category and subcategories, so Search, MCP and the
+// Inbox card can tell what it is about. Key points and, on a channel with
+// keep_reads off, embeddings stay deferred: those are investments in a video
+// the library keeps, and this one may still be ignored.
+func TestInboxVideoIsCategorizedButNotIndexed(t *testing.T) {
 	h := newWorkerHarness(t)
 	rel := writeInboxCaption(t, h, "inbox1")
 
@@ -146,8 +151,15 @@ func TestInboxVideoStopsAfterTheSummary(t *testing.T) {
 	if v.SummaryStatus != videos.SummaryDone {
 		t.Fatalf("summary_status = %q, want done", v.SummaryStatus)
 	}
-	if v.Category != videos.UncategorizedCategory {
-		t.Fatalf("category = %q, want it left uncategorized (no classify call)", v.Category)
+	if v.Category != "ai" {
+		t.Fatalf("category = %q, want ai (inbox reads are classified)", v.Category)
+	}
+	subs, err := h.videos.SubcategoriesCtx(t.Context(), "inbox1")
+	if err != nil {
+		t.Fatalf("subcategories: %v", err)
+	}
+	if len(subs) != 1 || subs[0] != "ai/models" {
+		t.Fatalf("subcategories = %v, want [ai/models]", subs)
 	}
 	if v.EmbedModel != "" {
 		t.Fatalf("embed_model = %q, want empty (no embedding)", v.EmbedModel)
@@ -160,10 +172,170 @@ func TestInboxVideoStopsAfterTheSummary(t *testing.T) {
 	if embedder.calls != 0 {
 		t.Fatalf("embedder called %d times, want 0", embedder.calls)
 	}
-	// Two calls: the summary and the in-depth text, which the Inbox page offers.
-	// Anything more means a deferred step ran anyway.
-	if completer.calls != 2 {
-		t.Fatalf("completer called %d times, want exactly 2 (summary + in-depth)", completer.calls)
+	// Four calls: summary, classify, subcategories, in-depth. Anything more
+	// means a deferred step ran anyway.
+	if completer.calls != 4 {
+		t.Fatalf("completer called %d times, want exactly 4 (summary + classify + subcategories + in-depth)", completer.calls)
+	}
+}
+
+// failingClassifyCompleter fails the classify call and answers the rest.
+type failingClassifyCompleter struct{ countingCompleter }
+
+func (c *failingClassifyCompleter) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	if strings.Contains(m[0].Content, "category id") && !strings.Contains(m[0].Content, "subcategory ids") {
+		c.calls++
+		return "", errors.New("gate down")
+	}
+	return c.countingCompleter.Complete(ctx, m)
+}
+
+// statusAtClassify records the row's summary_status when the classify call
+// arrives.
+type statusAtClassify struct {
+	countingCompleter
+	read func() string
+	seen []string
+}
+
+func (c *statusAtClassify) Complete(ctx context.Context, m []llm.Message) (string, error) {
+	if strings.Contains(m[0].Content, "category id") && !strings.Contains(m[0].Content, "subcategory ids") {
+		c.seen = append(c.seen, c.read())
+	}
+	return c.countingCompleter.Complete(ctx, m)
+}
+
+// The Inbox card offers the summary the moment it is saved: an inbox read is
+// 'done' before the category call, never held at running behind a gate call.
+func TestInboxVideo_isDoneBeforeItIsClassified(t *testing.T) {
+	h := newWorkerHarness(t)
+	rel := writeInboxCaption(t, h, "inbox-order")
+	if err := h.videos.Upsert(videos.Video{ID: "inbox-order", URL: "https://youtu.be/inbox-order"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	seedChannel(t, h, "UCoff", "inbox-order", false)
+	seedTranscript(t, h, "inbox-order", rel)
+	if err := h.videos.SetStatus("inbox-order", videos.StatusNew, ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("inbox-order"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	completer := &statusAtClassify{countingCompleter: countingCompleter{reply: "A summary of the video."}, read: func() string {
+		v, err := h.videos.Get("inbox-order")
+		if err != nil || v == nil {
+			return "missing"
+		}
+		return v.SummaryStatus
+	}}
+	var phases []string
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(completer), Embedder: &countingEmbedder{dim: 1536},
+		EmbedModel: "test-model", EmbedDim: 1536,
+		OnPhase: func(_, status, phase string) { phases = append(phases, status+" "+phase) }})
+	if _, err := w.processOne(t.Context()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	if len(completer.seen) != 1 || completer.seen[0] != videos.SummaryDone {
+		t.Fatalf("summary_status at classify = %v, want [done]", completer.seen)
+	}
+	for _, p := range phases {
+		if strings.HasSuffix(p, PhaseClassifying) {
+			t.Fatalf("phases = %v; an inbox read classifies after done, with no running phase", phases)
+		}
+	}
+}
+
+// A post-download pass whose summary is already 'done' (here: an inbox read
+// whose classify failed) classifies without moving an open Player back to
+// running.
+func TestDownloadPassClassifiesWithoutRegressingTheSummary(t *testing.T) {
+	h := newWorkerHarness(t)
+	rel := writeInboxCaption(t, h, "inbox-dl")
+	if err := h.videos.Upsert(videos.Video{ID: "inbox-dl", URL: "https://youtu.be/inbox-dl"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	seedChannel(t, h, "UCoff", "inbox-dl", false)
+	seedTranscript(t, h, "inbox-dl", rel)
+	if err := h.videos.SetStatus("inbox-dl", videos.StatusNew, ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("inbox-dl"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	var phases []string
+	deps := WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(&failingClassifyCompleter{countingCompleter{reply: "A summary of the video."}}),
+		Embedder:   &countingEmbedder{dim: 1536}, EmbedModel: "test-model", EmbedDim: 1536,
+		OnPhase: func(_, status, phase string) { phases = append(phases, status+" "+phase) }}
+	if _, err := NewWorker(deps).processOne(t.Context()); err != nil {
+		t.Fatalf("inbox pass: %v", err)
+	}
+
+	downloadedRel := filepath.Join("UC123", "inbox-dl", "inbox-dl.en.vtt")
+	writeVTT(t, filepath.Join(h.mediaDir, downloadedRel))
+	seedTranscript(t, h, "inbox-dl", downloadedRel)
+	if err := h.videos.SetStatus("inbox-dl", videos.StatusDownloaded, ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("inbox-dl"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	phases = nil
+	deps.Summarizer = New(&countingCompleter{reply: `{"key_points":[{"ts":0,"text":"a point"}]}`})
+	if _, err := NewWorker(deps).processOne(t.Context()); err != nil {
+		t.Fatalf("download pass: %v", err)
+	}
+	for _, p := range phases {
+		if strings.HasPrefix(p, videos.SummaryRunning+" ") {
+			t.Fatalf("phases = %v; a done summary must not be emitted as running again", phases)
+		}
+	}
+	v, err := h.videos.Get("inbox-dl")
+	if err != nil || v == nil || v.Category != "ai" {
+		t.Fatalf("video = %+v (err %v), want the download pass to classify it", v, err)
+	}
+}
+
+// A failed classify must not fail the inbox read: the summary the card shows
+// is done, and the idle sweep picks the category up later.
+func TestInboxVideo_classifyFailureLeavesTheReadDone(t *testing.T) {
+	h := newWorkerHarness(t)
+	rel := writeInboxCaption(t, h, "inbox-cf")
+	if err := h.videos.Upsert(videos.Video{ID: "inbox-cf", URL: "https://youtu.be/inbox-cf"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	seedChannel(t, h, "UCoff", "inbox-cf", false)
+	seedTranscript(t, h, "inbox-cf", rel)
+	if err := h.videos.SetStatus("inbox-cf", videos.StatusNew, ""); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if _, err := h.jobs.Enqueue("inbox-cf"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	completer := &failingClassifyCompleter{countingCompleter{reply: "A summary of the video."}}
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(completer), Embedder: &countingEmbedder{dim: 1536},
+		EmbedModel: "test-model", EmbedDim: 1536})
+	if _, err := w.processOne(t.Context()); err != nil {
+		t.Fatalf("processOne: %v", err)
+	}
+	v, err := h.videos.Get("inbox-cf")
+	if err != nil || v == nil {
+		t.Fatalf("get: %v", err)
+	}
+	if v.SummaryStatus != videos.SummaryDone {
+		t.Fatalf("summary_status = %q, want done despite the classify failure", v.SummaryStatus)
+	}
+	if v.Category != videos.UncategorizedCategory {
+		t.Fatalf("category = %q, want uncategorized for the sweep", v.Category)
+	}
+	got, err := h.videos.NextUnclassified(nil)
+	if err != nil || got == nil || got.ID != "inbox-cf" {
+		t.Fatalf("sweep offered %v (err %v), want inbox-cf", got, err)
 	}
 }
 
@@ -218,8 +390,8 @@ func TestInboxVideo_switchOffMidJobIsNotIndexed(t *testing.T) {
 
 // TestInboxVideoOnAKeepReadsChannelIsIndexed is what the channel setting buys.
 // The same video on an opted-in channel is chunked and embedded as well as
-// summarized, so it is findable in Search — and it STILL costs exactly two LLM
-// calls (summary + in-depth), because classify and key points remain deferred.
+// summarized and categorized, so it is findable in Search — and key points
+// remain deferred.
 func TestInboxVideoOnAKeepReadsChannelIsIndexed(t *testing.T) {
 	h := newWorkerHarness(t)
 	rel := writeInboxCaption(t, h, "inbox-keep")
@@ -262,16 +434,16 @@ func TestInboxVideoOnAKeepReadsChannelIsIndexed(t *testing.T) {
 	if embedder.calls == 0 {
 		t.Fatal("embedder never called")
 	}
-	// Still the two deferred steps: keeping the reading is not the same as
-	// treating the video as one the library holds.
-	if v.Category != videos.UncategorizedCategory {
-		t.Fatalf("category = %q, want it still deferred", v.Category)
+	// Categorized like every inbox read; key points stay deferred: keeping the
+	// reading is not the same as treating the video as one the library holds.
+	if v.Category != "ai" {
+		t.Fatalf("category = %q, want ai", v.Category)
 	}
 	if v.KeyPoints != "" && v.KeyPoints != "[]" {
 		t.Fatalf("key_points = %q, want them still deferred", v.KeyPoints)
 	}
-	if completer.calls != 2 {
-		t.Fatalf("completer called %d times, want exactly 2 (summary + in-depth)", completer.calls)
+	if completer.calls != 4 {
+		t.Fatalf("completer called %d times, want exactly 4 (summary + classify + subcategories + in-depth)", completer.calls)
 	}
 }
 
@@ -281,8 +453,8 @@ func TestInboxVideoOnAKeepReadsChannelIsIndexed(t *testing.T) {
 //
 // It reproduces the real handover — the download repoints subtitle_path out of
 // .summaries/ and into the media directory, and a fresh summary job is queued —
-// then asserts the second pass spends nothing on prose and everything on the
-// three steps the inbox pass deferred.
+// then asserts the second pass spends nothing on prose or category and
+// everything on the steps the inbox pass deferred.
 func TestDownloadingAnInboxVideoSkipsTheSummaryAndRunsTheRest(t *testing.T) {
 	h := newWorkerHarness(t)
 	inboxRel := writeInboxCaption(t, h, "inbox2")
@@ -338,10 +510,10 @@ func TestDownloadingAnInboxVideoSkipsTheSummaryAndRunsTheRest(t *testing.T) {
 	if v.KeyPoints == "" || v.KeyPoints == "[]" {
 		t.Fatalf("key_points = %q, want the deferred step to have run after download", v.KeyPoints)
 	}
-	// Two calls in the second pass — classify and key points — and NOT a third
-	// for the summary. That difference is the whole feature.
-	if got := completer.calls - afterInbox; got != 2 {
-		t.Fatalf("second pass made %d LLM calls, want 2 (classify + key points, no summary)", got)
+	// One call in the second pass — key points — and none for the summary or
+	// the category the inbox read already paid for.
+	if got := completer.calls - afterInbox; got != 1 {
+		t.Fatalf("second pass made %d LLM calls, want 1 (key points only)", got)
 	}
 }
 
@@ -389,13 +561,11 @@ func TestOrdinaryNewVideoIsNotTreatedAsAnInboxRead(t *testing.T) {
 	}
 }
 
-// TestNextUnclassifiedSkipsInboxVideos pins the other place the deferred
-// classify call could sneak back in. The idle sweep asks only for "has a
-// summary and is uncategorized", which an inbox video satisfies exactly — so
-// without its status guard the sweep would spend a classify call on every video
-// in the Inbox, and spend it again on every one ever declined after any
-// category-reset migration.
-func TestNextUnclassifiedSkipsInboxVideos(t *testing.T) {
+// TestIdleSweepsBackfillAnInboxRead is the backfill: an inbox read summarized
+// before inbox reads were classified sits at 'new' with a summary, still
+// 'uncategorized' and never subcategorized. With the queue empty, the idle
+// turns classify it and then label it, with no migration.
+func TestIdleSweepsBackfillAnInboxRead(t *testing.T) {
 	h := newWorkerHarness(t)
 
 	if err := h.videos.Upsert(videos.Video{ID: "inbox3", URL: "https://youtu.be/inbox3", Title: "An inbox video"}); err != nil {
@@ -408,23 +578,36 @@ func TestNextUnclassifiedSkipsInboxVideos(t *testing.T) {
 		t.Fatalf("set status: %v", err)
 	}
 
-	got, err := h.videos.NextUnclassified(nil)
-	if err != nil {
-		t.Fatalf("next unclassified: %v", err)
-	}
-	if got != nil {
-		t.Fatalf("sweep offered %q; inbox videos must be left uncategorized", got.ID)
+	completer := &countingCompleter{reply: "unused"}
+	w := NewWorker(WorkerDeps{
+		Jobs: h.jobs, Videos: h.videos, Rag: h.rag,
+		Summarizer: New(completer), Embedder: &countingEmbedder{dim: 1536},
+		EmbedModel: "test-model", EmbedDim: 1536})
+	for range 4 {
+		did, err := w.processOne(t.Context())
+		if err != nil {
+			t.Fatalf("processOne: %v", err)
+		}
+		if !did {
+			break
+		}
 	}
 
-	// The same row, once downloaded, IS the sweep's business.
-	if err := h.videos.SetStatus("inbox3", videos.StatusDownloaded, ""); err != nil {
-		t.Fatalf("set status: %v", err)
+	v, err := h.videos.Get("inbox3")
+	if err != nil || v == nil {
+		t.Fatalf("get: %v", err)
 	}
-	got, err = h.videos.NextUnclassified(nil)
+	if v.Category != "ai" {
+		t.Fatalf("category = %q, want the sweep to classify the inbox read", v.Category)
+	}
+	subs, err := h.videos.SubcategoriesCtx(t.Context(), "inbox3")
 	if err != nil {
-		t.Fatalf("next unclassified: %v", err)
+		t.Fatalf("subcategories: %v", err)
 	}
-	if got == nil || got.ID != "inbox3" {
-		t.Fatal("a downloaded video with a summary and no category must still be swept")
+	if len(subs) != 1 || subs[0] != "ai/models" {
+		t.Fatalf("subcategories = %v, want [ai/models]", subs)
+	}
+	if completer.calls != 2 {
+		t.Fatalf("completer called %d times, want 2 (classify + subcategories)", completer.calls)
 	}
 }

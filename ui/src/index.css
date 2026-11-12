@@ -6835,6 +6835,43 @@ details.tomb-sect[open] > summary svg {
   line-height: 1.55;
 }
 
+/* The Inbox poster's bottom row: the category pill left, the runtime right.
+   The pill's text carries a subcategory too, so it is laid out beside the
+   runtime rather than in its own corner: the row gives the runtime its full
+   width and the pill cuts its label instead of running under it. */
+.thumb .inbox-thumb-bottom {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.thumb .inbox-thumb-bottom .dur,
+.thumb .inbox-thumb-bottom .metapill.oncover {
+  position: static;
+  left: auto;
+  right: auto;
+  bottom: auto;
+}
+.thumb .inbox-thumb-bottom .dur {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.thumb .inbox-thumb-bottom .metapill.oncover {
+  min-width: 0;
+}
+.inbox-cat .dotc {
+  flex-shrink: 0;
+}
+.inbox-cat .metapill-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── inbox summaries ──────────────────────────────────────────────────── */
 
 /* Top-left, not the bottom-left corner the shared `.metapill.oncover` rule

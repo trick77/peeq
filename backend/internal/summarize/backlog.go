@@ -8,16 +8,16 @@ import (
 	"github.com/trick77/peeq/internal/videos"
 )
 
-// classifyOne repairs one video from the classification backlog: a downloaded
-// video that has a summary but is still 'uncategorized'. It runs only when the
-// summary queue is empty, so real work always wins, and reports did=true only
-// when it actually made an LLM call — returning true on an empty backlog would
-// spin the Run loop, which skips its poll interval whenever a turn did work.
+// classifyOne repairs one video from the classification backlog: a video,
+// inbox reads included, that has a summary but is still 'uncategorized'. It
+// runs only when the summary queue is empty, so real work always wins, and
+// reports did=true only when it actually made an LLM call — returning true on
+// an empty backlog would spin the Run loop, which skips its poll interval
+// whenever a turn did work.
 //
-// The backlog exists because classification used to sit behind the key-points
-// call and was skipped whenever that failed; it also absorbs any future
-// best-effort classify failure. Errors are logged, never returned as job
-// failures — there is no job here to fail.
+// The backlog absorbs best-effort classify failures, category-reset
+// migrations and inbox reads summarized before those were classified. Errors
+// are logged, never returned as job failures — there is no job here to fail.
 func (w *Worker) classifyOne(ctx context.Context) (bool, error) {
 	skip := make([]string, 0, len(w.classifyFailed))
 	for id := range w.classifyFailed {

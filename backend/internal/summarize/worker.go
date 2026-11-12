@@ -240,15 +240,27 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		run.skipped("summary", "already stored")
 	}
 
-	// An inbox video stops here, with the prose and — on a channel that asked
-	// for it — a search index.
+	inbox := isInboxRead(video, transcript.Source)
+
+	// Step 2 — the category, on every read (categorize.go). Ahead of 'done' on
+	// the library path, where the Player shows it with the summary; after it on
+	// an inbox read, whose card must not wait on a gate call to offer the
+	// summary it already has.
+	var classified string
+	if !inbox {
+		classified = w.classifyStep(video, run, summary, video.SummaryStatus != videos.SummaryDone)
+	}
+
+	// An inbox video stops here, with the prose, its category and — on a
+	// channel that asked for it — a search index.
 	//
 	// StatusNew is "recorded, nothing requested yet": peeq read this video's
 	// captions to help decide whether to download it, and the card is still
-	// sitting in the Inbox awaiting that decision. Category and key points are
-	// investments in a video the library keeps — something to filter by,
-	// something to navigate — and this one may well be ignored, in which case
-	// both were thrown away.
+	// sitting in the Inbox awaiting that decision. Key points are an
+	// investment in a video the library keeps — something to navigate — and
+	// this one may well be ignored, in which case they were thrown away. The
+	// category is not: it is two short gate calls, and without it the Inbox,
+	// Search and MCP cannot tell what an undownloaded video is about.
 	//
 	// The index is the exception, and only where the channel's keep_reads says
 	// so (migration 0030). There the reading is worth keeping on its own: the
@@ -267,14 +279,15 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// caption-built index with the downloaded transcript and its chapters. That
 	// is the whole reason deciding to download never pays for the expensive
 	// call twice.
-	if isInboxRead(video, transcript.Source) {
+	if inbox {
 		if err := w.d.Videos.SetSummaryStatus(video.ID, videos.SummaryDone, ""); err != nil {
 			return true, w.failJob(ctx, job, video, run, err.Error())
 		}
-		// The in-depth text is the one investment an inbox read does make:
-		// the Inbox page offers it to settle a maybe the short summary left
-		// open. Best-effort, as on the full path below.
+		classified = w.classifyStep(video, run, summary, false)
+		// The in-depth text: the Inbox page offers it to settle a maybe the
+		// short summary left open. Best-effort, as on the full path below.
 		w.inDepthStep(video, run, forSummary.Cues)
+		w.labelStep(ctx, video, run, summary, classified)
 		outcome := "done_inbox"
 		// keep_reads is read again here, not taken from `video`: that row was
 		// read before the summary call, and a switch-off in between has
@@ -309,43 +322,6 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 		return true, nil
 	}
 
-	// Step 2 — category (best-effort). It needs only the title and the summary,
-	// so it runs here rather than at the end: behind the fragile key-points call
-	// it never ran at all for videos whose endpoint timed out there, which is
-	// how a large backlog ended up summarized but 'uncategorized'. A classify
-	// failure must NOT fail the job — the summary above is already saved, and
-	// the idle sweep in classifyOne picks the video up later.
-	//
-	// `video` was read before the summary call above, so this test is against
-	// a stale row; SetCategoryIfUnset re-checks at write time, which is what
-	// actually protects a category the user picked on the Player while the
-	// summary was still running.
-	if video.Category == "" || video.Category == videos.UncategorizedCategory {
-		// Surface the classify step as a live phase (summarizing → classifying →
-		// in depth → key points → embedding). It sits before the "done" emit
-		// below, so it is safe for the
-		// Player, which treats "done" as terminal.
-		w.emit(video.ID, videos.SummaryRunning, PhaseClassifying)
-		cctx, done := run.step("classify")
-		raw, cerr := w.d.Summarizer.Classify(cctx, video.Title, summary, videos.ClassifiableCategories())
-		switch {
-		case cerr != nil:
-			w.d.Logger.Warn("summarize worker: classify failed", append(run.ident(), "duration_ms", run.stepElapsedMs(), "err", cerr)...)
-		default:
-			category := videos.NormalizeCategory(raw)
-			applied, serr := w.d.Videos.SetCategoryIfUnset(video.ID, category)
-			if serr != nil {
-				w.d.Logger.Error("summarize worker: set category failed", append(run.ident(), "err", serr)...)
-			} else {
-				// applied=false means the user picked a category by hand while
-				// this call was in flight, and theirs won.
-				done("category", category, "applied", applied)
-			}
-		}
-	} else {
-		run.skipped("classify", "already categorized")
-	}
-
 	// Summary is usable now. Persist "done" so the Library shows it,
 	// and emit "done" so the live Player fetches it immediately — it refetches
 	// on the "done" event — even though key-points and embedding still have to
@@ -369,6 +345,8 @@ func (w *Worker) processOne(ctx context.Context) (did bool, err error) {
 	// Its own emit carries "done", so the open Player still refetches the
 	// summary the moment it is saved.
 	w.inDepthStep(video, run, forSummary.Cues)
+	// Subcategories after the summary is shown: no page waits on them.
+	w.labelStep(ctx, video, run, summary, classified)
 	w.emit(video.ID, videos.SummaryDone, PhaseKeypoints)
 
 	// Step 4 — key points (and chapters when yt-dlp didn't supply them). The

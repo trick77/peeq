@@ -378,6 +378,53 @@ describe("Inbox", () => {
     });
   });
 
+  describe("category pill", () => {
+    const sub = (id: string, label: string) => ({
+      id: `sports/${id}`,
+      label,
+      category: "sports",
+      category_label: "Sports & Fitness",
+    });
+
+    it("shows the category and the primary subcategory, every label in the tooltip", async () => {
+      vi.mocked(listPending).mockResolvedValue([
+        baseItem({
+          category: "sports",
+          subcategories: [sub("cycling", "Cycling"), sub("racing", "Racing")],
+        }),
+      ]);
+      const { container } = render(<Inbox />);
+      expect(await screen.findByText("Sports · Cycling")).toBeInTheDocument();
+      const pill = container.querySelector(".inbox-cat");
+      expect(pill?.getAttribute("title")).toBe("Sports · Cycling, Racing");
+    });
+
+    it("falls back to the category alone without subcategories", async () => {
+      vi.mocked(listPending).mockResolvedValue([
+        baseItem({ category: "sports" }),
+      ]);
+      const { container } = render(<Inbox />);
+      await screen.findByText("First pending video");
+      expect(
+        container.querySelector(".inbox-cat .metapill-text")?.textContent,
+      ).toBe("Sports");
+    });
+
+    it("draws nothing for an unread or uncategorized video", async () => {
+      vi.mocked(listPending).mockResolvedValue([
+        baseItem(),
+        baseItem({
+          video_id: "v2",
+          title: "Second",
+          category: "uncategorized",
+        }),
+      ]);
+      const { container } = render(<Inbox />);
+      await screen.findByText("Second");
+      expect(container.querySelector(".inbox-cat")).toBeNull();
+    });
+  });
+
   it("shows an empty-state line when the inbox is empty", async () => {
     vi.mocked(listPending).mockResolvedValue([]);
     render(<Inbox />);

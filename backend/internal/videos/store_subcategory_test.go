@@ -107,11 +107,6 @@ func TestNextUnsubcategorized_skipsWhatTheSweepMustNotTouch(t *testing.T) {
 	classifiedVideo(t, s, "done", "UCa", "ai")
 	label(t, s, "done", "ai") // an empty answer still counts as answered
 	seedVideo(t, s, Video{ID: "uncat", URL: "u-uncat", DurationSeconds: 100, Status: StatusDownloaded})
-	// Inbox reads are never categorized (summarize/worker.go), so never subcategorized.
-	seedVideo(t, s, Video{ID: "inbox", URL: "u-inbox", DurationSeconds: 100})
-	if err := s.SetCategory("inbox", "ai"); err != nil {
-		t.Fatal(err)
-	}
 	classifiedVideo(t, s, "parked", "UCa", "sports")
 
 	if v, err := s.NextUnsubcategorized(ctx, []string{"parked"}); err != nil || v != nil {
@@ -120,6 +115,31 @@ func TestNextUnsubcategorized_skipsWhatTheSweepMustNotTouch(t *testing.T) {
 	v, err := s.NextUnsubcategorized(ctx, nil)
 	if err != nil || v == nil || v.ID != "parked" {
 		t.Fatalf("got %+v, %v; want parked", v, err)
+	}
+}
+
+// Inbox reads are categorized like every read, so the sweep labels them too:
+// that is the backfill for reads categorized before they were labeled inline.
+func TestNextUnsubcategorized_offersACategorizedInboxRead(t *testing.T) {
+	s := New(openTestDB(t))
+	ctx := context.Background()
+	seedVideo(t, s, Video{ID: "inbox", URL: "u-inbox", DurationSeconds: 100, Status: StatusNew})
+	if err := s.SetSummary("inbox", "summary of inbox", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetCategory("inbox", "ai"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.NextUnsubcategorized(ctx, nil)
+	if err != nil || v == nil || v.ID != "inbox" {
+		t.Fatalf("got %+v, %v; want the inbox read", v, err)
+	}
+	if answered, err := s.SubcategoriesAnswered(ctx, "inbox"); err != nil || answered {
+		t.Fatalf("answered = %v, %v; want false before a label", answered, err)
+	}
+	label(t, s, "inbox", "ai", "ai/models")
+	if answered, err := s.SubcategoriesAnswered(ctx, "inbox"); err != nil || !answered {
+		t.Fatalf("answered = %v, %v; want true after a label", answered, err)
 	}
 }
 
@@ -166,7 +186,7 @@ func TestSubcategoryQueries_stayOnIndexes(t *testing.T) {
 		want  string
 	}{
 		"filter": {`SELECT video_id FROM video_subcategories WHERE subcategory = ?`, []any{"ai/models"}, "idx_video_subcategories_sub"},
-		"sweep":  {nextUnsubcategorizedQuery, []any{UncategorizedCategory, StatusNew}, "USING COVERING INDEX idx_videos_cards"},
+		"sweep":  {nextUnsubcategorizedQuery, []any{UncategorizedCategory}, "USING COVERING INDEX idx_videos_cards"},
 		// The rowid pick sorts index entries only; the outer read seeks by rowid.
 		"titles": {channelTitlesQuery, []any{"UCa", 25}, "USING COVERING INDEX idx_videos_channel_status"},
 	} {

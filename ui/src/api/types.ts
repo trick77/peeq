@@ -472,6 +472,10 @@ export type PendingItem = {
   // on demand, so the card asks either way — it just asks on the plain URL and
   // gets a revalidating response until a poster lands.
   thumbnail_version?: string;
+  // category and subcategories are what the read was classified as (primary
+  // label first), absent until peeq has read the video.
+  category?: string;
+  subcategories?: Subcategory[];
 };
 
 // CookieHealth mirrors httpapi.cookieHealthResponse — distinct from

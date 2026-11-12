@@ -25,7 +25,7 @@ const searchDescription = "Search the user's peeq library of YouTube videos: tra
 // differ. It rides in the search description and the server instructions.
 const subcategoryNote = "Videos and channels carry subcategories, category/subcategory keys such as sports/cycling " +
 	"or ai/building: filter with subcategory (the video's own) or channel_subcategory (videos from channels " +
-	"labelled with it, which also reaches videos peeq only read); list_youtube_channels shows each channel's."
+	"labelled with it); list_youtube_channels shows each channel's."
 
 // toolAliases maps retired tool names to their replacement. They answer calls
 // but are never listed: a client that cached the old tools/list (up to the ttl,
@@ -115,9 +115,8 @@ func searchSchema() map[string]any {
 			"description": "Limit to one of YouTube's own category labels, e.g. \"Science & Technology\" or " +
 				"\"Education\". Exact label, case-insensitive; independent of category."},
 		"subcategory": map[string]any{"type": "string", "enum": videos.SubcategoryKeys(),
-			"description": "Limit to videos labelled with this subcategory (category/subcategory). Finer than " +
-				"category; videos peeq only read carry none of their own, so prefer channel_subcategory for " +
-				"\"videos from X channels\"."},
+			"description": "Limit to videos labelled with this subcategory (category/subcategory), e.g. " +
+				"sports/cycling for \"cycling videos\". Finer than category."},
 		"channel_subcategory": map[string]any{"type": "string", "enum": videos.SubcategoryKeys(),
 			"description": "Limit to videos from channels labelled with this subcategory, e.g. sports/cycling " +
 				"for \"videos from cycling channels\"."},

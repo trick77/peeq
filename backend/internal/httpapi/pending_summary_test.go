@@ -471,3 +471,40 @@ func TestPendingIgnore_collectsARowWithNoCaptions(t *testing.T) {
 		t.Fatalf("row survived: %+v (err %v)", v, err)
 	}
 }
+
+// The Inbox card shows what a read is about: its category and labels ride on
+// the list, and a video peeq has not read yet carries neither.
+func TestPendingList_carriesCategoryAndSubcategories(t *testing.T) {
+	h := newPendingTestServer(t)
+	h.seedChannel("UC1")
+	seedInboxRead(t, h, "pc1")
+	if err := h.videos.SetCategory("pc1", "sports"); err != nil {
+		t.Fatalf("set category: %v", err)
+	}
+	if ok, err := h.videos.SetSubcategoriesIfCurrent(context.Background(), "pc1", "sports", "A summary.", []string{"sports/cycling"}); err != nil || !ok {
+		t.Fatalf("label: %v, %v", ok, err)
+	}
+	if err := h.ledger.Insert(channelvideos.Entry{
+		VideoID: "pc2", ChannelID: "UC1", Title: "unread",
+		URL: "https://www.youtube.com/watch?v=pc2", State: "pending",
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	var items []pendingItem
+	if err := json.Unmarshal([]byte(getJSON(t, h, "/api/pending")), &items); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	byID := map[string]pendingItem{}
+	for _, it := range items {
+		byID[it.VideoID] = it
+	}
+	read := byID["pc1"]
+	if read.Category != "sports" || len(read.Subcategories) != 1 || read.Subcategories[0].ID != "sports/cycling" || read.Subcategories[0].Label == "" {
+		t.Fatalf("read = %+v, want sports with the cycling label", read)
+	}
+	unread := byID["pc2"]
+	if unread.Category != "" || len(unread.Subcategories) != 0 {
+		t.Fatalf("unread = %+v, want no category or labels", unread)
+	}
+}

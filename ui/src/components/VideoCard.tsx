@@ -14,7 +14,8 @@ import {
   videoLabel,
   watchURL,
 } from "../format";
-import { CATEGORY_BY_ID, UNCATEGORIZED } from "../categories";
+import { categoryMeta } from "../categories";
+import { CategoryPill } from "./CategoryPill";
 
 // VideoCard — one grid tile, per the mockup's `.card`/`.thumb`/`.life`
 // blocks. Pure presentational: all data comes in as props, all mutation
@@ -178,15 +179,7 @@ export const VideoCard = memo(function VideoCard({
           </span>
           {/* Decorative inside the button: the button's aria-label already
               names the video, so the pill adds no accessible text. */}
-          {thumbCategory ? (
-            <span className="metapill oncover">
-              <span
-                className="dotc"
-                style={{ background: thumbCategory.color }}
-              />
-              {thumbCategory.label}
-            </span>
-          ) : null}
+          {thumbCategory ? <CategoryPill meta={thumbCategory} /> : null}
           {resuming ? (
             <div className="resume">
               <i style={{ width: `${resumePercent}%` }} />
@@ -372,11 +365,4 @@ function Redownload({
       <Icon name="refresh" size="15px" /> Re-download
     </Button>
   );
-}
-
-// categoryMeta resolves the classifier's label/color for a video, or null
-// when it is uncategorized or carries a category this build does not know.
-function categoryMeta(category: string) {
-  if (!category || category === UNCATEGORIZED) return null;
-  return CATEGORY_BY_ID[category] ?? null;
 }
