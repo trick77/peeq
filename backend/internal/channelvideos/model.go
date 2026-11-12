@@ -73,6 +73,9 @@ type Entry struct {
 	// demand, so the card still asks — it just asks on the unversioned URL and
 	// gets the ordinary revalidating response.
 	ThumbnailVersion string
+	// Category is the videos row's category, "" when peeq has no row for the
+	// video yet. Populated by the ListPending queries only.
+	Category string
 }
 
 // CaptionCandidate is a ledger row that is due a caption fetch. It is a

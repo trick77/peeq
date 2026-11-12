@@ -33,6 +33,9 @@ func (c *inDepthCompleter) Complete(_ context.Context, m []llm.Message) (string,
 	case strings.Contains(sys, "cohesive summary"):
 		c.calls["summary"]++
 		return "Overall prose summary.", nil
+	case strings.Contains(sys, "subcategory ids"): // before "category id", which it contains
+		c.calls["subcategories"]++
+		return `{"subcategories":["models"]}`, nil
 	case strings.Contains(sys, "category id"):
 		c.calls["classify"]++
 		return "ai", nil
@@ -194,8 +197,8 @@ func TestWorker_inboxReadGetsTheInDepthSummaryOnce(t *testing.T) {
 		t.Fatalf("inbox pass: %v", err)
 	}
 	wantInDepth(t, h, "i1", inDepthReply)
-	if c.calls["keypoints"] != 0 || c.calls["classify"] != 0 {
-		t.Fatalf("calls = %v, want key points and classify still deferred", c.calls)
+	if c.calls["keypoints"] != 0 || c.calls["classify"] != 1 || c.calls["subcategories"] != 1 {
+		t.Fatalf("calls = %v, want key points deferred and the read categorized", c.calls)
 	}
 
 	// The download handover: the transcript becomes the downloaded one and a
@@ -212,7 +215,7 @@ func TestWorker_inboxReadGetsTheInDepthSummaryOnce(t *testing.T) {
 	if _, err := w.processOne(t.Context()); err != nil {
 		t.Fatalf("download pass: %v", err)
 	}
-	if c.calls["indepth"] != 1 || c.calls["summary"] != 1 {
-		t.Fatalf("calls = %v, want the summary and the in-depth text paid for once", c.calls)
+	if c.calls["indepth"] != 1 || c.calls["summary"] != 1 || c.calls["classify"] != 1 || c.calls["subcategories"] != 1 {
+		t.Fatalf("calls = %v, want the summary, category, labels and in-depth text paid for once", c.calls)
 	}
 }

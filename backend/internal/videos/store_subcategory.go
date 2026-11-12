@@ -51,6 +51,19 @@ func (s *Store) SetSubcategoriesIfCurrent(ctx context.Context, id, category, sum
 	return true, nil
 }
 
+// SubcategoriesAnswered reports whether the classifier has answered for the
+// video under its current category ("nothing fits" included). A category
+// change deletes the marker, so its presence always refers to the current one.
+func (s *Store) SubcategoriesAnswered(ctx context.Context, id string) (bool, error) {
+	var ok bool
+	err := s.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM video_subcategory_state WHERE video_id = ?)`, id).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("video %s subcategory state: %w", id, err)
+	}
+	return ok, nil
+}
+
 // dropSubcategoriesTx removes a video's subcategories and its classified
 // marker, handing it back to the sweep. Every category write calls it: the
 // labels belong to the category they were chosen under.
@@ -102,18 +115,19 @@ func (s *Store) SubcategoriesMany(ctx context.Context, ids []string) (map[string
 }
 
 // NextUnsubcategorized returns one video the subcategory sweep owes an answer,
-// or (nil, nil) when there is none: categorized, not an inbox read (those are
-// never categorized either, see summarize/worker.go), and never answered for
-// under its current category. skip is the sweep's in-process set of videos
-// whose call failed, so one bad video cannot starve the rest.
+// or (nil, nil) when there is none: categorized and never answered for under
+// its current category. Inbox reads count: they are categorized too, and their
+// labels are what makes an undownloaded video findable by subcategory. skip is
+// the sweep's in-process set of videos whose call failed, so one bad video
+// cannot starve the rest.
 //
-// The scan reads status, id and category from idx_videos_cards, which holds
-// all three: once the backlog is drained every pass finds nothing, and it must
-// find it without opening one videos row (pinned by a query-plan test). Only
-// the chosen video is loaded whole.
+// The scan reads id and category from idx_videos_cards: once the backlog is
+// drained every pass finds nothing, and it must find it without opening one
+// videos row (pinned by a query-plan test). Only the chosen video is loaded
+// whole.
 func (s *Store) NextUnsubcategorized(ctx context.Context, skip []string) (*Video, error) {
 	q := nextUnsubcategorizedQuery
-	args := []any{UncategorizedCategory, StatusNew}
+	args := []any{UncategorizedCategory}
 	if len(skip) > 0 {
 		q += ` AND v.id NOT IN (` + store.Placeholders(len(skip)) + `)`
 		for _, id := range skip {
@@ -133,7 +147,7 @@ func (s *Store) NextUnsubcategorized(ctx context.Context, skip []string) (*Video
 }
 
 const nextUnsubcategorizedQuery = `SELECT v.id FROM videos v INDEXED BY idx_videos_cards
-WHERE v.category <> ? AND v.status <> ?
+WHERE v.category <> ?
   AND NOT EXISTS (SELECT 1 FROM video_subcategory_state s WHERE s.video_id = v.id)`
 
 // ChannelTitles returns up to limit of a channel's video titles, most

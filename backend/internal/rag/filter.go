@@ -48,8 +48,7 @@ type Filter struct {
 	YouTubeCategory string
 	// Subcategory scopes to videos labelled with this key ("sports/cycling");
 	// ChannelSubcategory to videos whose channel is. Both must already satisfy
-	// videos.ValidSubcategory. The channel form is the one that reaches inbox
-	// reads, which carry no labels of their own.
+	// videos.ValidSubcategory. Inbox reads carry labels of their own too.
 	Subcategory        string
 	ChannelSubcategory string
 }

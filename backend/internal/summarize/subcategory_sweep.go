@@ -57,17 +57,11 @@ func (w *Worker) subcategorizeVideoOne(ctx context.Context) (bool, error) {
 	}), totals)
 	ident := []any{"video_id", video.ID, "title", video.Title, "category", video.Category}
 	started := time.Now()
-	subs, err := w.d.Summarizer.ClassifySubcategories(cctx, video.Title, video.Summary, video.Category)
+	subs, applied, err := w.labelVideo(cctx, video)
 	elapsed := time.Since(started).Milliseconds()
 	if err != nil {
 		w.subcatFailed[video.ID] = true
-		w.d.Logger.Warn("summarize worker: subcategories failed", append(ident, "duration_ms", elapsed, "err", err)...)
-		return true, nil
-	}
-	applied, err := w.d.Videos.SetSubcategoriesIfCurrent(ctx, video.ID, video.Category, video.Summary, subs)
-	if err != nil {
-		w.subcatFailed[video.ID] = true
-		w.d.Logger.Error("summarize worker: set subcategories failed", append(ident, "err", err)...)
+		w.logLabelFailure(err, append(ident, "duration_ms", elapsed))
 		return true, nil
 	}
 	attrs := append(ident, "subcategories", strings.Join(subs, ","), "applied", applied, "duration_ms", elapsed)

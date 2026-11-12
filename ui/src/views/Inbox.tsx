@@ -9,6 +9,8 @@ import { listPending, downloadPending, ignorePending } from "../api/pending";
 import { pendingThumbnailUrl } from "../api/videos";
 import type { PendingItem, VideoSort } from "../api/types";
 import { formatAgo, formatDuration } from "../format";
+import { categoryMeta } from "../categories";
+import { CategoryPill } from "../components/CategoryPill";
 import { Button, controlClass } from "../ui";
 import { INBOX_SORT_OPTIONS } from "./Library";
 
@@ -175,6 +177,24 @@ function offer(item: PendingItem): Offer {
 // hasPage reports whether a click on this card leads anywhere.
 function hasPage(item: PendingItem) {
   return offer(item).opens;
+}
+
+// categoryPill says what a read is about, in the poster's bottom-left corner
+// where the Library card keeps its category: the category, then the primary
+// subcategory. Every label rides the tooltip. Nothing for an unread or
+// uncategorized video.
+function categoryPill(item: PendingItem) {
+  const cat = categoryMeta(item.category);
+  if (!cat) return null;
+  const subs = item.subcategories ?? [];
+  const text = subs.length > 0 ? `${cat.label} · ${subs[0].label}` : cat.label;
+  const title =
+    subs.length > 0
+      ? `${cat.label} · ${subs.map((s) => s.label).join(", ")}`
+      : cat.label;
+  return (
+    <CategoryPill meta={cat} text={text} title={title} className="inbox-cat" />
+  );
 }
 
 // summaryMark draws the card's offer.
@@ -843,9 +863,14 @@ export function Inbox({
                       item.thumbnail_version,
                     )}
                   />
-                  <span className="dur">
-                    {formatDuration(item.duration_seconds)}
-                  </span>
+                  {/* One bottom row: the category pill gives way to the
+                    runtime, however wide the runtime is. */}
+                  <div className="inbox-thumb-bottom">
+                    {categoryPill(item)}
+                    <span className="dur">
+                      {formatDuration(item.duration_seconds)}
+                    </span>
+                  </div>
                   {/* Top-left, where the eye starts, since this is the offer to
                     read before you decide. The poster carries only the runtime,
                     so the corner is free.

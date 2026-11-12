@@ -441,6 +441,7 @@ func TestResetSetMatchesTheSweep(t *testing.T) {
 				{"queued", "queued", "", "pending", "uncategorized", false},
 				{"errored", "error", "a summary", "error", "news", false},
 				{"handpicked-summarized", "downloaded", "a summary", "done", "ai", true},
+				{"inbox", "new", "a summary", "done", "sports", false}, // an inbox read is classified like any other
 			}
 			for _, sd := range seeds {
 				seedVideo(t, s, Video{ID: sd.id, URL: "https://youtu.be/" + sd.id, Status: sd.status})
@@ -486,7 +487,7 @@ func TestResetSetMatchesTheSweep(t *testing.T) {
 			}
 			// And the rule both sides are meant to encode, stated once so a
 			// mutual drift (both sides wrong the same way) still fails.
-			if !sameSet(cleared, []string{"downloaded", "tombstoned", "errored"}) {
+			if !sameSet(cleared, []string{"downloaded", "tombstoned", "errored", "inbox"}) {
 				t.Fatalf("cleared %v, want every row that has a summary and is not a hand pick, and only those", cleared)
 			}
 			// And the hand picks are untouched — the column's entire purpose.

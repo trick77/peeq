@@ -217,7 +217,8 @@ const (
        COALESCE(v.summary_status, ''), COALESCE(c.auto_summary, 0),
        COALESCE((SELECT j.state FROM summary_jobs j WHERE j.video_id = cv.video_id ORDER BY j.id DESC LIMIT 1) = 'failed', 0),
        EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = cv.video_id),
-       (SELECT COALESCE(strftime('%s', pt.updated_at), '0') FROM pending_thumbnails pt INDEXED BY idx_pending_thumbnails_version WHERE pt.video_id = cv.video_id)
+       (SELECT COALESCE(strftime('%s', pt.updated_at), '0') FROM pending_thumbnails pt INDEXED BY idx_pending_thumbnails_version WHERE pt.video_id = cv.video_id),
+       COALESCE(v.category, '')
 FROM channel_videos cv
 LEFT JOIN channels c ON c.id = cv.channel_id
 LEFT JOIN videos v ON v.id = cv.video_id
@@ -323,8 +324,8 @@ func scanPendingEntries(rows *sql.Rows) ([]Entry, error) {
 // scanPendingRow scans one ListPending row: the selectColumns set (in Entry
 // field order, minus ChannelName) followed by the joined channel_name, the
 // video's summary_status, its channel's auto_summary flag, whether its latest
-// summary job gave up, whether captions are on disk, and the cached poster's
-// version.
+// summary job gave up, whether captions are on disk, the cached poster's
+// version, and the video's category.
 func scanPendingRow(sc interface{ Scan(...any) error }) (Entry, error) {
 	var e Entry
 	var duration sql.NullInt64
@@ -338,7 +339,7 @@ func scanPendingRow(sc interface{ Scan(...any) error }) (Entry, error) {
 		&e.VideoID, &e.ChannelID, &e.Title, &duration, &e.URL, &e.ThumbnailURL,
 		&e.State, &e.DiscoveredAt, &decidedAt, &publishedAt, &e.UnavailableReason,
 		&unavailableAt, &e.ChannelName, &e.SummaryStatus, &e.AutoSummary,
-		&e.SummaryGaveUp, &e.HasSubtitles, &thumbnailVersion,
+		&e.SummaryGaveUp, &e.HasSubtitles, &thumbnailVersion, &e.Category,
 	); err != nil {
 		return Entry{}, err
 	}

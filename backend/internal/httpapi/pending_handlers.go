@@ -57,6 +57,10 @@ type pendingItem struct {
 	// demand, so the card asks either way and simply gets the revalidating
 	// response on the unversioned URL until a poster lands.
 	ThumbnailVersion string `json:"thumbnail_version,omitempty"`
+	// Category and Subcategories are what the read was classified as, omitted
+	// until peeq has read the video.
+	Category      string           `json:"category,omitempty"`
+	Subcategories []subcategoryDTO `json:"subcategories,omitempty"`
 }
 
 // handlePendingCount answers the Inbox badge with just the number. The
@@ -95,6 +99,23 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 		httpx.ServerError(w, r, err, "list pending failed")
 		return
 	}
+	// One query for the labels of every card that can have any: a categorized
+	// read. Unread and uncategorized cards stay out of the IN list, which keeps
+	// it to the reads rather than the whole Inbox. A failed read drops the
+	// labels, never the list: the cards are the Inbox, the labels an extra.
+	subs := map[string][]string{}
+	var ids []string
+	for _, e := range items {
+		if e.Category != "" && e.Category != videos.UncategorizedCategory {
+			ids = append(ids, e.VideoID)
+		}
+	}
+	if s.videos != nil && len(ids) > 0 {
+		if subs, err = s.videos.SubcategoriesMany(r.Context(), ids); err != nil {
+			slog.WarnContext(r.Context(), "pending: subcategories unavailable", "err", err)
+			subs = map[string][]string{}
+		}
+	}
 	out := make([]pendingItem, 0, len(items))
 	for _, e := range items {
 		out = append(out, pendingItem{
@@ -111,6 +132,8 @@ func (s *server) handlePendingList(w http.ResponseWriter, r *http.Request) {
 			SummaryGaveUp:    e.SummaryGaveUp,
 			HasSubtitles:     e.HasSubtitles,
 			ThumbnailVersion: e.ThumbnailVersion,
+			Category:         e.Category,
+			Subcategories:    toSubcategoryDTOs(subs[e.VideoID]),
 		})
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)

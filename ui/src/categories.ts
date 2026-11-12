@@ -39,3 +39,12 @@ export const CATEGORIES: CategoryMeta[] = [
 export const CATEGORY_BY_ID: Record<string, CategoryMeta> = Object.fromEntries(
   CATEGORIES.map((c) => [c.id, c]),
 );
+
+// categoryMeta resolves the classifier's label/color for a video, or null
+// when it is uncategorized or carries a category this build does not know.
+export function categoryMeta(
+  category: string | undefined,
+): CategoryMeta | null {
+  if (!category || category === UNCATEGORIZED) return null;
+  return CATEGORY_BY_ID[category] ?? null;
+}
