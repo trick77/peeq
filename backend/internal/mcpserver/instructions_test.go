@@ -95,6 +95,19 @@ func TestChannelHintIsCached(t *testing.T) {
 	}
 }
 
+// The add line rides in the instructions only, never in the channel hint the
+// search description repeats.
+func TestInstructions_nameAddVideos(t *testing.T) {
+	lib := &fakeLibrary{channels: []Channel{{ID: "UC2", Name: "Big", Subscribed: true, Videos: 9}}}
+	h := &handler{lib: lib}
+	if got := h.instructions(context.Background()); !strings.Contains(got, "add_videos") {
+		t.Errorf("instructions lack add_videos:\n%s", got)
+	}
+	if got := h.searchDescription(context.Background()); strings.Contains(got, "add_videos") {
+		t.Errorf("search description carries add_videos:\n%s", got)
+	}
+}
+
 func TestInstructions_noChannels(t *testing.T) {
 	got := (&handler{lib: &fakeLibrary{}}).instructions(context.Background())
 	if !strings.Contains(got, "peeq") || strings.Contains(got, "automatically") {

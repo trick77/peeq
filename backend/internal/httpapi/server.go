@@ -275,8 +275,12 @@ type server struct {
 	playback      PlaybackStore
 	devAuthClaims auth.Claims
 
-	jobs           *jobs.Store
-	videos         *videos.Store
+	jobs   *jobs.Store
+	videos *videos.Store
+	// mcpAddMu serializes add_videos' check-then-enqueue: two overlapping
+	// calls (a client retrying) would otherwise both see no active job and
+	// both queue one. download_jobs has no unique active-job index.
+	mcpAddMu       sync.Mutex
 	shareLinks     ShareLinkStore
 	playbackGrants PlaybackGrantStore
 	publicURL      string
@@ -526,7 +530,8 @@ func New(d Deps) http.Handler {
 	mux.Handle("POST /api/videos/{id}/reprocess", s.requireAuth(http.HandlerFunc(s.handleReprocess)))
 	// Bearer-gated like /api/machine but a separate secret: the MCP server, gated on its own
 	// static bearer secret (never the extension token) and an Origin check.
-	// Read-only over the library. Every method lands on it so GET and DELETE
+	// Reads the library; its one write is add_videos, the Add view's enqueue.
+	// Every method lands on it so GET and DELETE
 	// get a proper 405.
 	if d.MCPToken != "" {
 		mux.Handle("/mcp", mcpserver.New(mcpserver.Deps{

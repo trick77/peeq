@@ -2,7 +2,8 @@
 
 peeq serves its library to MCP clients (loom, or any other MCP-capable tool) at
 `POST /mcp`: search over transcripts, summaries, chapters and in-depth analyses,
-plus reading one video or its transcript. Read-only.
+plus reading one video or its transcript, and adding YouTube videos to the download
+queue (`add_videos`, the only tool that writes).
 
 ## Protocol
 
@@ -28,7 +29,9 @@ plus reading one video or its transcript. Read-only.
 
 `BACKEND_MCP_TOKEN` is the bearer secret. Unset → `/mcp` is not mounted (`404`). Links in results are absolute, built on peeq's public URL (oidc mode refuses to boot without `PUBLIC_FQDN`).
 It is deliberately **not** the extension's API token from Settings: that token
-may only write a cookie, this one reads the library.
+may only write a cookie, this one reads the library and queues downloads.
+Since `add_videos` acts, give the token only to a client that asks the user before
+calling a tool that writes (loom with `confirm`, below).
 
 ```sh
 openssl rand -base64 32
@@ -50,18 +53,23 @@ loom's `.env` as `PEEQ_MCP_TOKEN=…`, then restart both. Missing or wrong token
       "url": "${PEEQ_MCP_URL}",
       "headers": { "Authorization": "Bearer ${PEEQ_MCP_TOKEN}" },
       "users": "${BACKEND_PEEQ_USERS}",
-      "trustInstructions": true
+      "trustInstructions": true,
+      "readOnly": true,
+      "confirm": true
     }
   }
 }
 ```
 
 with `PEEQ_MCP_URL=https://peeq.example.com/mcp` in loom's `.env`, and
-`BACKEND_PEEQ_USERS` set to the loom accounts that may read this library: their
+`BACKEND_PEEQ_USERS` set to the loom accounts that may use this library (search it and add videos): their
 loom user id (the `id` loom's `GET /api/me` returns), comma separated.
 Usernames and OIDC subjects do not count, and an empty value means nobody.
 `trustInstructions` lets peeq's channel hint into loom's system prompt, which is
-what makes loom search peeq unprompted on those channels' topics.
+what makes loom search peeq unprompted on those channels' topics. Keep `readOnly`
+and add `confirm`: for a trusted server loom lets an explicit `readOnlyHint: false` beat
+`readOnly`, so `add_videos` becomes a confirmation card, called only on the user's
+click, while the read tools stay plain reads.
 
 ## Authelia
 
@@ -81,8 +89,9 @@ peeq still enforces the token.
 ## Tools
 
 Each tool carries a display title, sent both as `title` and `annotations.title`
-(quoted below), for clients to show instead of the name. All are
-`readOnlyHint: true`, `openWorldHint: false`.
+(quoted below), for clients to show instead of the name. All but `add_videos` are
+`readOnlyHint: true`, `openWorldHint: false`; `add_videos` is `readOnlyHint: false`,
+`openWorldHint: true` (it queues downloads from YouTube).
 
 - `search` ("Search your video library") — `query` (required), `channel` (name, @handle or id; case-insensitive,
   typo-tolerant, resolved against the channels list_youtube_channels shows plus any with videos; an unknown one is an error listing the closest names, a listed one with no videos yet says so), `category`
@@ -103,6 +112,14 @@ Each tool carries a display title, sent both as `title` and `annotations.title`
 - `list_youtube_channels` ("List YouTube channels in your library") — subscribed channels plus channels whose caption-only reads are
   kept: id, handle, description, video count, top peeq and YouTube categories, the
   channel's subcategories, and a header line naming every channel subcategory in use.
+- `add_videos` ("Add videos to your library") — `videos` (required, 1 to 10): `{url, title?}`, `url` a
+  full YouTube video link, `title` display-only for the client's confirmation. Each is queued as the Add
+  view's paste would be; bare ids, playlists, channels and live streams are refused per video. A video
+  with a pending or running download job, or downloaded, is reported and left alone (a retried call
+  queues nothing twice; calls are serialized); any other known video (an inbox read, a failed or
+  canceled download) is queued again. An empty or over-long list, a blank, over-long (2 KB) or
+  control-character url or the same video twice (any link form) refuses the
+  whole call.
 
 Subcategories come from `backend/internal/videos/subcategory.go` (fixed, every
 category ends in `other`): up to 3 per video from its own category and up to 3 per
@@ -143,13 +160,33 @@ The user can always ask explicitly ("search peeq for …", "in channel X …").
   timestamp (no `?t=` when only the summary matched). Other moments are in the text.
 - `image` is YouTube's public thumbnail (peeq's own thumbnail route needs a session),
   present only when the id has YouTube's 11-character shape.
-- `get_video` returns one source for the video; the other tools return text only.
+- `get_video` returns one source for the video; `get_transcript` and
+  `list_youtube_channels` return text only.
 - No results → a plain sentence and `"sources": []`.
 - Past the 24 KB cap, trailing items are dropped whole together with their sources and
   the text ends "(N more results omitted; narrow the query)".
 - A failed search (deadline, or keyword and semantic lanes both down) is `isError: true`
   "search failed (…)", never an empty result.
 - `/video/<id>?t=<seconds>` is the SPA's player deep link; it opens at that moment.
+
+`tools/call add_videos` result: one text line per video, in argument order, and the
+structured items loom's confirmation card reads (`items[i]` ↔ the i-th video):
+
+```json
+{"content": [{"type": "text", "text": "queued: https://youtu.be/ID1\nalready queued or downloaded: https://youtu.be/ID2\nrejected: https://www.youtube.com/playlist?list=PL1: Paste a single video link, not a playlist"}],
+ "structuredContent": {"items": [{"status": "done", "message": "queued"},
+   {"status": "skipped", "message": "already queued or downloaded"},
+   {"status": "failed", "message": "Paste a single video link, not a playlist"}],
+   "link": {"url": "https://peeq…/up-next", "label": "peeq"}}}
+```
+
+- `status` is `done` (queued), `skipped` (an active download job, or downloaded) or
+  `failed` (`message` says why, one line, query strings stripped). A store failure on
+  peeq's side is "could not queue; try again", its cause only in peeq's log; downloads
+  not set up at all is "downloads are not configured".
+- `link` is peeq's Up next page, where queued downloads show.
+- Every video failing is still a normal result; `isError: true` only for a refused call
+  (bad arguments).
 
 ## Smoke test
 

@@ -3,7 +3,8 @@
 // 2026-07-28 protocol and the older initialize-based one.
 //
 // It reads the library through Library, which httpapi implements over the
-// stores and the search lanes the Search page uses, so the two cannot drift.
+// stores and the search lanes the Search page uses, so the two cannot drift,
+// and adds videos through the same enqueue the web UI's Add view uses.
 package mcpserver
 
 import (
@@ -12,9 +13,15 @@ import (
 	"github.com/trick77/peeq/internal/subtitles"
 )
 
-// Library is everything the tools read. Implementations scope nothing by user:
-// peeq is single-library, and the bearer token is the whole access decision.
+// Library is everything the tools read, plus the one write (AddVideos).
+// Implementations scope nothing by user: peeq is single-library, and the
+// bearer token is the whole access decision.
 type Library interface {
+	// AddVideos queues each URL for download, as the Add view does, and
+	// answers one outcome per URL in the same order. A video with a pending
+	// or running download job, or already downloaded, is left alone: a client
+	// retrying a call must not queue it twice. It never fails as a whole.
+	AddVideos(ctx context.Context, urls []string) []AddedVideo
 	// Channels lists the subscribed channels plus any channel whose reads are
 	// kept, in display order.
 	Channels(ctx context.Context) ([]Channel, error)
@@ -29,6 +36,27 @@ type Library interface {
 	// Transcript returns one video's parsed transcript, or nil when the video
 	// or its transcript does not exist.
 	Transcript(ctx context.Context, id string) (*Transcript, error)
+}
+
+// AddOutcome is what AddVideos did with one URL.
+type AddOutcome string
+
+const (
+	// AddQueued means a download job was queued.
+	AddQueued AddOutcome = "queued"
+	// AddAlready means the video had a pending or running job, or was downloaded.
+	AddAlready AddOutcome = "already"
+	// AddRejected means not added; Message says why.
+	AddRejected AddOutcome = "rejected"
+)
+
+// AddedVideo is one URL's outcome.
+type AddedVideo struct {
+	URL     string
+	VideoID string
+	Outcome AddOutcome
+	// Message is the client-safe reason a rejected URL was refused.
+	Message string
 }
 
 // Channel is one row of list_youtube_channels and of the auto-search hint.

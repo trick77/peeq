@@ -30,8 +30,9 @@
 - `BACKEND_CHAT_MODEL` changed → run `httpapi/ask_latency_probe_test.go`.
 
 ## MCP
-- OIDC bypasses: share/grant routes, `/api/machine` (extension token, cookie write), `/mcp` (`BACKEND_MCP_TOKEN`, read-only). One token never opens another's route.
+- OIDC bypasses: share/grant routes, `/api/machine` (extension token, cookie write), `/mcp` (`BACKEND_MCP_TOKEN`, reads + `add_videos`). One token never opens another's route.
 - Retrieval = Search lanes (`mcp_library.go`), never a 2nd search. Unnumbered items, `sources[i]` = i-th: loom contract.
+- `add_videos` = Add view's enqueue, but a video with an active job (`ActiveIDsForVideos`) or downloaded is skipped, never re-queued: LLM clients retry calls. Status 'queued' alone lies (cancel leaves it, no job). Calls serialized (`mcpAddMu`): no unique active-job index. `items[i]` = i-th video: loom's confirm card.
 
 ## Database
 - Read `docs/schema.md` first. `TestSchemaDoc` golden, regenerate in `backend/`. Blind to triggers, data-only migrations, table-type fields (adding one passes), fields vs real columns.

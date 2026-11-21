@@ -118,7 +118,8 @@ type Config struct {
 	// MCPToken (BACKEND_MCP_TOKEN) is the bearer secret for POST /mcp, the MCP
 	// server other tools search the library through. Empty leaves the route
 	// unmounted. A separate secret from the extension's API token on purpose:
-	// that one may only write a cookie, this one reads the library.
+	// that one may only write a cookie, this one reads the library and queues
+	// downloads.
 	MCPToken string
 
 	// SessionSecret (BACKEND_SESSION_SECRET) signs the session cookie, which

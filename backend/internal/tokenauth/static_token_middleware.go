@@ -10,7 +10,8 @@ import (
 // StaticTokenMiddleware gates a route on a bearer secret taken from the
 // environment (BACKEND_MCP_TOKEN), as opposed to TokenMiddleware's DB-stored
 // extension token. The two are deliberately separate credentials: the
-// extension token can only write a cookie, while this one reads the library.
+// extension token can only write a cookie, while this one reads the library
+// and queues downloads (add_videos).
 type StaticTokenMiddleware struct {
 	secret string
 }
