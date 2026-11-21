@@ -24,6 +24,32 @@ type fakeLibrary struct {
 	lastQuery   *SearchQuery
 	videos      map[string]*Video
 	transcripts map[string]*Transcript
+	// added answers AddVideos per url; an unlisted url is queued. addedN
+	// counts the calls, addedURLs keeps the last call's urls.
+	added     map[string]AddedVideo
+	addedN    int
+	addedURLs []string
+	// addShort drops the last outcome: a library breaking the one-per-url
+	// contract.
+	addShort bool
+}
+
+func (f *fakeLibrary) AddVideos(_ context.Context, urls []string) []AddedVideo {
+	f.addedN++
+	f.addedURLs = urls
+	out := make([]AddedVideo, 0, len(urls))
+	for _, u := range urls {
+		a, ok := f.added[u]
+		if !ok {
+			a = AddedVideo{Outcome: AddQueued}
+		}
+		a.URL = u
+		out = append(out, a)
+	}
+	if f.addShort {
+		out = out[:len(out)-1]
+	}
+	return out
 }
 
 func (f *fakeLibrary) Channels(context.Context) ([]Channel, error) {

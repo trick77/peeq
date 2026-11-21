@@ -35,8 +35,9 @@ var toolAliases = map[string]string{
 	"list_channels": "list_youtube_channels",
 }
 
-// tools is peeq's registry in tools/list order. Every tool reads peeq's own
-// library only: read-only, closed world.
+// tools is peeq's registry in tools/list order. Every tool but add_videos
+// reads peeq's own library only: read-only, closed world. add_videos writes
+// (it queues downloads) and what it adds comes from YouTube: open world.
 func (h *handler) tools() []mcp.Tool {
 	run := func(f func(context.Context, *handler, json.RawMessage) mcp.Result) func(context.Context, json.RawMessage) mcp.Result {
 		return func(ctx context.Context, args json.RawMessage) mcp.Result { return f(ctx, h, args) }
@@ -86,6 +87,14 @@ func (h *handler) tools() []mcp.Tool {
 			Schema:   mcp.ObjectSchema(map[string]any{}),
 			ReadOnly: true,
 			Run:      run(runListYouTubeChannels),
+		},
+		{
+			Name:        "add_videos",
+			Title:       "Add videos to your library",
+			Description: addVideosDescription,
+			Schema:      addVideosSchema(),
+			OpenWorld:   true,
+			Run:         run(runAddVideos),
 		},
 	}
 }

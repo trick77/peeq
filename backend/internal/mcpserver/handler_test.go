@@ -70,7 +70,7 @@ func TestModern_toolsListIsCacheableForAQuarterHour(t *testing.T) {
 	if r.body.Result["ttlMs"] != float64(900000) {
 		t.Errorf("ttlMs = %v", r.body.Result["ttlMs"])
 	}
-	if got := toolNames(r); strings.Join(got, ",") != "search,get_video,get_transcript,list_youtube_channels" {
+	if got := toolNames(r); strings.Join(got, ",") != "search,get_video,get_transcript,list_youtube_channels,add_videos" {
 		t.Errorf("tools = %v", got)
 	}
 }
@@ -112,7 +112,11 @@ func TestToolsListCarriesDisplayTitles(t *testing.T) {
 		"get_video":             "Get a video's details and summaries",
 		"get_transcript":        "Read a video's transcript",
 		"list_youtube_channels": "List YouTube channels in your library",
+		"add_videos":            "Add videos to your library",
 	}
+	// add_videos is the one tool that writes, and what it adds comes from
+	// YouTube: not read-only, open world. Every other tool reads peeq only.
+	writes := map[string]bool{"add_videos": true}
 	h := newTestHandler(&fakeLibrary{})
 	for era, r := range map[string]rpcReply{
 		"legacy": legacyCall(t, h, "tools/list", nil),
@@ -129,7 +133,7 @@ func TestToolsListCarriesDisplayTitles(t *testing.T) {
 			if m["title"] != want[name] || ann["title"] != want[name] {
 				t.Errorf("%s %s: title %v, annotations.title %v, want %q", era, name, m["title"], ann["title"], want[name])
 			}
-			if ann["readOnlyHint"] != true || ann["openWorldHint"] != false {
+			if ann["readOnlyHint"] != !writes[name] || ann["openWorldHint"] != writes[name] {
 				t.Errorf("%s %s: annotations = %v", era, name, ann)
 			}
 		}

@@ -232,7 +232,7 @@ func TestMCP_endToEnd(t *testing.T) {
 	}
 	_, r = mcpPost(t, h, true, "tools/list", nil)
 	tools, _ := r.Result["tools"].([]any)
-	if len(tools) != 4 {
+	if len(tools) != 5 {
 		t.Fatalf("tools = %v", r.Result)
 	}
 	if desc, _ := tools[0].(map[string]any)["description"].(string); !strings.Contains(desc, "Bike Physics") {
