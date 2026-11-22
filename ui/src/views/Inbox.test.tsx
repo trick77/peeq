@@ -489,7 +489,10 @@ describe("Inbox", () => {
       const onCountChange = vi.fn();
       const { unmount } = render(<Inbox onCountChange={onCountChange} />);
       await screen.findByText("First pending video");
-      expect(onCountChange).toHaveBeenLastCalledWith(2);
+      // The count is reported from a passive effect, which React flushes in a
+      // later scheduler task than the commit that paints the text: wait for
+      // the callback itself, not for the DOM.
+      await waitFor(() => expect(onCountChange).toHaveBeenLastCalledWith(2));
       unmount();
 
       // When: the next visit's fetch fails.
@@ -498,7 +501,9 @@ describe("Inbox", () => {
       await screen.findByText("pending is down");
 
       // Then: unknown, not two.
-      expect(onCountChange).toHaveBeenLastCalledWith(undefined);
+      await waitFor(() =>
+        expect(onCountChange).toHaveBeenLastCalledWith(undefined),
+      );
     });
 
     // Navigating away mid-fetch used to land the response on a component that
