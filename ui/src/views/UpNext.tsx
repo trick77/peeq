@@ -61,19 +61,34 @@ import { clockOf, kindOf, leadCap, plannedWhen, subjectNode } from "./agenda";
 // "Waiting" (step 0, empty bar); a running one shows its live phase, in
 // SUMMARY_PHASE_NAMES order, from the "summary" SSE event, advancing without a
 // reload.
+//
+// `when` replaces the right column's step count for a run that ended without a
+// summary to show, and `failed` takes the gave-up row's tint.
 function phaseState(
   phase: string | undefined,
   state: string,
-): { label: string; step: number } {
-  if (state !== "running" && !phase) return { label: "Waiting", step: 0 };
-  // The final "summary done" event carries an empty phase while the listed job
-  // is still running; show the bar full rather than snapping back to step 1 for
-  // the frame before the finished job is pruned from the list. An *absent*
-  // phase (undefined, before the first event) is a fresh job and stays step 1.
+): { label: string; step: number; when?: string; failed?: boolean } {
+  // Whatever the phase says: a queued job is waiting for its (next) attempt.
+  // A requeued job whose re-list failed can still carry "error" from its last
+  // run, and must not read failed in the Queued lane.
+  if (state !== "running") return { label: "Waiting", step: 0 };
+  // The run's final frame lands while the listed job is still running, and its
+  // phase is the run's status (useLiveQueue). "done" shows the bar full rather
+  // than snapping back to step 1 for the frame before the finished job is
+  // pruned from the list. An *absent* phase (undefined, before the first
+  // event) is a fresh job and stays step 1.
   // "Done", not the last stage's name: that names work in progress, and inbox
   // reads with keep_reads off finish without any embedding.
   if (phase === "" || phase === "done") {
     return { label: "Done", step: SUMMARY_PHASE_COUNT };
+  }
+  // Neither is finished work, so the bar stays empty. "failed", not "gave up":
+  // most errors requeue for another attempt.
+  if (phase === "error") {
+    return { label: "Failed", step: 0, when: "failed", failed: true };
+  }
+  if (phase === "no_transcript") {
+    return { label: "No transcript", step: 0, when: "no transcript" };
   }
   return summaryPhaseInfo(phase);
 }
@@ -1046,15 +1061,20 @@ function SummaryRow({
   // takes the same branch a queued job does and reads "waiting" — under a
   // heading saying it gave up, on a row nothing will move again.
   const gaveUp = job.state === "failed";
+  // A run that just ended without a summary (failed, no transcript): nothing
+  // runs on the row any more, so it reads like the gave-up row, not "now".
+  const ended = gaveUp || ps.when !== undefined;
   // Reached through the same helper as the download row, though it should never
   // fire here: a summary exists because a download finished, and the metadata
   // preflight runs long before that. If it ever does, both lanes say the same
   // thing rather than one of them falling back to a bare id.
   const label = videoLabel(job.title);
   return (
-    <div className={`ag-row${live ? " live" : ""}${gaveUp ? " fail" : ""}`}>
+    <div
+      className={`ag-row${live ? " live" : ""}${gaveUp || ps.failed ? " fail" : ""}`}
+    >
       {/* Not "then": there is no later for this row. */}
-      <span className="ag-clock">{gaveUp ? "" : live ? "now" : "then"}</span>
+      <span className="ag-clock">{ended ? "" : live ? "now" : "then"}</span>
       <span className="ag-node">
         <Icon name="alignLeft" size="12px" />
       </span>
@@ -1075,7 +1095,9 @@ function SummaryRow({
           )}
         </div>
         <div className="ag-detail">
-          <span className="ag-kind">{live ? "Summarising" : "Summary"}</span>
+          <span className="ag-kind">
+            {live && !ended ? "Summarising" : "Summary"}
+          </span>
           {label.placeholder ? (
             <VideoIdLink id={job.video_id} />
           ) : (
@@ -1124,6 +1146,8 @@ function SummaryRow({
       <span className="ag-when">
         {gaveUp ? (
           "gave up"
+        ) : ps.when ? (
+          ps.when
         ) : started ? (
           <>
             step <span className="num">{ps.step}</span> of{" "}
