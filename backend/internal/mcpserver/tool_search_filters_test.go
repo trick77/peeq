@@ -1,0 +1,243 @@
+package mcpserver
+
+import (
+	"slices"
+	"strings"
+	"testing"
+)
+
+func TestSearchSchemaListsTheScopeArguments(t *testing.T) {
+	props, _ := searchSchema()["properties"].(map[string]any)
+	for k, typ := range map[string]string{"video_id": "string", "watched": "boolean", "favorite": "boolean", "channels": "array"} {
+		p, ok := props[k].(map[string]any)
+		if !ok {
+			t.Errorf("schema lacks %s", k)
+			continue
+		}
+		if p["type"] != typ {
+			t.Errorf("%s type = %v, want %s", k, p["type"], typ)
+		}
+		if d, _ := p["description"].(string); d == "" {
+			t.Errorf("%s has no description", k)
+		}
+	}
+	ch, _ := props["channels"].(map[string]any)
+	if ch["minItems"] != 1 || ch["maxItems"] != maxSearchChannels || maxSearchChannels != 4 {
+		t.Errorf("channels bounds = %v..%v", ch["minItems"], ch["maxItems"])
+	}
+	if items, _ := ch["items"].(map[string]any); items["type"] != "string" {
+		t.Errorf("channels items = %v", ch["items"])
+	}
+	// The old string argument stays: clients cache tools/list.
+	if c, _ := props["channel"].(map[string]any); c["type"] != "string" {
+		t.Errorf("channel = %v", props["channel"])
+	}
+	if !strings.Contains(searchDescription, "video_id") {
+		t.Errorf("search description does not mention single-video search: %q", searchDescription)
+	}
+}
+
+func TestSearch_scopeArgumentErrorsAreToolErrors(t *testing.T) {
+	cases := map[string]map[string]any{
+		"playlist video_id":    {"query": "x", "video_id": "https://www.youtube.com/playlist?list=PL1"},
+		"channel link":         {"query": "x", "video_id": "https://www.youtube.com/@veritasium"},
+		"no channels":          {"query": "x", "channels": []string{}},
+		"five channels":        {"query": "x", "channels": []string{"a", "b", "c", "d", "e"}},
+		"blank channels entry": {"query": "x", "channels": []string{"veritasium", " "}},
+		"channels as string":   {"query": "x", "channels": "veritasium"},
+		"watched as string":    {"query": "x", "watched": "yes"},
+		"favorite as number":   {"query": "x", "favorite": 1},
+	}
+	for name, args := range cases {
+		lib := searchFixture()
+		r := callTool(t, lib, "search", args)
+		if r.body.Error != nil || !isError(r) {
+			t.Errorf("%s: want a tool error result, got %s", name, r.raw)
+		}
+		if lib.lastQuery != nil || len(lib.readIDs) > 0 {
+			t.Errorf("%s: the library was read despite invalid arguments", name)
+		}
+	}
+}
+
+// A video_id that reduces to no id names the argument, and neither reaches the
+// library nor a log: it may be a URL with a query.
+func TestSearch_badVideoIDNamesTheArgument(t *testing.T) {
+	logs := captureLog(t)
+	r := callTool(t, searchFixture(), "search", map[string]any{"query": "x", "video_id": "https://www.youtube.com/playlist?list=PLsecret"})
+	text := toolText(t, r)
+	if !isError(r) || !strings.HasPrefix(text, `video_id "https://www.youtube.com/playlist?list=PLsecret" is not a video id or video link.`) {
+		t.Errorf("text = %q", text)
+	}
+	if strings.Contains(logs.String(), "PLsecret") || !strings.Contains(logs.String(), "video_id=invalid") {
+		t.Errorf("log:\n%s", logs.String())
+	}
+}
+
+func TestSearch_videoIDTakesTheGetVideoForms(t *testing.T) {
+	for _, arg := range []string{"dQw4w9WgXcQ", " https://youtu.be/dQw4w9WgXcQ?t=12 ", "https://peeq.example.com/video/dQw4w9WgXcQ?t=754",
+		"<https://www.youtube.com/watch?v=dQw4w9WgXcQ>"} {
+		lib := searchFixture()
+		r := callTool(t, lib, "search", map[string]any{"query": "x", "video_id": arg, "k": 50})
+		if isError(r) {
+			t.Fatalf("%q: %s", arg, toolText(t, r))
+		}
+		if lib.lastQuery.VideoID != "dQw4w9WgXcQ" {
+			t.Errorf("%q: VideoID = %q", arg, lib.lastQuery.VideoID)
+		}
+	}
+	lib := searchFixture()
+	callTool(t, lib, "search", map[string]any{"query": "x", "video_id": "  "})
+	if lib.lastQuery == nil || lib.lastQuery.VideoID != "" {
+		t.Errorf("a blank video_id is no filter: %+v", lib.lastQuery)
+	}
+}
+
+// Unknown and not searchable are two different answers, both naming the id.
+func TestSearch_videoMissTexts(t *testing.T) {
+	logs := captureLog(t)
+	lib := searchFixture()
+	lib.searchErr = ErrVideoNotFound
+	r := callTool(t, lib, "search", map[string]any{"query": "x", "video_id": "nope123"})
+	if want := `No video with id "nope123" in peeq. Use the id from a search result.`; !isError(r) || toolText(t, r) != want {
+		t.Errorf("unknown = %v %q", isError(r), toolText(t, r))
+	}
+	lib.searchErr = ErrVideoNotSearchable
+	r = callTool(t, lib, "search", map[string]any{"query": "x", "video_id": "inbox12"})
+	if want := `Video "inbox12" is in peeq but not searchable: nothing of it is indexed yet. ` +
+		`Call get_video for its details or get_transcript for its transcript.`; !isError(r) || toolText(t, r) != want {
+		t.Errorf("not searchable = %v %q", isError(r), toolText(t, r))
+	}
+	for _, want := range []string{`msg="mcp: search video miss" video_id=nope123 reason=unknown_video`,
+		`msg="mcp: search video miss" video_id=inbox12 reason=not_indexed`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log lacks %q:\n%s", want, logs.String())
+		}
+	}
+	if strings.Contains(logs.String(), "search failed") {
+		t.Errorf("a miss logged as a failure:\n%s", logs.String())
+	}
+}
+
+// watched and favorite are three-valued: absent is no constraint, not false.
+func TestSearch_watchedAndFavoriteAreThreeValued(t *testing.T) {
+	lib := searchFixture()
+	callTool(t, lib, "search", map[string]any{"query": "x"})
+	if q := lib.lastQuery; q.Watched != nil || q.Favorite != nil {
+		t.Errorf("absent: %+v", q)
+	}
+	for _, v := range []bool{true, false} {
+		lib = searchFixture()
+		callTool(t, lib, "search", map[string]any{"query": "x", "watched": v, "favorite": !v})
+		q := lib.lastQuery
+		if q.Watched == nil || *q.Watched != v || q.Favorite == nil || *q.Favorite != !v {
+			t.Errorf("watched=%v favorite=%v: %+v", v, !v, q)
+		}
+	}
+}
+
+func multiChannelFixture() *fakeLibrary {
+	lib := searchFixture()
+	lib.scopes["vsauce"] = ChannelScope{IDs: []string{"UCS"}, Matched: []string{"Vsauce"}}
+	lib.scopes["legacy"] = ChannelScope{Names: []string{"Old Name"}, Matched: []string{"Old Name"}}
+	lib.scopes["fresh"] = ChannelScope{IDs: []string{"UCF"}, Matched: []string{"Fresh"}, NoVideos: true}
+	lib.scopes["fresher"] = ChannelScope{IDs: []string{"UCG"}, Matched: []string{"Fresher"}, NoVideos: true}
+	return lib
+}
+
+func TestSearch_channelsAndChannelAreUnioned(t *testing.T) {
+	lib := multiChannelFixture()
+	r := callTool(t, lib, "search", map[string]any{"query": "x", "channel": "Veritasium",
+		"channels": []string{"vsauce", "legacy", "veritasium"}})
+	if isError(r) {
+		t.Fatal(toolText(t, r))
+	}
+	q := lib.lastQuery
+	if !slices.Equal(q.Channel.IDs, []string{"UCV", "UCS"}) || !slices.Equal(q.Channel.Names, []string{"Old Name"}) ||
+		!slices.Equal(q.Channel.Matched, []string{"Veritasium", "Vsauce", "Old Name"}) {
+		t.Errorf("scope = %+v", q.Channel)
+	}
+	lib = multiChannelFixture()
+	callTool(t, lib, "search", map[string]any{"query": "x", "channels": []string{"vsauce"}})
+	if !slices.Equal(lib.lastQuery.Channel.IDs, []string{"UCS"}) {
+		t.Errorf("channels alone: %+v", lib.lastQuery.Channel)
+	}
+}
+
+// One entry that resolves to nothing fails the call with that entry's miss:
+// never a silent search over fewer channels.
+func TestSearch_channelsEntryMissNamesIt(t *testing.T) {
+	lib := multiChannelFixture()
+	r := callTool(t, lib, "search", map[string]any{"query": "x", "channels": []string{"vsauce", "nobody", "veritasium"}})
+	if want := `No channel in peeq matches "nobody". Closest: Veritasium, Vsauce. Call list_youtube_channels for every channel, or search without a channel.`; !isError(r) || toolText(t, r) != want {
+		t.Errorf("miss = %v %q", isError(r), toolText(t, r))
+	}
+	if lib.lastQuery != nil {
+		t.Error("searched fewer channels than asked")
+	}
+}
+
+// A channel without videos among others narrows nothing away; only when every
+// channel is empty is the answer the no-videos sentence.
+func TestSearch_channelsWithoutVideos(t *testing.T) {
+	lib := multiChannelFixture()
+	r := callTool(t, lib, "search", map[string]any{"query": "x", "channels": []string{"fresh", "vsauce"}})
+	if isError(r) || lib.lastQuery == nil || !slices.Contains(lib.lastQuery.Channel.IDs, "UCS") {
+		t.Fatalf("one empty channel among others: %v %q", isError(r), toolText(t, r))
+	}
+	lib = multiChannelFixture()
+	r = callTool(t, lib, "search", map[string]any{"query": "x", "channel": "fresh", "channels": []string{"fresher"}})
+	if isError(r) || toolText(t, r) != "No videos yet in Fresh, Fresher: peeq follows the channel but holds none of its videos so far." {
+		t.Errorf("all empty = %v %q", isError(r), toolText(t, r))
+	}
+	if lib.lastQuery != nil {
+		t.Error("searched channels known to hold no videos")
+	}
+	if src, ok := r.body.Result["structuredContent"].(map[string]any)["sources"].([]any); !ok || len(src) != 0 {
+		t.Errorf("structuredContent = %v, want sources: []", r.body.Result["structuredContent"])
+	}
+}
+
+func TestSearch_headerShowsWatchedAndFavorite(t *testing.T) {
+	lib := searchFixture()
+	lib.result.Videos[0].Video.Watched = true
+	lib.result.Videos[0].Video.Favorite = true
+	lib.result.Videos[1].Video.Favorite = true
+	text := toolText(t, callTool(t, lib, "search", map[string]any{"query": "x"}))
+	for _, want := range []string{
+		"- Why bikes stay upright — Veritasium, 2026-05-02, category science · youtube: Science & Technology, Education, watched, favorite\n",
+		"- Summary only — Vsauce, category education, favorite\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("text lacks %q\n---\n%s", want, text)
+		}
+	}
+	lib = searchFixture()
+	if text := toolText(t, callTool(t, lib, "search", map[string]any{"query": "x"})); strings.Contains(text, "watched") || strings.Contains(text, "favorite") {
+		t.Errorf("unset state shown:\n%s", text)
+	}
+}
+
+func TestGetVideo_showsWatchedAndFavorite(t *testing.T) {
+	lib := &fakeLibrary{videos: map[string]*Video{"abc123": {ID: "abc123", Title: "T", Channel: "Veritasium",
+		Watched: true, Favorite: true}}}
+	if text := toolText(t, callTool(t, lib, "get_video", map[string]any{"id": "abc123"})); !strings.Contains(text, "channel: Veritasium · watched · favorite\n") {
+		t.Errorf("text = %q", text)
+	}
+}
+
+func TestSearch_noResultsHintCoversTheScopeArguments(t *testing.T) {
+	for name, args := range map[string]map[string]any{
+		"video_id": {"video_id": "abc123"},
+		"watched":  {"watched": false},
+		"favorite": {"favorite": true},
+		"channels": {"channels": []string{"vsauce"}},
+	} {
+		args["query"] = "x"
+		lib := multiChannelFixture()
+		lib.result = SearchResult{}
+		if text := toolText(t, callTool(t, lib, "search", args)); !strings.Contains(text, "Try again without some of the filters.") {
+			t.Errorf("%s: %q", name, text)
+		}
+	}
+}

@@ -116,7 +116,8 @@ func TestToolCallDoesNotReadTheChannelHint(t *testing.T) {
 
 func TestSearchSchemaListsEveryArgument(t *testing.T) {
 	props, _ := searchSchema()["properties"].(map[string]any)
-	for _, k := range []string{"query", "channel", "category", "youtube_category", "subcategory", "channel_subcategory", "after", "before", "mode", "k"} {
+	for _, k := range []string{"query", "channel", "category", "youtube_category", "subcategory", "channel_subcategory", "after", "before", "mode", "k",
+		"video_id", "watched", "favorite", "channels"} {
 		if _, ok := props[k]; !ok {
 			t.Errorf("schema lacks %s", k)
 		}

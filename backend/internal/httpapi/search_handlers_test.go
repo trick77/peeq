@@ -1007,6 +1007,25 @@ func TestSearchFindModeHonoursOperators(t *testing.T) {
 	}
 }
 
+// The per-video cap is the caller's: the Search page keeps four, a search
+// scoped to one video takes more of it, still one hit per moment.
+func TestGroupHitsPerVideoCap(t *testing.T) {
+	byID := map[string]*videos.Video{"v1": {ID: "v1"}, "v2": {ID: "v2"}}
+	var hits []rag.Hit
+	for i := range 15 {
+		hits = append(hits, rag.Hit{VideoID: "v1", Ordinal: i, Kind: rag.KindTranscript, StartSeconds: 60 * i})
+		// A second rendering of the same moment never takes a slot.
+		hits = append(hits, rag.Hit{VideoID: "v1", Ordinal: 100 + i, Kind: rag.KindChapter, StartSeconds: 60*i + 5})
+	}
+	hits = append(hits, rag.Hit{VideoID: "v2", Kind: rag.KindTranscript})
+	for _, tc := range []struct{ perVideo, want int }{{maxMatchesPerVideo, 4}, {singleVideoMatches, 12}, {20, 15}} {
+		got := groupHits(hits, byID, 0, 0, tc.perVideo)
+		if len(got) != 2 || len(got[0].Matches) != tc.want || len(got[1].Matches) != 1 {
+			t.Errorf("cap %d: %d videos, v1 has %d moments, want %d", tc.perVideo, len(got), len(got[0].Matches), tc.want)
+		}
+	}
+}
+
 // TestSearchSpreadsAcrossVideos pins what maxMatchesPerVideo is for: one chatty
 // video must not consume the whole response. The chunks below are engineered so
 // bm25 ranks every one of v1's above v2's (bm25 favours short documents), so if

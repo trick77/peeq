@@ -18,8 +18,8 @@ const toolsTTL = 15 * time.Minute
 // channel hint per request.
 const searchDescription = "Search the user's peeq library of YouTube videos: transcripts, summaries, chapters " +
 	"and peeq's in-depth analysis. Returns the best-matching videos, each with timestamped " +
-	"moments and links that open the video at that moment; cite them. " +
-	subcategoryNote
+	"moments and links that open the video at that moment; cite them. Pass video_id to search inside " +
+	"one video. " + subcategoryNote
 
 // subcategoryNote tells a client the subcategory filters exist and how they
 // differ. It rides in the search description and the server instructions.
@@ -136,6 +136,16 @@ func searchSchema() map[string]any {
 			"description": "What to look for: a question, topic or keywords."},
 		"channel": map[string]any{"type": "string",
 			"description": "Limit to one channel: its name, @handle or id. Matched case-insensitively and tolerant of typos."},
+		"channels": map[string]any{"type": "array", "items": map[string]any{"type": "string"},
+			"minItems": 1, "maxItems": maxSearchChannels,
+			"description": "Limit to several channels at once, each matched like channel; combined with channel if both are given."},
+		"video_id": map[string]any{"type": "string",
+			"description": "Search inside this one video only, returning more of its moments: " +
+				"its id (the `id:` line of a search result), peeq link or YouTube URL."},
+		"watched": map[string]any{"type": "boolean",
+			"description": "true: only videos the user has watched; false: only ones not watched yet. Omit for both."},
+		"favorite": map[string]any{"type": "boolean",
+			"description": "true: only the user's favourites; false: only the others. Omit for both."},
 		"category": map[string]any{"type": "string", "enum": videos.CategoryIDs(),
 			"description": "Limit to one of peeq's own fixed video categories."},
 		"youtube_category": map[string]any{"type": "string",
@@ -153,6 +163,6 @@ func searchSchema() map[string]any {
 			"description": "hybrid (default): keyword and semantic search combined. keyword: literal full-text " +
 				"match of every word only (\"quoted phrases\", OR and prefix* are honoured)."},
 		"k": map[string]any{"type": "integer", "minimum": 1, "maximum": maxSearchVideos, "default": defaultSearchVideos,
-			"description": "Maximum number of videos to return."},
+			"description": "Maximum number of videos to return. Ignored with video_id."},
 	}, "query")
 }

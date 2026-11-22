@@ -62,6 +62,12 @@ func runGetVideo(ctx context.Context, h *handler, raw json.RawMessage) mcp.Resul
 	add("category", v.Category)
 	add("subcategories", strings.Join(v.Subcategories, ", "))
 	add("youtube categories", strings.Join(v.YouTubeCategories, ", "))
+	if v.Watched {
+		meta = append(meta, "watched")
+	}
+	if v.Favorite {
+		meta = append(meta, "favorite")
+	}
 	if len(meta) > 0 {
 		b.WriteString(strings.Join(meta, " · ") + "\n")
 	}
