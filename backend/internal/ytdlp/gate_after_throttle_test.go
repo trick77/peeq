@@ -195,7 +195,7 @@ func TestSubtitles_refusedCall_createsNoDirectory(t *testing.T) {
 		Sleep:          func(context.Context, time.Duration) error { return nil },
 		MediaDir:       mediaDir,
 	})
-	_, err := r.Subtitles(context.Background(), "dQw4w9WgXcQ", "https://youtu.be/dQw4w9WgXcQ", "en")
+	_, _, err := r.Subtitles(context.Background(), "dQw4w9WgXcQ", "https://youtu.be/dQw4w9WgXcQ", "en", false)
 	if !errors.Is(err, ErrPaused) {
 		t.Fatalf("want ErrPaused, got %v", err)
 	}

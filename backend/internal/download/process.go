@@ -198,17 +198,16 @@ func (w *Worker) process(ctx context.Context, job *jobs.Job) {
 			custom = video.RequestedFormat
 		}
 	}
-	subLang := video.AudioLanguage
-	if subLang == "" {
-		subLang = w.deps.DefaultSubLang
-	}
+	// The configured preference, never video.AudioLanguage: that held
+	// yt-dlp's declared language ("en-US"), which names no YouTube track.
+	// Which track a video actually has is ytdlp.PickCaptionTrack's to find.
 	req := ytdlp.DownloadReq{
 		URL:          video.URL,
 		VideoID:      video.ID,
 		Format:       format,
 		CustomFormat: custom,
 		LimitRate:    set.LimitRate,
-		SubLang:      subLang,
+		SubLang:      w.deps.DefaultSubLang,
 	}
 	// A stored transcript (the inbox caption read, or an earlier download) is
 	// what the summary, search and player read; asking YouTube for it again

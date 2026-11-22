@@ -60,16 +60,21 @@ func newHarness(t *testing.T) *harness {
 // fetcher is a scripted SubtitleFetcher: one entry per call.
 type fetcher struct {
 	results []string
-	errs    []error
-	calls   int
+	// langs is each call's track language; "" for a scripted call without one.
+	langs []string
+	errs  []error
+	calls int
+	// anyManual records what each call was allowed.
+	anyManual []bool
 	// onCall, when set, runs before each scripted answer with the call's ctx —
 	// for a test that has to change the world from inside the fetch.
 	onCall func(context.Context)
 }
 
-func (f *fetcher) Subtitles(ctx context.Context, _, _, _ string) (string, error) {
+func (f *fetcher) Subtitles(ctx context.Context, _, _, _ string, anyManual bool) (string, string, error) {
 	i := f.calls
 	f.calls++
+	f.anyManual = append(f.anyManual, anyManual)
 	if f.onCall != nil {
 		f.onCall(ctx)
 	}
@@ -77,11 +82,14 @@ func (f *fetcher) Subtitles(ctx context.Context, _, _, _ string) (string, error)
 	if i < len(f.errs) {
 		err = f.errs[i]
 	}
-	var rel string
+	var rel, lang string
 	if i < len(f.results) {
 		rel = f.results[i]
 	}
-	return rel, err
+	if i < len(f.langs) {
+		lang = f.langs[i]
+	}
+	return rel, lang, err
 }
 
 func (h *harness) worker(f *fetcher) *Worker {
@@ -150,6 +158,47 @@ func TestCaptionsArriveQueuesExactlyOneSummary(t *testing.T) {
 	}
 	if e.State != channelvideos.StatePending {
 		t.Fatalf("ledger state = %q, want it still pending", e.State)
+	}
+}
+
+// The language recorded is the track's, not the configured preference: a
+// German video read from its German captions is German. The player labels the
+// track with it.
+func TestCaptionsRecordTheTrackLanguage(t *testing.T) {
+	h := newHarness(t)
+	rel := filepath.Join(ytdlp.SummaryDirName, "v1", "v1.de-orig.vtt")
+	writeCaption(t, h, rel)
+	f := &fetcher{results: []string{rel}, langs: []string{"de"}}
+
+	h.worker(f).pass(context.Background())
+
+	v, err := h.videos.Get("v1")
+	if err != nil || v == nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.AudioLanguage != "de" {
+		t.Fatalf("audio_language = %q, want de", v.AudioLanguage)
+	}
+}
+
+// Only the last rung may settle for a lone uploaded track in another language:
+// before it, the speech's own automatic captions may still arrive.
+func TestOnlyTheLastRungTakesAnyUploadedTrack(t *testing.T) {
+	h := newHarness(t)
+	f := &fetcher{}
+	w := h.worker(f)
+	for i := 0; i < channelvideos.CaptionMaxAttempts; i++ {
+		w.pass(context.Background())
+		mustBeDue(t, h)
+	}
+	want := []bool{false, false, false, false, true}
+	if len(f.anyManual) != len(want) {
+		t.Fatalf("anyManual = %v, want %v", f.anyManual, want)
+	}
+	for i := range want {
+		if f.anyManual[i] != want[i] {
+			t.Fatalf("anyManual = %v, want %v", f.anyManual, want)
+		}
 	}
 }
 

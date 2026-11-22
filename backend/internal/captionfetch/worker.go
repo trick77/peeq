@@ -61,10 +61,12 @@ var Backoff = []time.Duration{
 }
 
 // SubtitleFetcher fetches only the captions for one video, returning their
-// MediaDir-relative path, or "" when YouTube has none yet. *ytdlp.Runner
-// implements it.
+// MediaDir-relative path and the video's spoken language as the caption list
+// tells it (ytdlp.CaptionTrack.Speech), or "" when YouTube has none yet.
+// anyManual lets a lone uploaded track in another language than prefer count
+// (ytdlp.PickCaptionTrack). *ytdlp.Runner implements it.
 type SubtitleFetcher interface {
-	Subtitles(ctx context.Context, videoID, rawURL, subLang string) (string, error)
+	Subtitles(ctx context.Context, videoID, rawURL, prefer string, anyManual bool) (relPath, lang string, err error)
 }
 
 // Ledger is the slice of channelvideos.Store the worker needs.
@@ -102,11 +104,11 @@ type Deps struct {
 	// row; required, since a caption that cannot be read cannot be summarized.
 	MediaDir  string
 	Summaries SummaryQueue
-	// DefaultSubLang is the caption language to request, mirroring the download
-	// worker's. It must agree with what a download would ask for: if the two
-	// diverge, the transcript summarized from the Inbox and the one stored
-	// after downloading are different files, and the summary carried over
-	// describes text the library does not have.
+	// DefaultSubLang is the caption language preferred when the video has it,
+	// mirroring the download worker's. It must agree with what a download
+	// would prefer: if the two diverge, the transcript summarized from the
+	// Inbox and the one stored after downloading are different files, and the
+	// summary carried over describes text the library does not have.
 	DefaultSubLang string
 	// OnChange, when set, is told once per attempt that reached YouTube: such
 	// an attempt can change what the video's Inbox card shows. Optional.
@@ -190,7 +192,9 @@ func (w *Worker) pass(ctx context.Context) {
 		return
 	}
 
-	relPath, err := w.d.Fetcher.Subtitles(ctx, c.VideoID, c.URL, w.d.DefaultSubLang)
+	// A lone uploaded track in another language waits for the last rung: until
+	// then the speech's own automatic captions may still arrive.
+	relPath, lang, err := w.d.Fetcher.Subtitles(ctx, c.VideoID, c.URL, w.d.DefaultSubLang, last)
 	if err != nil {
 		// Cookie, pause and kill-switch refusals are the system working as
 		// designed, not this video failing, and neither is a process shutdown
@@ -265,11 +269,14 @@ func (w *Worker) pass(ctx context.Context) {
 		w.recordOutcome(c.VideoID, logx.RedactErr(err).Error())
 		return
 	}
-	// The language the captions are in still has to be recorded: the next
-	// download asks yt-dlp for it, and the player uses it as the track's
-	// srcLang. It used to ride along on the subtitle-path write, which 0028
-	// took away.
-	if err := w.d.Videos.SetAudioLanguage(c.VideoID, w.d.DefaultSubLang); err != nil {
+	// The video's language still has to be recorded: the Player shows it and
+	// labels the caption track with it. It used to ride along on the
+	// subtitle-path write, which 0028 took away. The fetcher's, not the
+	// preference: a German talk read from its German captions is German.
+	if lang == "" {
+		lang = w.d.DefaultSubLang
+	}
+	if err := w.d.Videos.SetAudioLanguage(c.VideoID, lang); err != nil {
 		w.d.Logger.Error("captionfetch: save audio language failed", "video_id", c.VideoID, "err", err)
 		w.recordOutcome(c.VideoID, logx.RedactErr(err).Error())
 		return

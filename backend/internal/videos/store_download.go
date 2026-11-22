@@ -17,8 +17,11 @@ type DownloadedResult struct {
 	FilesizeBytes        int64
 	FormatUsed           string
 	SponsorblockSegments string
-	AudioLanguage        string
-	ChaptersJSON         string
+	// AudioLanguage is the spoken language (ytdlp.Result.AudioLanguage).
+	// Empty leaves the stored one: a download that skipped captions keeps the
+	// stored transcript and the language recorded with it.
+	AudioLanguage string
+	ChaptersJSON  string
 	// PublishedAt is the release date (YYYY-MM-DD) yt-dlp reported in the
 	// download's own info.json, or "" when it reported none.
 	//
@@ -94,7 +97,7 @@ func (s *Store) SetDownloadedIn(ctx context.Context, x Execer, id string, res Do
 UPDATE videos
 SET media_path = ?,
 	filesize_bytes = ?, format_used = ?, sponsorblock_segments = ?,
-	audio_language = ?,
+	audio_language = COALESCE(NULLIF(?, ''), audio_language),
 	chapters = CASE WHEN ? != '' THEN ? ELSE chapters END,
 	published_at = COALESCE(NULLIF(?, ''), published_at),
 	description = COALESCE(NULLIF(?, ''), description),

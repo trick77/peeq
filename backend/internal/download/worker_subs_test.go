@@ -133,3 +133,65 @@ func TestSucceedPersistsSubtitleAndEnqueuesSummary(t *testing.T) {
 		t.Fatalf("SummaryJobs.Enqueue calls = %v, want exactly [\"v1\"]", ids)
 	}
 }
+
+// The preference is the configured language, never the video's stored
+// audio_language: that held yt-dlp's declared "en-US" after a first download,
+// which names no YouTube track, so a re-download asked for nothing at all.
+func TestDownloadPrefersTheConfiguredLanguage(t *testing.T) {
+	var gotSubLang string
+	runner := &fakeRunner{
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			gotSubLang = req.SubLang
+			return &ytdlp.Result{MediaPath: "/media/v1/v1.mp4"}, nil
+		},
+	}
+	h := newHarness(t, runner, func(d *Deps) { d.DefaultSubLang = "en" })
+	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "https://youtu.be/v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.videos.SetAudioLanguage("v1", "en-US"); err != nil {
+		t.Fatal(err)
+	}
+	id := h.enqueue(t, "v1", 0)
+	runWorker(t, h.worker)
+	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+
+	if gotSubLang != "en" {
+		t.Fatalf("req.SubLang = %q, want en", gotSubLang)
+	}
+}
+
+// A download that skipped captions (transcript already stored) reports no
+// language, and the stored one stays: it is the transcript's.
+func TestDownloadWithoutCaptionsKeepsTheStoredLanguage(t *testing.T) {
+	runner := &fakeRunner{
+		fn: func(_ context.Context, _ int, req ytdlp.DownloadReq, _ func(ytdlp.Progress)) (*ytdlp.Result, error) {
+			if !req.SkipSubtitles {
+				t.Errorf("SkipSubtitles = false with a transcript stored")
+			}
+			return &ytdlp.Result{MediaPath: "/media/v1/v1.mp4"}, nil
+		},
+	}
+	h := newHarness(t, runner, nil)
+	if err := h.videos.Upsert(videos.Video{ID: "v1", URL: "https://youtu.be/v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.videos.SetTranscript("v1", videos.TranscriptSourceCaption, "WEBVTT\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.videos.SetAudioLanguage("v1", "de"); err != nil {
+		t.Fatal(err)
+	}
+	id := h.enqueue(t, "v1", 0)
+	runWorker(t, h.worker)
+	waitFor(t, "job done", func() bool { return h.jobState(t, id).State == "done" })
+	waitForVideoStatus(t, h, "v1", "downloaded")
+
+	v, err := h.videos.Get("v1")
+	if err != nil {
+		t.Fatalf("get video: %v", err)
+	}
+	if v.AudioLanguage != "de" {
+		t.Fatalf("AudioLanguage = %q, want the stored de", v.AudioLanguage)
+	}
+}

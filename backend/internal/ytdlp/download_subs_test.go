@@ -67,31 +67,44 @@ func TestDownload_requestsSubtitlesAndCapturesLanguage(t *testing.T) {
 	}
 
 	calls := captureCalls(t, captureOut)
-	if len(calls) != 2 {
-		t.Fatalf("calls = %d, want media then captions: %q", len(calls), calls)
+	if len(calls) != 3 {
+		t.Fatalf("calls = %d, want media, caption list, caption fetch: %q", len(calls), calls)
 	}
-	media, subs := calls[0]+" ", calls[1]+" "
+	media, list, fetch := calls[0]+" ", calls[1]+" ", calls[2]+" "
 	for _, unwanted := range []string{"--write-subs", "--write-auto-subs", "--sub-langs"} {
 		if strings.Contains(media, unwanted) {
 			t.Fatalf("media call carries %q: %q", unwanted, media)
 		}
 	}
-	// The same flags the inbox caption fetch sends: both build them with
-	// subtitleArgs, so the two .vtt files cannot differ.
-	for _, want := range []string{"--skip-download", "--write-subs", "--write-auto-subs", "--sub-langs en ", "--convert-subs vtt", "--sleep-subtitles "} {
-		if !strings.Contains(subs, want) {
-			t.Fatalf("caption call missing %q: %q", want, subs)
+	// The same calls the inbox caption fetch makes: both go through
+	// fetchCaptions, so the two .vtt files cannot differ.
+	for _, want := range []string{"-J ", "--skip-download", "--write-subs", "--write-auto-subs", "--no-playlist"} {
+		if !strings.Contains(list, want) {
+			t.Fatalf("caption list call missing %q: %q", want, list)
 		}
 	}
-	for i, line := range calls {
+	for _, want := range []string{"--load-info-json ", "--skip-download", "--write-auto-subs", "--sub-langs ^en-orig$ ", "--convert-subs vtt", "--sleep-subtitles "} {
+		if !strings.Contains(fetch, want) {
+			t.Fatalf("caption fetch missing %q: %q", want, fetch)
+		}
+	}
+	// The fetch reads the list it was handed: no second extraction, so no URL.
+	if strings.Contains(fetch, "youtube.com") || strings.Contains(fetch, "--write-subs") {
+		t.Fatalf("caption fetch re-extracts or asks for both lists: %q", fetch)
+	}
+	for i, line := range calls[:2] {
 		fields := strings.Fields(line)
 		if fields[len(fields)-1] != "https://www.youtube.com/watch?v="+id {
 			t.Fatalf("call %d: watchURL not last arg: %q", i, line)
 		}
 	}
 
-	if res.SubtitleRelPath == "" || !strings.HasSuffix(res.SubtitleRelPath, ".vtt") {
-		t.Fatalf("SubtitleRelPath = %q, want a .vtt relative path", res.SubtitleRelPath)
+	if !strings.HasSuffix(res.SubtitleRelPath, id+".en-orig.vtt") {
+		t.Fatalf("SubtitleRelPath = %q, want the en-orig track", res.SubtitleRelPath)
+	}
+	// The track list it was picked from is gone, not moved into the library.
+	if leftovers, _ := filepath.Glob(filepath.Join(mediaDir, "*", id, "*.json")); len(leftovers) != 0 {
+		t.Fatalf("json left in the final dir: %v", leftovers)
 	}
 	if res.AudioLanguage != "en" {
 		t.Fatalf("AudioLanguage = %q, want %q", res.AudioLanguage, "en")
@@ -101,6 +114,133 @@ func TestDownload_requestsSubtitlesAndCapturesLanguage(t *testing.T) {
 	}
 	if strings.Contains(res.ChaptersJSON, "SponsorBlock") {
 		t.Fatalf("ChaptersJSON = %q, must not contain SponsorBlock chapters", res.ChaptersJSON)
+	}
+}
+
+// The three German videos that settled without a transcript: YouTube lists
+// "en" for them only as a machine translation (tlang=en). The fetch asks for
+// the German original, and audio_language says German, not the uploader's
+// declared en-US.
+func TestDownload_takesTheOriginalLanguageOverATranslation(t *testing.T) {
+	mediaDir := t.TempDir()
+	const id = "germanVid01"
+	t.Setenv("FAKE_YTDLP_ID", id)
+	t.Setenv("FAKE_YTDLP_SUBLANG", "en-US")
+	t.Setenv("FAKE_YTDLP_CAPTIONS", `{"language":"en-US","subtitles":{},"automatic_captions":{`+
+		`"de-orig":[{"url":"https://www.youtube.com/api/timedtext?lang=de&fmt=vtt"}],`+
+		`"de":[{"url":"https://www.youtube.com/api/timedtext?lang=de&fmt=vtt"}],`+
+		`"en":[{"url":"https://www.youtube.com/api/timedtext?lang=de&tlang=en&fmt=vtt"}]}}`)
+	r, captureOut, _ := captureRunner(t, mediaDir)
+
+	res, err := r.Download(context.Background(), DownloadReq{
+		URL: "https://youtu.be/" + id, VideoID: id, Format: "best-mp4", SubLang: "en",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	calls := captureCalls(t, captureOut)
+	if fetch := calls[len(calls)-1] + " "; !strings.Contains(fetch, "--sub-langs ^de-orig$ ") {
+		t.Fatalf("caption fetch = %q, want the de-orig track", fetch)
+	}
+	if !strings.HasSuffix(res.SubtitleRelPath, id+".de-orig.vtt") {
+		t.Fatalf("SubtitleRelPath = %q, want the de-orig track", res.SubtitleRelPath)
+	}
+	if res.AudioLanguage != "de" {
+		t.Fatalf("AudioLanguage = %q, want de (the track's, not the declared en-US)", res.AudioLanguage)
+	}
+}
+
+// An uploaded track in another language is taken when nothing better exists:
+// a download gets one attempt, there is no later rung to wait for. Only the
+// uploaded list is asked for, so YouTube's ASR of the same language cannot
+// stand in for it.
+func TestDownload_takesALoneUploadedTrack(t *testing.T) {
+	mediaDir := t.TempDir()
+	const id = "frenchVid01"
+	t.Setenv("FAKE_YTDLP_ID", id)
+	t.Setenv("FAKE_YTDLP_CAPTIONS", `{"subtitles":{"fr":[{"url":"https://www.youtube.com/api/timedtext?lang=fr&fmt=vtt"}]},"automatic_captions":{}}`)
+	r, captureOut, _ := captureRunner(t, mediaDir)
+
+	res, err := r.Download(context.Background(), DownloadReq{
+		URL: "https://youtu.be/" + id, VideoID: id, Format: "best-mp4", SubLang: "en",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	calls := captureCalls(t, captureOut)
+	fetch := calls[len(calls)-1] + " "
+	if !strings.Contains(fetch, "--write-subs ") || strings.Contains(fetch, "--write-auto-subs") || !strings.Contains(fetch, "--sub-langs ^fr$ ") {
+		t.Fatalf("caption fetch = %q, want only the uploaded fr track", fetch)
+	}
+	if res.AudioLanguage != "fr" {
+		t.Fatalf("AudioLanguage = %q, want fr", res.AudioLanguage)
+	}
+}
+
+// No track at all: the fetch is never made (it would only sleep two minutes
+// to find nothing), and the media is kept with yt-dlp's declared language.
+func TestDownload_noCaptionTrackSkipsTheFetch(t *testing.T) {
+	mediaDir := t.TempDir()
+	const id = "noTracks001"
+	t.Setenv("FAKE_YTDLP_ID", id)
+	t.Setenv("FAKE_YTDLP_CAPTIONS", `{"subtitles":{},"automatic_captions":{}}`)
+	r, captureOut, _ := captureRunner(t, mediaDir)
+
+	res, err := r.Download(context.Background(), DownloadReq{
+		URL: "https://youtu.be/" + id, VideoID: id, Format: "best-mp4", SubLang: "en",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if calls := captureCalls(t, captureOut); len(calls) != 2 {
+		t.Fatalf("calls = %q, want media and caption list only", calls)
+	}
+	if res.SubtitleRelPath != "" {
+		t.Fatalf("SubtitleRelPath = %q, want empty", res.SubtitleRelPath)
+	}
+	if res.AudioLanguage != "en" {
+		t.Fatalf("AudioLanguage = %q, want yt-dlp's declared en", res.AudioLanguage)
+	}
+}
+
+// A refused caption list costs the transcript, never the download.
+func TestDownload_captionListFailureKeepsDownload(t *testing.T) {
+	mediaDir := t.TempDir()
+	const id = "listFail001"
+	t.Setenv("FAKE_YTDLP_ID", id)
+	t.Setenv("FAKE_YTDLP_CAPLIST_STDERR", "ERROR: [youtube] "+id+": HTTP Error 429: Too Many Requests")
+	r, captureOut, logs := captureRunner(t, mediaDir)
+
+	res, err := r.Download(context.Background(), DownloadReq{
+		URL: "https://youtu.be/" + id, VideoID: id, Format: "best-mp4", SubLang: "en",
+	}, nil)
+	if err != nil {
+		t.Fatalf("Download: %v, want the media kept", err)
+	}
+	if res.SubtitleRelPath != "" {
+		t.Fatalf("SubtitleRelPath = %q, want empty", res.SubtitleRelPath)
+	}
+	if calls := captureCalls(t, captureOut); len(calls) != 2 {
+		t.Fatalf("calls = %q, want no fetch after a failed list", calls)
+	}
+	if !strings.Contains(logs.String(), "download subtitles failed, keeping media") {
+		t.Fatalf("no warning logged:\n%s", logs.String())
+	}
+}
+
+// Bot detection on the caption list fails the download like on the fetch.
+func TestDownload_captionListBlockedFailsDownload(t *testing.T) {
+	mediaDir := t.TempDir()
+	const id = "listBlock01"
+	t.Setenv("FAKE_YTDLP_ID", id)
+	t.Setenv("FAKE_YTDLP_CAPLIST_STDERR", "ERROR: [youtube] "+id+": Sign in to confirm you're not a bot")
+	r, _, _ := captureRunner(t, mediaDir)
+
+	_, err := r.Download(context.Background(), DownloadReq{
+		URL: "https://youtu.be/" + id, VideoID: id, Format: "best-mp4", SubLang: "en",
+	}, nil)
+	if !errors.Is(err, ErrBlocked) {
+		t.Fatalf("err = %v, want ErrBlocked", err)
 	}
 }
 
@@ -307,5 +447,10 @@ func TestDownload_skipSubtitles(t *testing.T) {
 	}
 	if res.SubtitleRelPath != "" {
 		t.Fatalf("SubtitleRelPath = %q, want empty", res.SubtitleRelPath)
+	}
+	// The stored transcript's language stays: yt-dlp's declared one is the
+	// uploader's setting, not the language of that transcript.
+	if res.AudioLanguage != "" {
+		t.Fatalf("AudioLanguage = %q, want empty so the stored one is kept", res.AudioLanguage)
 	}
 }
