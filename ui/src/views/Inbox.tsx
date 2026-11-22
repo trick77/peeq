@@ -406,10 +406,11 @@ export function Inbox({
   // from the removal until the pointer genuinely moves again.
   const [hoverLocked, setHoverLocked] = useState(false);
 
-  // `alive` is false once this view has unmounted. Navigating away mid-fetch
-  // used to land the response on a component that is gone: React 18 no longer
-  // warns about it, so it was silent, but the writes are still pointless and
-  // onCountChange would push a count from a page the user has already left.
+  // `alive` is false once this view has unmounted. A response landing after
+  // that is dropped: its state writes would be no-ops anyway, but a stale
+  // answer's re-ask (scheduleRefresh) would arm a timer after the unmount
+  // cleanup already cleared the last one, and send a request from a page the
+  // user has already left.
   // A ref, not a local — `load` is called from the effect below and could be
   // called again later, and every call must see the same flag.
   const alive = useRef(true);
