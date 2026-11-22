@@ -26,6 +26,8 @@ type Library interface {
 	// Channels lists the subscribed channels plus any channel whose reads are
 	// kept, in display order.
 	Channels(ctx context.Context) ([]Channel, error)
+	// Totals sizes the whole library for list_youtube_channels' first line.
+	Totals(ctx context.Context) (LibraryTotals, error)
 	// ResolveChannel maps a name, @handle or id onto the library's channels.
 	// A miss is not an error: Scope.Resolved() is false and Suggestions holds
 	// the closest names.
@@ -76,7 +78,13 @@ type Channel struct {
 	Description string
 	Subscribed  bool
 	KeepReads   bool
-	Videos      int
+	// Videos counts every video of the channel, whatever its status.
+	Videos int
+	// Searchable is how many of them search can reach (they have search
+	// chunks). It means something only when SearchableKnown: a failed count
+	// leaves both zero.
+	Searchable      int
+	SearchableKnown bool
 	// TopCategories is the channel's peeq category histogram, largest first;
 	// TopYouTubeCategories the same over YouTube's own labels.
 	TopCategories        []CategoryCount
@@ -84,6 +92,19 @@ type Channel struct {
 	// Subcategories are the channel's labels ("sports/cycling"), primary
 	// first: what search's channel_subcategory filter matches.
 	Subcategories []string
+}
+
+// LibraryTotals is the library at a glance.
+type LibraryTotals struct {
+	// Videos is every video peeq holds, whatever its status.
+	Videos int
+	// Searchable counts the videos search can reach; SearchableSeconds is
+	// their runtime, SearchableChannels the channels they come from.
+	Searchable         int
+	SearchableSeconds  int64
+	SearchableChannels int
+	// Oldest and Newest span the release dates of all Videos ('YYYY-MM-DD').
+	Oldest, Newest string
 }
 
 // CategoryCount is one bucket of a channel's category histogram.

@@ -684,6 +684,16 @@ In `internal/videos`. ChannelRef is one channel as it appears in the library, fo
 | `Name` | `string` |  |
 | `Handle` | `string` |  |
 
+### videos.LibrarySpan
+
+In `internal/videos`. LibrarySpan is how many videos peeq holds, whatever their status, and the release dates they span ('YYYY-MM-DD', "" for an empty library).
+
+| Field | Type | Doc |
+| --- | --- | --- |
+| `Videos` | `int` |  |
+| `Oldest` | `string` |  |
+| `Newest` | `string` |  |
+
 ### videos.StorageGroup
 
 In `internal/videos`. StorageGroup is what peeq stores for a set of videos: their media files on disk, and in the database their transcripts, summaries (prose, chapters, key points, in-depth text), search index and posters.
