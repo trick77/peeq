@@ -3,6 +3,7 @@ package videos
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -16,15 +17,16 @@ const BrowseMaxLimit = 50
 var BrowseSorts = []string{"newest", "oldest", "added_newest", "title"}
 
 // browseSortClauses are Browse's ORDER BY fragments, each ending on the id so
-// paging never repeats or skips a row. newest, oldest and title are the
-// Library's (sortClauses). added_newest is not: inbox reads have no
-// downloaded_at, so it falls back to when peeq recorded the row (same
-// 'YYYY-MM-DD HH:MM:SS' shape, both datetime('now')).
+// paging never repeats or skips a row. newest and oldest are the Library's
+// (sortClauses). added_newest is not: inbox reads have no downloaded_at, so it
+// falls back to when peeq recorded the row (same 'YYYY-MM-DD HH:MM:SS' shape,
+// both datetime('now')). title uses store's Unicode collation, where NOCASE
+// would put "Über" after "Zebra"; the sort is a temp b-tree either way.
 var browseSortClauses = map[string]string{
 	"newest":       sortClauses["newest"],
 	"oldest":       sortClauses["oldest"],
 	"added_newest": "COALESCE(v.downloaded_at, v.created_at) DESC, v.id DESC",
-	"title":        sortClauses["title"],
+	"title":        "v.title COLLATE unicode ASC, v.id ASC",
 }
 
 // BrowseOptions narrows Browse. Every field is optional.
@@ -34,7 +36,7 @@ type BrowseOptions struct {
 	// rag.Filter.
 	ChannelIDs   []string
 	ChannelNames []string
-	// Title is a case-insensitive title substring (the Library search box's).
+	// Title is a title substring, case-insensitive beyond ASCII (casefold).
 	Title string
 	// After and Before are inclusive 'YYYY-MM-DD' release-date bounds.
 	After, Before string
@@ -54,8 +56,9 @@ type browseStatements struct {
 }
 
 // browseFrom pins the videos side to idx_videos_cards, which holds every
-// column step one reads, filters and sorts on (see listFrom for why it is
-// pinned). The channels join is by primary key, for the display name.
+// column step one reads, filters and sorts on, summary_status included
+// (0048; see listFrom for why it is pinned). The channels join is by primary
+// key, for the display name.
 const browseFrom = `FROM videos v INDEXED BY idx_videos_cards LEFT JOIN channels ch ON ch.id = v.channel_id`
 
 // browseQueries builds the page and the count. Unlike List, no status is
@@ -79,9 +82,12 @@ func browseQueries(opts BrowseOptions) browseStatements {
 		}
 		conds = append(conds, "("+strings.Join(arms, " OR ")+")")
 	}
-	if c, arg, ok := queryCond(opts.Title); ok {
-		conds = append(conds, c)
-		args = append(args, arg)
+	// Not queryCond: LIKE folds ASCII only. Both sides are case-folded, so
+	// "über" finds "Über" and "strasse" "Straße". casefold() runs on the
+	// index's title, so the read stays on the index.
+	if t := strings.TrimSpace(opts.Title); t != "" {
+		conds = append(conds, `casefold(v.title) LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+escapeLike(store.Fold(t))+"%")
 	}
 	// rag.Filter's release date: a dateless row counts by the day it was
 	// recorded, so list_videos and search agree on a date range.
@@ -107,49 +113,68 @@ func browseQueries(opts BrowseOptions) browseStatements {
 	return browseStatements{
 		page: `SELECT v.id, v.title,
 	COALESCE(NULLIF(v.channel_name, ''), NULLIF(ch.name, ''), v.channel_id) AS channel_name,
-	v.duration_seconds, v.published_at, v.status ` + browseFrom + where + " ORDER BY " + order + " LIMIT ? OFFSET ?",
+	v.duration_seconds, v.published_at, v.status, v.summary_status ` + browseFrom + where +
+			" ORDER BY " + order + " LIMIT ? OFFSET ?",
 		pageArgs:  append(append([]any{}, args...), limit, offset),
 		count:     "SELECT COUNT(*) FROM videos v INDEXED BY idx_videos_cards" + where,
 		countArgs: args,
 	}
 }
 
-// browseFlagsQuery is step two over n ids: each video by primary key, its
-// transcript by primary key, any chunk by idx_transcript_chunks_video.
-// summary_status sits behind the analysis text in the row, which is why it
-// is read for one page only, never in step one.
+// browseFlagsQuery is step two over n ids: driven by the id list itself, so
+// the videos table is never opened; the transcript by its primary key, any
+// chunk by idx_transcript_chunks_video, both covering.
 func browseFlagsQuery(n int) string {
-	return `SELECT v.id, v.summary_status,
-	EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = v.id),
-	EXISTS (SELECT 1 FROM transcript_chunks c WHERE c.video_id = v.id)
-FROM videos v WHERE v.id IN (` + store.Placeholders(n) + `)`
+	values := strings.TrimSuffix(strings.Repeat("(?), ", n), ", ")
+	return `WITH ids(id) AS (VALUES ` + values + `) SELECT ids.id,
+	EXISTS (SELECT 1 FROM video_transcripts t WHERE t.video_id = ids.id),
+	EXISTS (SELECT 1 FROM transcript_chunks c WHERE c.video_id = ids.id)
+FROM ids`
 }
 
 // Browse lists every video of the library, whatever its status, one page at
 // a time with the total for the same filter. Step one (page and count) never
 // opens a video row: idx_videos_cards, or for an unfiltered count SQLite's
-// count shortcut onto the narrowest covering index. Step two reads what
-// decides searchability for the page's ids only.
+// count shortcut onto the narrowest covering index. Step two checks the
+// page's ids for a transcript and search chunks by key. All three statements
+// read one snapshot, so the total, the page and the flags agree.
+//
+// An error from a context that ran out carries ctx.Err(): a deadline that
+// interrupts a running statement otherwise surfaces only as the driver's
+// "interrupted".
 func (s *Store) Browse(ctx context.Context, opts BrowseOptions) (BrowsePage, error) {
+	page, err := s.browse(ctx, opts)
+	if err != nil && ctx.Err() != nil && !errors.Is(err, ctx.Err()) {
+		err = fmt.Errorf("%w (%w)", ctx.Err(), err)
+	}
+	return page, err
+}
+
+func (s *Store) browse(ctx context.Context, opts BrowseOptions) (BrowsePage, error) {
 	q := browseQueries(opts)
+	// ReadOnly: the one transaction the driver opens deferred, so it queues
+	// behind no writer (see store.dsn).
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return BrowsePage{}, fmt.Errorf("browse videos: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	var out BrowsePage
 	// The title is the caller's text: kept out of the error, which reaches logs.
-	if err := s.db.QueryRowContext(ctx, q.count, q.countArgs...).Scan(&out.Total); err != nil {
+	if err := tx.QueryRowContext(ctx, q.count, q.countArgs...).Scan(&out.Total); err != nil {
 		return BrowsePage{}, fmt.Errorf("browse videos: count: %w", err)
 	}
-	videos, err := s.browsePage(ctx, q)
-	if err != nil {
+	if out.Videos, err = browsePage(ctx, tx, q); err != nil {
 		return BrowsePage{}, err
 	}
-	if err := s.browseFlags(ctx, videos); err != nil {
+	if err := browseFlags(ctx, tx, out.Videos); err != nil {
 		return BrowsePage{}, err
 	}
-	out.Videos = videos
 	return out, nil
 }
 
-func (s *Store) browsePage(ctx context.Context, q browseStatements) ([]BrowseVideo, error) {
-	rows, err := s.db.QueryContext(ctx, q.page, q.pageArgs...)
+func browsePage(ctx context.Context, tx *sql.Tx, q browseStatements) ([]BrowseVideo, error) {
+	rows, err := tx.QueryContext(ctx, q.page, q.pageArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("browse videos: %w", err)
 	}
@@ -159,7 +184,7 @@ func (s *Store) browsePage(ctx context.Context, q browseStatements) ([]BrowseVid
 		var v BrowseVideo
 		var duration sql.NullInt64
 		var published sql.NullString
-		if err := rows.Scan(&v.ID, &v.Title, &v.ChannelName, &duration, &published, &v.Status); err != nil {
+		if err := rows.Scan(&v.ID, &v.Title, &v.ChannelName, &duration, &published, &v.Status, &v.SummaryStatus); err != nil {
 			return nil, fmt.Errorf("browse videos: scan: %w", err)
 		}
 		v.DurationSeconds, v.PublishedAt = duration.Int64, published.String
@@ -171,8 +196,8 @@ func (s *Store) browsePage(ctx context.Context, q browseStatements) ([]BrowseVid
 	return out, nil
 }
 
-// browseFlags fills SummaryStatus, HasTranscript and Indexed in place.
-func (s *Store) browseFlags(ctx context.Context, page []BrowseVideo) error {
+// browseFlags fills HasTranscript and Indexed in place.
+func browseFlags(ctx context.Context, tx *sql.Tx, page []BrowseVideo) error {
 	if len(page) == 0 {
 		return nil
 	}
@@ -182,19 +207,19 @@ func (s *Store) browseFlags(ctx context.Context, page []BrowseVideo) error {
 		ids[i] = v.ID
 		at[v.ID] = i
 	}
-	rows, err := s.db.QueryContext(ctx, browseFlagsQuery(len(ids)), ids...)
+	rows, err := tx.QueryContext(ctx, browseFlagsQuery(len(ids)), ids...)
 	if err != nil {
 		return fmt.Errorf("browse videos: flags: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var id, summary string
+		var id string
 		var transcript, indexed bool
-		if err := rows.Scan(&id, &summary, &transcript, &indexed); err != nil {
+		if err := rows.Scan(&id, &transcript, &indexed); err != nil {
 			return fmt.Errorf("browse videos: flags: scan: %w", err)
 		}
 		if i, ok := at[id]; ok {
-			page[i].SummaryStatus, page[i].HasTranscript, page[i].Indexed = summary, transcript, indexed
+			page[i].HasTranscript, page[i].Indexed = transcript, indexed
 		}
 	}
 	if err := rows.Err(); err != nil {

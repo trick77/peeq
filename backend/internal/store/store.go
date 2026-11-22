@@ -12,8 +12,7 @@ import (
 	// sqlite-vec WASM build for ncruces; provides the SQLite WASM binary AND
 	// the vec0 virtual table + vec_* functions. Replaces ncruces/go-sqlite3/embed.
 	_ "github.com/asg017/sqlite-vec-go-bindings/ncruces"
-	// registers the "sqlite3" database/sql driver.
-	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/ncruces/go-sqlite3/driver"
 	"github.com/trick77/ship/kit/sqlitex"
 )
 
@@ -35,7 +34,9 @@ func Open(path string) (*sql.DB, error) {
 // busy_timeout the tests set (ncruces applies pragmas in order, so a later
 // one wins).
 func open(path string, extra ...string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", dsn(path, extra...))
+	// driver.Open rather than sql.Open: its hook runs on every connection the
+	// pool opens, which is where the Unicode functions are registered.
+	db, err := driver.Open(dsn(path, extra...), registerUnicode)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}

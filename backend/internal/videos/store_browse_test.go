@@ -3,9 +3,11 @@ package videos
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // browseRow is one seeded video for the Browse tests.
@@ -262,6 +264,65 @@ func TestBrowse_searchabilityFlags(t *testing.T) {
 	if v.Title != "Downloaded TRAIL basics" || v.PublishedAt != "2025-12-01" || v.DurationSeconds != 90 || v.Status != StatusDownloaded {
 		t.Errorf("done1 card fields = %+v", v)
 	}
+}
+
+// The title filter folds case beyond ASCII, and sort=title orders by Unicode
+// rules: "Über" between "Straße" and "Zebra", not after "Zebra".
+func TestBrowse_titleIsUnicodeCaseInsensitive(t *testing.T) {
+	var rows []browseRow
+	for _, r := range []struct{ id, title string }{
+		{"z", "Zebra crossings"}, {"u", "Über den Gotthard"}, {"s", "Die Straße nach Andermatt"}, {"a", "apple orchards"},
+	} {
+		rows = append(rows, browseRow{id: r.id, title: r.title, channelID: "UCa", created: "2026-01-01 00:00:00",
+			status: StatusNew, summary: SummaryPending})
+	}
+	s := seedBrowse(t, openTestDB(t), rows)
+	for title, want := range map[string][]string{
+		"über den":   {"u"},
+		"ÜBER DEN":   {"u"},
+		"strasse":    {"s"},
+		"STRASSE":    {"s"},
+		"zebra":      {"z"},
+		"ä":          {},
+		"crossings%": {},
+	} {
+		p := mustBrowse(t, s, BrowseOptions{Title: title, Limit: 50})
+		if got := browseIDs(p); !slices.Equal(got, want) || p.Total != len(want) {
+			t.Errorf("title %q = %v (total %d), want %v", title, got, p.Total, want)
+		}
+	}
+	if got := browseIDs(mustBrowse(t, s, BrowseOptions{Sort: "title", Limit: 50})); !slices.Equal(got, []string{"a", "s", "u", "z"}) {
+		t.Errorf("sort title = %v, want a, s, u, z", got)
+	}
+}
+
+// A deadline that runs out returns an error the caller can tell is one, also
+// when it interrupts a running statement (the driver then says only
+// "interrupted").
+func TestBrowse_deadlineIsRecognisable(t *testing.T) {
+	db := openTestDB(t)
+	mustExecBrowse(t, db, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 40000)
+		INSERT INTO videos (id, url, title) SELECT 'v' || i, 'u', 'Title number ' || i FROM n`)
+	s := New(db)
+
+	ctx, cancel := context.WithTimeout(context.Background(), -time.Second)
+	defer cancel()
+	if _, err := s.Browse(ctx, BrowseOptions{Limit: 5}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expired deadline: err = %v", err)
+	}
+
+	start := time.Now()
+	if _, err := s.Browse(context.Background(), BrowseOptions{Title: "über", Limit: 5}); err != nil {
+		t.Fatal(err)
+	}
+	full := time.Since(start)
+	ctx, cancel = context.WithTimeout(context.Background(), full/10)
+	defer cancel()
+	_, err := s.Browse(ctx, BrowseOptions{Title: "über", Limit: 5})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("deadline mid-statement (full read %v): err = %v", full, err)
+	}
+	t.Logf("full read %v; mid-statement err = %v", full, err)
 }
 
 func TestBrowse_honoursCancellation(t *testing.T) {

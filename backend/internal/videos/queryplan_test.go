@@ -2,6 +2,7 @@ package videos
 
 import (
 	"database/sql"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -149,36 +150,58 @@ func TestBrowse_pageAndCountNeverOpenTheVideosTable(t *testing.T) {
 		for _, f := range filters {
 			f.Sort, f.Limit, f.Offset = sort, 25, 50
 			q := browseQueries(f)
-			plan := queryPlan(t, db, q.page, q.pageArgs...)
-			if !strings.Contains(plan, "v USING COVERING INDEX idx_videos_cards") {
-				t.Errorf("%+v: page is not covered by idx_videos_cards; plan = %s", f, plan)
-			}
-			if strings.Contains(plan, "SCAN ch") {
-				t.Errorf("%+v: page scans channels; plan = %s", f, plan)
-			}
+			// Every plan line must be one of these: a table read of either
+			// table (SEARCH v USING INDEX …, SCAN videos) fails.
+			assertPlanOnly(t, browseCase(f, "page"), queryPlan(t, db, q.page, q.pageArgs...),
+				"SCAN v USING COVERING INDEX idx_videos_cards",
+				"SEARCH ch USING INDEX sqlite_autoindex_channels_1 (id=?) LEFT-JOIN",
+				"USE TEMP B-TREE FOR ORDER BY")
 			// An unfiltered COUNT(*) takes SQLite's count shortcut onto the
-			// narrowest covering index (idx_videos_status), INDEXED BY or not:
-			// still no table read. A filtered one stays on idx_videos_cards.
-			want := "v USING COVERING INDEX idx_videos_cards"
+			// narrowest covering index, INDEXED BY or not: still no table read.
+			want := "SCAN v USING COVERING INDEX idx_videos_cards"
 			if len(q.countArgs) == 0 {
-				want = "USING COVERING INDEX"
+				want = "SCAN videos USING COVERING INDEX idx_videos_status"
 			}
-			plan = queryPlan(t, db, q.count, q.countArgs...)
-			if !strings.Contains(plan, want) {
-				t.Errorf("%+v: count is not covered (%s); plan = %s", f, want, plan)
-			}
+			assertPlanOnly(t, browseCase(f, "count"), queryPlan(t, db, q.count, q.countArgs...), want)
 		}
 	}
 }
 
-// Step two reads at most a page of ids, each by key: never a scan.
-func TestBrowse_flagsSeekByKey(t *testing.T) {
+// Step two never opens the videos table: the page's ids drive two key
+// lookups on covering indexes.
+func TestBrowse_flagsSeekByKeyOnly(t *testing.T) {
 	db := openTestDB(t)
 	plan := queryPlan(t, db, browseFlagsQuery(3), "a", "b", "c")
-	if strings.Contains(plan, "SCAN") {
-		t.Errorf("flags scan; plan = %s", plan)
+	if !strings.Contains(plan, "SEARCH t USING COVERING INDEX sqlite_autoindex_video_transcripts_1") {
+		t.Errorf("transcript check not by key; plan = %s", plan)
 	}
-	if !strings.Contains(plan, "idx_transcript_chunks_video") {
-		t.Errorf("chunk check not on idx_transcript_chunks_video; plan = %s", plan)
+	assertPlanOnly(t, "flags", plan,
+		"SEARCH c USING COVERING INDEX idx_transcript_chunks_video (video_id=?)",
+		"SEARCH t USING COVERING INDEX sqlite_autoindex_video_transcripts_1 (video_id=?)",
+		"CO-ROUTINE ids", "SCAN 3 CONSTANT ROWS", "SCAN ids", "CORRELATED SCALAR SUBQUERY *")
+}
+
+// assertPlanOnly fails unless every line of plan is one of allowed (an entry
+// ending in "*" matches by prefix), and the first allowed line (the main
+// read) is there.
+func assertPlanOnly(t *testing.T, what, plan string, allowed ...string) {
+	t.Helper()
+	lines := strings.Split(plan, " | ")
+	if !slices.Contains(lines, allowed[0]) {
+		t.Errorf("%s: plan lacks %q; plan = %s", what, allowed[0], plan)
 	}
+	for _, l := range lines {
+		if !slices.ContainsFunc(allowed, func(a string) bool {
+			p, wild := strings.CutSuffix(a, "*")
+			return l == a || wild && strings.HasPrefix(l, p)
+		}) {
+			t.Errorf("%s: unexpected plan line %q; plan = %s", what, l, plan)
+		}
+	}
+}
+
+// browseCase names one plan-test case in a failure.
+func browseCase(f BrowseOptions, step string) string {
+	return step + " sort=" + f.Sort + " channel=" + strings.Join(f.ChannelIDs, ",") + "/" +
+		strings.Join(f.ChannelNames, ",") + " title=" + f.Title + " dates=" + f.After + ".." + f.Before
 }

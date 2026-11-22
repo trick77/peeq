@@ -123,9 +123,10 @@ Each tool carries a display title, sent both as `title` and `annotations.title`
   channel's subcategories, and a header line naming every channel subcategory in use.
 - `list_videos` ("List videos in your library") — no query: every video peeq holds, whatever its
   download status (inbox reads and queued ones too), searchable or not. `channel` (resolved and answered
-  like search's), `title` (case-insensitive substring, the Library search box's), `after`/`before`
-  (`YYYY-MM-DD`, inclusive, search's release date), `sort` (`newest` default and `oldest` by release
-  date, `added_newest` by download time or, never downloaded, when peeq recorded it, `title`), `limit`
+  like search's), `title` (substring, Unicode case-folded: "über" finds "Über", "strasse" "Straße"),
+  `after`/`before` (`YYYY-MM-DD`, inclusive, search's release date), `sort` (`newest` default and
+  `oldest` by release date, `added_newest` by download time or, never downloaded, when peeq recorded it,
+  `title` in Unicode order), `limit`
   (default 25, max 50), `offset` (default 0). For enumerating a channel, finding a video by title or the
   newest additions: search reaches only indexed videos and never matches a title or channel name.
 - `add_videos` ("Add videos to your library") — `videos` (required, 1 to 10): `{url, title?}`, `url` a
@@ -220,10 +221,15 @@ Videos 1–25 of 312 · channel: Bike Physics · title contains "trail" · sorte
   failed`, `no speech in the transcript` (music or ambience), `not indexed yet` (analysed, chunks not
   written).
 - Nothing matches → a plain sentence (with filters: "Try again without some of the filters."); an
-  `offset` past the end says so with the total. Neither is `isError`.
-- Store side (`videos.Store.Browse`): page and `COUNT(*)` never open a video row (plan test):
-  `idx_videos_cards`, except an unfiltered count, which SQLite answers from the narrowest covering
-  index. Then summary status, transcript and chunk existence by key for the page's ids (≤ 50).
+  `offset` past the end says so with the total. Neither is `isError`. A total below what the page holds
+  (the library changed mid-read) is raised to it.
+- Store side (`videos.Store.Browse`), one read transaction, never a video row (plan tests): the page
+  (with `summary_status`, in `idx_videos_cards` since 0048) and `COUNT(*)` from `idx_videos_cards`
+  (an unfiltered count: SQLite's narrowest covering index); then, driven by the page's ids (≤ 50),
+  transcript and chunk existence by key. Title match and order use `casefold()` and `COLLATE unicode`,
+  registered on every pooled connection (`store/unicode.go`); SQLite's own LIKE, NOCASE, `lower()` stay
+  ASCII and unchanged.
+- The tool deadline interrupting a statement is "timed out", like a deadline before it.
 
 `tools/call add_videos` result: one text line per video, in argument order, and the
 structured items loom's confirmation card reads (`items[i]` ↔ the i-th video):
