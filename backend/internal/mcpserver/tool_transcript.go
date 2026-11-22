@@ -41,11 +41,12 @@ func runGetTranscript(ctx context.Context, h *handler, raw json.RawMessage) mcp.
 	if err := mcp.DecodeArgs(raw, &a); err != nil {
 		return mcp.ErrorResult("invalid arguments: " + err.Error())
 	}
-	id := videoIDArg(a.ID)
-	if id == "" {
+	arg := h.parseVideoArg(a.ID)
+	if arg.raw == "" {
 		return mcp.ErrorResult("id is required")
 	}
-	start, end := 0, -1
+	// A moment link opens at its timestamp; start_seconds, when given, wins.
+	start, end := max(arg.start, 0), -1
 	if a.StartSeconds != nil {
 		start = max(*a.StartSeconds, 0)
 	}
@@ -55,17 +56,28 @@ func runGetTranscript(ctx context.Context, h *handler, raw json.RawMessage) mcp.
 			return mcp.ErrorResult("end_seconds must be after start_seconds")
 		}
 	}
+	// No id, no read: the store names the id it is asked in its errors, and
+	// a non-id can be a URL that must not reach a log.
+	if arg.id == "" {
+		slog.Info("mcp: transcript miss", "video_id", logVideoID(arg.id), "reason", "unknown_video")
+		return mcp.ErrorResult(unknownVideoText(arg.raw))
+	}
+	id := arg.id
 	t, err := h.lib.Transcript(ctx, id)
 	if errors.Is(err, ErrVideoNotFound) {
-		slog.Info("mcp: transcript miss", "video_id", logVideoID(id), "reason", "unknown_video")
+		slog.Info("mcp: transcript miss", "video_id", id, "reason", "unknown_video")
 		return mcp.ErrorResult(unknownVideoText(id))
 	}
 	if err != nil {
-		slog.Warn("mcp: get transcript failed", "video_id", logVideoID(id), "err", err)
+		slog.Warn("mcp: get transcript failed", "video_id", id, "err", err)
 		return mcp.ErrorResult("reading the transcript failed; try again")
 	}
 	if t == nil || len(t.Cues) == 0 {
-		slog.Info("mcp: transcript miss", "video_id", logVideoID(id), "reason", "no_transcript")
+		status := ""
+		if t != nil {
+			status = t.Status
+		}
+		slog.Info("mcp: transcript miss", "video_id", id, "reason", "no_transcript", "status", status)
 		return mcp.ErrorResult(noTranscriptText(id, t))
 	}
 
@@ -106,17 +118,17 @@ func runGetTranscript(ctx context.Context, h *handler, raw json.RawMessage) mcp.
 }
 
 // noTranscriptText is the tool error for a known video without a transcript
-// (t may be nil): its title and status, and where its summary is.
+// (t may be nil): its title, and get_video when there is a summary to read.
+// Never the raw status: "queued" or "new" alone mean nothing to a client.
 func noTranscriptText(id string, t *Transcript) string {
-	title, status := id, ""
+	title, hint := id, ""
 	if t != nil {
-		title, status = cmp.Or(t.Title, id), t.Status
+		title = cmp.Or(t.Title, id)
+		if t.HasSummary {
+			hint = " Call get_video with this id for its summary and analysis."
+		}
 	}
-	where := "video " + id
-	if status != "" {
-		where += ", status " + status
-	}
-	return fmt.Sprintf("peeq has no transcript for %q (%s). Call get_video with this id for its summary and analysis.", title, where)
+	return fmt.Sprintf("peeq has no transcript for %q (video %s).%s", title, id, hint)
 }
 
 // mergeCues keeps the cues starting inside [start, end) (end < 0: no end) and

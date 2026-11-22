@@ -338,7 +338,8 @@ func (l mcpLibrary) Transcript(ctx context.Context, id string) (*mcpserver.Trans
 	if v == nil {
 		return nil, mcpserver.ErrVideoNotFound
 	}
-	out := &mcpserver.Transcript{VideoID: v.ID, Title: v.Title, Status: v.Status}
+	out := &mcpserver.Transcript{VideoID: v.ID, Title: v.Title, Status: v.Status,
+		HasSummary: strings.TrimSpace(v.Summary) != ""}
 	t, err := l.s.videos.GetTranscriptCtx(ctx, id)
 	if err != nil {
 		return nil, err
@@ -348,7 +349,10 @@ func (l mcpLibrary) Transcript(ctx context.Context, id string) (*mcpserver.Trans
 	}
 	parsed, err := subtitles.ParseVTT(strings.NewReader(t.VTT))
 	if err != nil {
-		return nil, err
+		// Stored bytes that never parse: a retry cannot help, so it is no
+		// transcript, not a failed read.
+		slog.WarnContext(ctx, "mcp: transcript unparseable", "video_id", id, "err", err)
+		return out, nil
 	}
 	out.Cues = parsed.Cues
 	return out, nil

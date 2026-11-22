@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,8 +25,9 @@ type fakeLibrary struct {
 	lastQuery   *SearchQuery
 	videos      map[string]*Video
 	transcripts map[string]*Transcript
-	// readErr fails Video and Transcript.
+	// readErr fails Video and Transcript; readIDs is every id they were asked.
 	readErr error
+	readIDs []string
 	// added answers AddVideos per url; an unlisted url is queued. addedN
 	// counts the calls, addedURLs keeps the last call's urls.
 	added     map[string]AddedVideo
@@ -72,8 +74,10 @@ func (f *fakeLibrary) Search(_ context.Context, q SearchQuery) (SearchResult, er
 }
 
 func (f *fakeLibrary) Video(_ context.Context, id string) (*Video, error) {
+	f.readIDs = append(f.readIDs, id)
 	if f.readErr != nil {
-		return nil, f.readErr
+		// Wrapped with the id, as the real store does.
+		return nil, fmt.Errorf("get video %s: %w", id, f.readErr)
 	}
 	return f.videos[id], nil
 }
@@ -81,8 +85,9 @@ func (f *fakeLibrary) Video(_ context.Context, id string) (*Video, error) {
 // Transcript answers ErrVideoNotFound for an id not in transcripts; an entry
 // without cues is a known video without a transcript.
 func (f *fakeLibrary) Transcript(_ context.Context, id string) (*Transcript, error) {
+	f.readIDs = append(f.readIDs, id)
 	if f.readErr != nil {
-		return nil, f.readErr
+		return nil, fmt.Errorf("get transcript %s: %w", id, f.readErr)
 	}
 	t, ok := f.transcripts[id]
 	if !ok {

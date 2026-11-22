@@ -144,8 +144,13 @@ func TestVideoToolsDescribeTheIDArgument(t *testing.T) {
 		}
 		props, _ := tool.Schema["properties"].(map[string]any)
 		id, _ := props["id"].(map[string]any)
-		if id["description"] != "The video id (the `id:` line of a search result) or a YouTube URL of the video." {
-			t.Errorf("%s id description = %v", tool.Name, id["description"])
+		d, _ := id["description"].(string)
+		if !strings.HasPrefix(d, "The video id (the `id:` line of a search result), its peeq link or a YouTube URL of the video.") {
+			t.Errorf("%s id description = %q", tool.Name, d)
+		}
+		// Only the transcript reads a moment link's timestamp.
+		if moment := strings.Contains(d, "t="); moment != (tool.Name == "get_transcript") {
+			t.Errorf("%s id description mentions t=: %v, %q", tool.Name, moment, d)
 		}
 	}
 }
@@ -546,7 +551,7 @@ func TestGetTranscript_oversizedSecondStillAdvances(t *testing.T) {
 // the first is a wrong id, the second a video to read with get_video.
 func TestGetTranscript_unknownVideoIsNotAMissingTranscript(t *testing.T) {
 	lib := &fakeLibrary{transcripts: map[string]*Transcript{
-		"dQw4w9WgXcQ": {VideoID: "dQw4w9WgXcQ", Title: "Talk", Status: "downloaded"},
+		"dQw4w9WgXcQ": {VideoID: "dQw4w9WgXcQ", Title: "Talk", Status: "downloaded", HasSummary: true},
 		// Stored, but nothing parsed out of it: no transcript either.
 		"emptyCues01": {VideoID: "emptyCues01", Status: "new", Cues: []subtitles.Cue{}},
 	}}
@@ -565,15 +570,14 @@ func TestGetTranscript_unknownVideoIsNotAMissingTranscript(t *testing.T) {
 	if !isError(r) || missing == unknown {
 		t.Fatalf("no transcript: isError=%v %q", isError(r), missing)
 	}
-	for _, want := range []string{`"Talk"`, "dQw4w9WgXcQ", "status downloaded", "get_video"} {
-		if !strings.Contains(missing, want) {
-			t.Errorf("no-transcript text lacks %q: %q", want, missing)
-		}
+	if missing != `peeq has no transcript for "Talk" (video dQw4w9WgXcQ). Call get_video with this id for its summary and analysis.` {
+		t.Errorf("no-transcript text = %q", missing)
 	}
 
+	// No summary either: no hint to go looking for one. The raw status
+	// ("new", "queued") means nothing to a client: never in the text.
 	r = callTool(t, lib, "get_transcript", map[string]any{"id": "emptyCues01"})
-	if text := toolText(t, r); !isError(r) || !strings.Contains(text, `no transcript for "emptyCues01"`) ||
-		!strings.Contains(text, "status new") {
+	if text := toolText(t, r); !isError(r) || text != `peeq has no transcript for "emptyCues01" (video emptyCues01).` {
 		t.Errorf("zero cues: isError=%v %q", isError(r), text)
 	}
 }
@@ -582,9 +586,27 @@ func TestGetTranscript_unknownVideoIsNotAMissingTranscript(t *testing.T) {
 func TestGetTranscript_nilTranscriptIsMissing(t *testing.T) {
 	lib := &fakeLibrary{transcripts: map[string]*Transcript{"dQw4w9WgXcQ": nil}}
 	r := callTool(t, lib, "get_transcript", map[string]any{"id": "dQw4w9WgXcQ"})
-	if text := toolText(t, r); !isError(r) || !strings.Contains(text, `no transcript for "dQw4w9WgXcQ"`) ||
-		strings.Contains(text, "status") {
+	if text := toolText(t, r); !isError(r) || text != `peeq has no transcript for "dQw4w9WgXcQ" (video dQw4w9WgXcQ).` {
 		t.Errorf("got isError=%v %q", isError(r), text)
+	}
+}
+
+// A moment link's t= is the start, unless start_seconds says otherwise.
+func TestGetTranscript_momentLinkStartsAtItsTimestamp(t *testing.T) {
+	lib := transcriptFixture(100)
+	for _, u := range []string{"https://peeq.example.com/video/v?t=60", "peeq.example.com/video/v?t=1m"} {
+		text := toolText(t, callTool(t, lib, "get_transcript", map[string]any{"id": u}))
+		if !strings.Contains(text, "from [01:00]:\n[01:00] line 20 of the talk") || strings.Contains(text, "line 19 ") {
+			t.Errorf("%s:\n%s", u, text[:min(len(text), 300)])
+		}
+	}
+	text := toolText(t, callTool(t, lib, "get_transcript", map[string]any{"id": "https://peeq.example.com/video/v?t=60", "start_seconds": 0}))
+	if !strings.Contains(text, "[00:00] line 0 of the talk") {
+		t.Errorf("explicit start_seconds lost to t=:\n%s", text[:min(len(text), 300)])
+	}
+	r := callTool(t, lib, "get_transcript", map[string]any{"id": "https://peeq.example.com/video/v?t=60", "end_seconds": 30})
+	if !isError(r) || !strings.Contains(toolText(t, r), "end_seconds must be after start_seconds") {
+		t.Errorf("end before the link's start: %q", toolText(t, r))
 	}
 }
 
@@ -594,7 +616,8 @@ func TestGetVideoAndTranscript_acceptAYouTubeURL(t *testing.T) {
 		videos:      map[string]*Video{"dQw4w9WgXcQ": {ID: "dQw4w9WgXcQ", Title: "Why bikes stay upright"}},
 		transcripts: map[string]*Transcript{"dQw4w9WgXcQ": {VideoID: "dQw4w9WgXcQ", Title: "Why bikes stay upright", Cues: cues}},
 	}
-	for _, u := range []string{"https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s", "https://youtu.be/dQw4w9WgXcQ"} {
+	for _, u := range []string{"https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtu.be/dQw4w9WgXcQ",
+		"https://peeq.example.com/video/dQw4w9WgXcQ"} {
 		r := callTool(t, lib, "get_video", map[string]any{"id": u})
 		if isError(r) || !strings.Contains(toolText(t, r), "Why bikes stay upright") {
 			t.Errorf("get_video %s: %q", u, toolText(t, r))
@@ -617,11 +640,13 @@ func captureLog(t *testing.T) *strings.Builder {
 
 // A miss logs the video id and why, never the argument: it can be a URL.
 func TestGetTranscript_missLogsOnlyAnID(t *testing.T) {
-	lib := &fakeLibrary{transcripts: map[string]*Transcript{"dQw4w9WgXcQ": {VideoID: "dQw4w9WgXcQ", Title: "Talk"}}}
+	lib := &fakeLibrary{transcripts: map[string]*Transcript{"dQw4w9WgXcQ": {VideoID: "dQw4w9WgXcQ", Title: "Talk", Status: "queued"}}}
 	for _, tc := range []struct{ arg, want string }{
 		{"https://www.youtube.com/watch?v=aaaaaaaaaaa&t=1", "video_id=aaaaaaaaaaa reason=unknown_video"},
 		{"https://www.youtube.com/@veritasium?si=secret", "video_id=invalid reason=unknown_video"},
-		{"https://youtu.be/dQw4w9WgXcQ?si=secret", "video_id=dQw4w9WgXcQ reason=no_transcript"},
+		{"https://youtu.be/dQw4w9WgXcQ?si=secret", "video_id=dQw4w9WgXcQ reason=no_transcript status=queued"},
+		// A mistyped bare id is logged as typed: it is no URL.
+		{"dQw4w9WgXc", "video_id=dQw4w9WgXc reason=unknown_video"},
 	} {
 		out := captureLog(t)
 		callTool(t, lib, "get_transcript", map[string]any{"id": tc.arg})
@@ -635,16 +660,45 @@ func TestGetTranscript_missLogsOnlyAnID(t *testing.T) {
 	}
 }
 
-// A failed read logs the id only too.
-func TestGetVideoAndTranscript_failureLogsOnlyAnID(t *testing.T) {
-	lib := &fakeLibrary{readErr: errors.New("disk on fire")}
+func TestGetVideo_missIsLogged(t *testing.T) {
+	out := captureLog(t)
+	callTool(t, &fakeLibrary{}, "get_video", map[string]any{"id": "https://youtu.be/aaaaaaaaaaa?si=secret"})
+	if !strings.Contains(out.String(), `msg="mcp: video miss" video_id=aaaaaaaaaaa`) || strings.Contains(out.String(), "secret") {
+		t.Errorf("log = %q", out.String())
+	}
+}
+
+// An argument that is no video reference never reaches the library: the
+// store wraps the id it is asked into its errors, and that one can be a URL.
+func TestGetVideoAndTranscript_neverReadANonID(t *testing.T) {
 	for _, tool := range []string{"get_video", "get_transcript"} {
+		lib := &fakeLibrary{readErr: errors.New("disk on fire")}
 		out := captureLog(t)
 		r := callTool(t, lib, tool, map[string]any{"id": "https://www.youtube.com/@veritasium?si=secret"})
+		if !isError(r) || toolText(t, r) != `No video with id "https://www.youtube.com/@veritasium?si=secret" in peeq. Use the id from a search result.` {
+			t.Errorf("%s: %q", tool, toolText(t, r))
+		}
+		if len(lib.readIDs) != 0 {
+			t.Errorf("%s read %q", tool, lib.readIDs)
+		}
+		if !strings.Contains(out.String(), "video_id=invalid") || strings.Contains(out.String(), "secret") ||
+			strings.Contains(out.String(), "veritasium") {
+			t.Errorf("%s: log = %q", tool, out.String())
+		}
+	}
+}
+
+// A failed read logs the store's error, which names only the reduced id.
+func TestGetVideoAndTranscript_failureLogsOnlyAnID(t *testing.T) {
+	for _, tool := range []string{"get_video", "get_transcript"} {
+		lib := &fakeLibrary{readErr: errors.New("disk on fire")}
+		out := captureLog(t)
+		r := callTool(t, lib, tool, map[string]any{"id": "https://youtu.be/dQw4w9WgXcQ?si=secret"})
 		if !isError(r) || !strings.Contains(toolText(t, r), "failed; try again") {
 			t.Errorf("%s: %q", tool, toolText(t, r))
 		}
-		if !strings.Contains(out.String(), "video_id=invalid") || strings.Contains(out.String(), "secret") {
+		if !strings.Contains(out.String(), "video_id=dQw4w9WgXcQ") || !strings.Contains(out.String(), "dQw4w9WgXcQ: disk on fire") ||
+			strings.Contains(out.String(), "secret") || strings.Contains(out.String(), "youtu.be") {
 			t.Errorf("%s: log = %q", tool, out.String())
 		}
 	}

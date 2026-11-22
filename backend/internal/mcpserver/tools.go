@@ -28,8 +28,12 @@ const subcategoryNote = "Videos and channels carry subcategories, category/subca
 	"labelled with it); list_youtube_channels shows each channel's."
 
 // videoIDDescription describes get_video's and get_transcript's id: a client
-// that only kept a link still finds the video (videoIDArg).
-const videoIDDescription = "The video id (the `id:` line of a search result) or a YouTube URL of the video."
+// that only kept a link still finds the video (parseVideoArg).
+// transcriptIDDescription adds what get_transcript does with a moment link.
+const (
+	videoIDDescription      = "The video id (the `id:` line of a search result), its peeq link or a YouTube URL of the video."
+	transcriptIDDescription = videoIDDescription + " A link's timestamp (t=) is the start when start_seconds is not given."
+)
 
 // toolAliases maps retired tool names to their replacement. They answer calls
 // but are never listed: a client that cached the old tools/list (up to the ttl,
@@ -73,7 +77,7 @@ func (h *handler) tools() []mcp.Tool {
 			Description: "Read a video's transcript as timestamped lines, optionally only a window of it. Long " +
 				"transcripts come back in parts; the reply says which start_seconds to request next.",
 			Schema: mcp.ObjectSchema(map[string]any{
-				"id": map[string]any{"type": "string", "description": videoIDDescription},
+				"id": map[string]any{"type": "string", "description": transcriptIDDescription},
 				"start_seconds": map[string]any{"type": "integer", "minimum": 0,
 					"description": "Start of the window, in seconds from the start of the video. Default 0."},
 				"end_seconds": map[string]any{"type": "integer", "minimum": 0,
