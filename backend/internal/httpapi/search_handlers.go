@@ -170,6 +170,10 @@ const (
 	// maxMatchesPerVideo caps how many moments one video contributes, so a
 	// long video cannot crowd out the rest of the library.
 	maxMatchesPerVideo = 4
+	// singleVideoMatches is the cap for an MCP search scoped to one video:
+	// there is no rest of the library to crowd out, and "what else does it
+	// say about X" wants the video's moments, not its first four.
+	singleVideoMatches = 12
 	// minMomentGapSeconds is how far apart two moments from the same video must
 	// be to count as different moments.
 	//
@@ -242,19 +246,20 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"results": groupHits(hits, videosByID, 0, k), "mode": mode})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"results": groupHits(hits, videosByID, 0, k, maxMatchesPerVideo), "mode": mode})
 }
 
 // groupHits groups ranked hits per video, in the order each video's best hit
-// appears: at most maxMatchesPerVideo moments per video, one hit per moment
+// appears: at most perVideo moments per video, one hit per moment
 // (searchResult.admits), hits whose video has no row dropped. maxVideos caps
 // the videos and maxMoments the moments overall; zero means no cap.
 //
 // maxMoments budgets the moments actually emitted, so a video that hits
-// maxMatchesPerVideo yields the rest of the budget to the videos below it
-// instead of swallowing it. The Search endpoint and the MCP search tool both
-// group through here.
-func groupHits(hits []rag.Hit, byID map[string]*videos.Video, maxVideos, maxMoments int) []*searchResult {
+// perVideo yields the rest of the budget to the videos below it instead of
+// swallowing it. The Search endpoint and the MCP search tool both group
+// through here, with maxMatchesPerVideo; only an MCP search scoped to one
+// video passes singleVideoMatches.
+func groupHits(hits []rag.Hit, byID map[string]*videos.Video, maxVideos, maxMoments, perVideo int) []*searchResult {
 	out := make([]*searchResult, 0)
 	byVideo := make(map[string]*searchResult)
 	emitted := 0
@@ -272,7 +277,7 @@ func groupHits(hits []rag.Hit, byID map[string]*videos.Video, maxVideos, maxMome
 			byVideo[h.VideoID] = g
 			out = append(out, g)
 		}
-		if len(g.Matches) >= maxMatchesPerVideo || !g.admits(h) {
+		if len(g.Matches) >= perVideo || !g.admits(h) {
 			continue
 		}
 		emitted++

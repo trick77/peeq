@@ -255,6 +255,16 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 		ChannelSubcategory: q.ChannelSubcategory,
 		After:              q.After,
 		Before:             q.Before,
+		Watched:            q.Watched,
+		Favorite:           q.Favorite,
+	}
+	perVideo := maxMatchesPerVideo
+	if q.VideoID != "" {
+		if err := l.searchableVideo(ctx, q.VideoID); err != nil {
+			return mcpserver.SearchResult{}, err
+		}
+		filter.VideoIDs = []string{q.VideoID}
+		perVideo = singleVideoMatches
 	}
 	var hits []rag.Hit
 	var res mcpserver.SearchResult
@@ -309,7 +319,7 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 	if err != nil {
 		return res, err
 	}
-	groups := groupHits(hits, byID, q.Videos, 0)
+	groups := groupHits(hits, byID, q.Videos, 0, perVideo)
 	subs, err := s.videos.SubcategoriesMany(ctx, idsOf(groups, func(g *searchResult) string { return g.Video.ID }))
 	if err != nil {
 		slog.WarnContext(ctx, "mcp: video subcategories unavailable", "err", err)
@@ -323,6 +333,24 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 		res.Videos = append(res.Videos, vh)
 	}
 	return res, nil
+}
+
+// searchableVideo gates a search scoped to one video, before any lane runs: an
+// unknown id costs no embed call. One EXISTS on its chunks (what every lane
+// reads); only without any, one row read tells unknown from not indexed.
+func (l mcpLibrary) searchableVideo(ctx context.Context, id string) error {
+	indexed, err := l.s.rag.HasChunks(ctx, id)
+	if err != nil || indexed {
+		return err
+	}
+	v, err := l.s.videos.GetCtx(ctx, id)
+	switch {
+	case err != nil:
+		return err
+	case v == nil:
+		return mcpserver.ErrVideoNotFound
+	}
+	return mcpserver.ErrVideoNotSearchable
 }
 
 func (l mcpLibrary) Video(ctx context.Context, id string) (*mcpserver.Video, error) {
@@ -439,6 +467,8 @@ func toMCPVideo(v *videos.Video) mcpserver.Video {
 		PublishedAt:     v.PublishedAt,
 		DurationSeconds: v.DurationSeconds,
 		Category:        v.Category,
+		Watched:         v.Watched,
+		Favorite:        v.Favorite,
 		Summary:         v.Summary,
 	}
 	_ = json.Unmarshal([]byte(v.YTCategories), &out.YouTubeCategories)

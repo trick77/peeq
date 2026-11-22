@@ -39,6 +39,12 @@ type searchArgs struct {
 	Before          string `json:"before"`
 	Mode            string `json:"mode"`
 	K               *int   `json:"k"`
+	// channels is an addition beside channel, never a retyped channel: the
+	// decoder is strict and clients cache tools/list.
+	Channels []string `json:"channels"`
+	VideoID  string   `json:"video_id"`
+	Watched  *bool    `json:"watched"`
+	Favorite *bool    `json:"favorite"`
 }
 
 func runSearch(ctx context.Context, h *handler, raw json.RawMessage) mcp.Result {
@@ -81,8 +87,12 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) mcp.Result 
 	if a.K != nil {
 		q.Videos = min(max(*a.K, 1), maxSearchVideos)
 	}
-	if name := strings.TrimSpace(a.Channel); name != "" {
-		scope, stop := h.resolveChannelArg(ctx, name, "search", "search without a channel")
+	names, bad := h.checkScopeArgs(a, &q)
+	if bad != nil {
+		return *bad
+	}
+	if len(names) > 0 {
+		scope, stop := h.resolveChannelArgs(ctx, names, "search", "search without a channel")
 		if stop != nil {
 			if !stop.IsError {
 				// No videos yet: the contract's empty result carries "sources": [].
@@ -95,6 +105,9 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) mcp.Result 
 
 	res, err := h.lib.Search(ctx, q)
 	if err != nil {
+		if miss, ok := searchVideoMiss(q.VideoID, err); ok {
+			return miss
+		}
 		slog.Warn("mcp: search failed", "err", err)
 		reason := "the search index could not be read"
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -119,8 +132,7 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) mcp.Result {
 	}
 	if len(res.Videos) == 0 {
 		b.WriteString("No videos in peeq match this search.")
-		if len(q.Channel.Matched) > 0 || q.Category != "" || q.YouTubeCategory != "" || q.After != "" || q.Before != "" ||
-			q.Subcategory != "" || q.ChannelSubcategory != "" {
+		if q.filtered() {
 			b.WriteString(" Try again without some of the filters.")
 		}
 		return mcp.Result{Text: b.String(), Sources: sources}
@@ -171,7 +183,8 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) mcp.Result {
 }
 
 // resultHeader is "<title> — <channel>, <date>, category <c> · youtube: <yt>,
-// subcategories: <s>", each part omitted when unknown.
+// subcategories: <s>, watched, favorite", each part omitted when unknown or
+// unset: a model reports the user's marks without another call.
 func resultHeader(v Video) string {
 	var meta []string
 	if v.Channel != "" {
@@ -191,6 +204,12 @@ func resultHeader(v Video) string {
 	}
 	if len(v.Subcategories) > 0 {
 		meta = append(meta, "subcategories: "+strings.Join(v.Subcategories, ", "))
+	}
+	if v.Watched {
+		meta = append(meta, "watched")
+	}
+	if v.Favorite {
+		meta = append(meta, "favorite")
 	}
 	title := mcp.OneLine(v.Title, titleRunes)
 	if title == "" {

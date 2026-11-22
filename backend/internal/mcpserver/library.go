@@ -37,7 +37,9 @@ type Library interface {
 	// A miss is not an error: Scope.Resolved() is false and Suggestions holds
 	// the closest names.
 	ResolveChannel(ctx context.Context, name string) (ChannelScope, error)
-	// Search runs retrieval and groups the hits per video, best first.
+	// Search runs retrieval and groups the hits per video, best first. With
+	// VideoID set it answers ErrVideoNotFound for an id peeq has no video for
+	// and ErrVideoNotSearchable for one with nothing indexed.
 	Search(ctx context.Context, q SearchQuery) (SearchResult, error)
 	// Video returns one video with its analysis, or nil when there is none.
 	Video(ctx context.Context, id string) (*Video, error)
@@ -51,8 +53,13 @@ type Library interface {
 	Transcript(ctx context.Context, id string) (*Transcript, error)
 }
 
-// ErrVideoNotFound is Transcript's answer for an id peeq has no video for.
+// ErrVideoNotFound is Transcript's answer for an id peeq has no video for,
+// and Search's for such a VideoID.
 var ErrVideoNotFound = errors.New("mcp: video not found")
+
+// ErrVideoNotSearchable is Search's answer for a VideoID peeq holds but has
+// no search-index chunks for: no lane can reach it.
+var ErrVideoNotSearchable = errors.New("mcp: video not searchable")
 
 // AddOutcome is what AddVideos did with one URL.
 type AddOutcome string
@@ -143,6 +150,11 @@ type SearchQuery struct {
 	ChannelSubcategory string
 	// After and Before are inclusive 'YYYY-MM-DD' release-date bounds or "".
 	After, Before string
+	// VideoID is an id-shaped id or "": the search runs inside that video
+	// only, with more moments of it than a library-wide search shows.
+	VideoID string
+	// Watched and Favorite are three-valued: nil is no constraint.
+	Watched, Favorite *bool
 	// Keyword skips the embedding: a literal FTS5 match only.
 	Keyword bool
 	// Videos caps how many videos come back.
@@ -187,6 +199,8 @@ type Video struct {
 	Category          string
 	Subcategories     []string
 	YouTubeCategories []string
+	// Watched and Favorite are the user's marks on the video.
+	Watched, Favorite bool
 	Summary           string
 	KeyPoints         []Moment
 	Chapters          []Moment
