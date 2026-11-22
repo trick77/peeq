@@ -5,18 +5,18 @@ import (
 	"fmt"
 )
 
-// librarySpanSQL reads every row from idx_videos_cards, which holds all three
-// columns: no video row is opened. The release date is rag.Filter's and
-// Browse's (a dateless row counts by the day it was recorded), so the span
-// matches what search's and list_videos' after/before can reach.
+// librarySpanSQL reads every row from idx_videos_cards, which holds both
+// columns: no video row is opened. The span is published_at alone, not
+// rag.Filter's COALESCE with created_at: scan-seeded rows carry no release
+// date on purpose, and the day peeq recorded one is no release date.
 const librarySpanSQL = `
 SELECT COUNT(*),
-       COALESCE(MIN(COALESCE(v.published_at, date(v.created_at))), ''),
-       COALESCE(MAX(COALESCE(v.published_at, date(v.created_at))), '')
+       COALESCE(MIN(NULLIF(v.published_at, '')), ''),
+       COALESCE(MAX(NULLIF(v.published_at, '')), '')
 FROM videos v INDEXED BY idx_videos_cards`
 
 // LibrarySpan counts every video peeq holds, whatever its status, and the
-// release dates they span.
+// release dates of those that have one.
 func (s *Store) LibrarySpan(ctx context.Context) (LibrarySpan, error) {
 	var out LibrarySpan
 	if err := s.db.QueryRowContext(ctx, librarySpanSQL).Scan(&out.Videos, &out.Oldest, &out.Newest); err != nil {

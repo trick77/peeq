@@ -47,11 +47,6 @@ func (l mcpLibrary) Channels(ctx context.Context) ([]mcpserver.Channel, error) {
 	if err != nil {
 		slog.WarnContext(ctx, "mcp: channel subcategories unavailable", "err", err)
 	}
-	// So are the searchable counts: without them a channel shows its total.
-	searchable, err := l.s.videos.ChannelSearchableCounts(ctx)
-	if err != nil {
-		slog.WarnContext(ctx, "mcp: channel searchable counts unavailable", "err", err)
-	}
 	out := make([]mcpserver.Channel, 0, len(chans))
 	for _, c := range chans {
 		mc := mcpserver.Channel{
@@ -62,9 +57,6 @@ func (l mcpLibrary) Channels(ctx context.Context) ([]mcpserver.Channel, error) {
 			Subscribed:    c.Subscribed,
 			KeepReads:     c.KeepReads,
 			Subcategories: subs[c.ID],
-			// A channel absent from the map has nothing indexed.
-			Searchable:      searchable[c.ID],
-			SearchableKnown: searchable != nil,
 		}
 		if st := stats[c.ID]; st != nil {
 			mc.Videos = st.Videos
@@ -76,9 +68,19 @@ func (l mcpLibrary) Channels(ctx context.Context) ([]mcpserver.Channel, error) {
 	return out, nil
 }
 
+// SearchableCounts is list_youtube_channels' alone: Channels also serves
+// ResolveChannel and the hint, which must not pay for a whole-library scan.
+func (l mcpLibrary) SearchableCounts(ctx context.Context) (map[string]int, error) {
+	if l.s.videos == nil {
+		return nil, errMCPNotConfigured
+	}
+	return l.s.videos.ChannelSearchableCounts(ctx)
+}
+
 // Totals sizes the library: Ask's CountVideos over the whole library (videos
-// with chunks, their runtime and channels: what search can reach) plus every
-// row and the release-date span. Two index-only statements; a failure of
+// with chunks and their runtime: what search can reach) plus every row and
+// the release-date span. Two index-only statements on separate stores, no
+// shared snapshot: the renderer keeps the numbers consistent. A failure of
 // either fails the whole.
 func (l mcpLibrary) Totals(ctx context.Context) (mcpserver.LibraryTotals, error) {
 	if l.s.videos == nil || l.s.rag == nil {
@@ -93,12 +95,11 @@ func (l mcpLibrary) Totals(ctx context.Context) (mcpserver.LibraryTotals, error)
 		return mcpserver.LibraryTotals{}, err
 	}
 	return mcpserver.LibraryTotals{
-		Videos:             span.Videos,
-		Searchable:         count.Videos,
-		SearchableSeconds:  int64(count.DurationSeconds),
-		SearchableChannels: count.Channels,
-		Oldest:             span.Oldest,
-		Newest:             span.Newest,
+		Videos:            span.Videos,
+		Searchable:        count.Videos,
+		SearchableSeconds: int64(count.DurationSeconds),
+		Oldest:            span.Oldest,
+		Newest:            span.Newest,
 	}, nil
 }
 
