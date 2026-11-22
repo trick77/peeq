@@ -9,7 +9,7 @@ require (
 	github.com/trick77/ship/kit/auth v0.4.2
 	github.com/trick77/toolkit v0.5.1
 	go.yaml.in/yaml/v3 v3.0.6
-	golang.org/x/image v0.47.0
+	golang.org/x/image v0.48.0
 	golang.org/x/oauth2 v0.38.0
 )
 
@@ -18,7 +18,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.9 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/tetratelabs/wazero v1.12.0 // indirect
-	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 )
