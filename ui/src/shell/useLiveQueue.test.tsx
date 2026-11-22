@@ -12,7 +12,7 @@ import {
 } from "../api";
 import { getYtdlpVersion } from "../api/ytdlp";
 import type { SSEEvent } from "../api/stream";
-import type { Job } from "../api/types";
+import type { Job, SummaryJob } from "../api/types";
 import { useProgressByJobId, resetProgressForTests } from "./progressStore";
 
 vi.mock("../api", () => ({
@@ -42,6 +42,13 @@ const healthy = {
   youtube_paused: false,
   youtube_pause_reason: "",
 };
+
+// A promise the test settles by hand, to hold a list reply in flight.
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
 
 // The stream handler the hook registered, so a test can push frames in.
 let pushFrame: ((e: SSEEvent) => void) | null = null;
@@ -181,6 +188,135 @@ describe("useLiveQueue", () => {
       status: "running",
     });
     await waitFor(() => expect(listSummaries).toHaveBeenCalledTimes(2));
+  });
+
+  // The worker ends a run with an EMPTY phase whatever the outcome. Storing
+  // that "" lost the outcome, so a failed run read as finished.
+  it.each(["done", "error", "no_transcript"])(
+    "a final frame with an empty phase records its status (%s)",
+    async (status) => {
+      vi.mocked(listSummaries).mockResolvedValue([
+        { id: 1, video_id: "v1", state: "running" } as SummaryJob,
+      ]);
+      const { result } = renderHook(() => useLiveQueue(true));
+      await waitFor(() => expect(pushFrame).not.toBeNull());
+
+      await waitFor(() => expect(result.current.summariesLoaded).toBe(true));
+      const relist = deferred<SummaryJob[]>();
+      vi.mocked(listSummaries).mockReturnValueOnce(relist.promise);
+
+      act(() => {
+        pushFrame!({
+          event: "summary",
+          data: { video_id: "v1", status, phase: "" },
+        });
+      });
+      expect(result.current.summaryPhaseByVideoId.v1).toBe(status);
+      // The frame's own re-list still lists the job as running: the entry
+      // survives it once that reply has landed.
+      await act(async () => {
+        relist.resolve([
+          { id: 1, video_id: "v1", state: "running" } as SummaryJob,
+        ]);
+        await relist.promise;
+      });
+      expect(result.current.summaryPhaseByVideoId.v1).toBe(status);
+    },
+  );
+
+  // Production order for a retried failure: the error frame goes out before
+  // the job row is requeued, and the re-list that frame triggers then lists it
+  // as pending.
+  it("an error frame followed by a pending re-list drops the entry", async () => {
+    vi.mocked(listSummaries).mockResolvedValue([
+      { id: 1, video_id: "v1", state: "running" } as SummaryJob,
+    ]);
+    const { result } = renderHook(() => useLiveQueue(true));
+    await waitFor(() => expect(pushFrame).not.toBeNull());
+    await waitFor(() => expect(result.current.summariesLoaded).toBe(true));
+    vi.mocked(listSummaries).mockResolvedValue([
+      { id: 1, video_id: "v1", state: "pending" } as SummaryJob,
+    ]);
+
+    act(() => {
+      pushFrame!({
+        event: "summary",
+        data: { video_id: "v1", status: "error", phase: "" },
+      });
+    });
+    expect(result.current.summaryPhaseByVideoId.v1).toBe("error");
+    await waitFor(() =>
+      expect(result.current.summaryPhaseByVideoId.v1).toBeUndefined(),
+    );
+  });
+
+  // A poll whose read ran before the worker claimed the job can answer
+  // "pending" after the job's first frame. A resumed job's first frame is its
+  // resumed step (no "summarizing"), so dropping it left the row on step 1 for
+  // that whole step.
+  it("a re-list sent before a frame does not drop that frame's phase", async () => {
+    vi.mocked(listSummaries).mockResolvedValue([
+      { id: 1, video_id: "v1", state: "pending" } as SummaryJob,
+    ]);
+    const { result } = renderHook(() => useLiveQueue(true));
+    await waitFor(() => expect(pushFrame).not.toBeNull());
+    await waitFor(() => expect(result.current.summariesLoaded).toBe(true));
+
+    const stalePoll = deferred<SummaryJob[]>();
+    const frameRelist = deferred<SummaryJob[]>();
+    vi.mocked(listSummaries)
+      .mockReturnValueOnce(stalePoll.promise)
+      .mockReturnValueOnce(frameRelist.promise);
+    act(() => result.current.refreshSummaries());
+    act(() => {
+      pushFrame!({
+        event: "summary",
+        data: { video_id: "v1", status: "done", phase: "keypoints" },
+      });
+    });
+
+    await act(async () => {
+      stalePoll.resolve([
+        { id: 1, video_id: "v1", state: "pending" } as SummaryJob,
+      ]);
+      await stalePoll.promise;
+    });
+    expect(result.current.summaryPhaseByVideoId.v1).toBe("keypoints");
+
+    await act(async () => {
+      frameRelist.resolve([
+        { id: 1, video_id: "v1", state: "running" } as SummaryJob,
+      ]);
+      await frameRelist.promise;
+    });
+    expect(result.current.summaryPhaseByVideoId.v1).toBe("keypoints");
+  });
+
+  // A key-points or embedding failure requeues the job with a backoff and sends
+  // no frame, so only the re-list can say it stopped running.
+  it("a re-list drops the phase of a job that is no longer running", async () => {
+    vi.mocked(listSummaries).mockResolvedValue([
+      { id: 1, video_id: "v1", state: "running" } as SummaryJob,
+    ]);
+    const { result } = renderHook(() => useLiveQueue(true));
+    await waitFor(() => expect(pushFrame).not.toBeNull());
+
+    act(() => {
+      pushFrame!({
+        event: "summary",
+        data: { video_id: "v1", status: "done", phase: "embedding" },
+      });
+    });
+    await waitFor(() => expect(listSummaries).toHaveBeenCalledTimes(2));
+    expect(result.current.summaryPhaseByVideoId.v1).toBe("embedding");
+
+    vi.mocked(listSummaries).mockResolvedValue([
+      { id: 1, video_id: "v1", state: "pending" } as SummaryJob,
+    ]);
+    act(() => result.current.refreshSummaries());
+    await waitFor(() =>
+      expect(result.current.summaryPhaseByVideoId.v1).toBeUndefined(),
+    );
   });
 
   it("an activity frame is buffered and refreshes the pending count", async () => {

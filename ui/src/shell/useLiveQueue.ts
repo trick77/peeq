@@ -126,6 +126,11 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
   const jobsRef = useRef<Job[]>([]);
   // The last summary status seen per video, so only a change bumps inboxTick.
   const lastSummaryStatus = useRef<Record<string, string>>({});
+  // Orders summary frames against list requests: frameSeq counts frames, and
+  // phaseSeq holds the count at each video's latest frame, so a list reply can
+  // tell an entry it predates from one it already saw.
+  const frameSeq = useRef(0);
+  const phaseSeq = useRef<Record<string, number>>({});
   useEffect(() => {
     jobsRef.current = jobs;
   }, [jobs]);
@@ -156,7 +161,16 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
   // is no longer in the list, so its phase entry is dropped rather than
   // accumulating for every video summarized this session — and a re-summarized
   // video can't inherit a stale phase label from its previous run.
+  //
+  // A listed job that is not running drops its entry too. A key-points or
+  // embedding failure requeues the job with a backoff and sends no frame, so
+  // without this the pending job kept reading "Embedding, step 5 of 5" through
+  // the whole wait instead of "waiting". But only an entry older than the
+  // request: a poll whose read ran before the worker claimed the job can answer
+  // "pending" after the job's first frame, and a resumed job's first frame is
+  // its resumed step, so dropping it left the row on step 1 for that step.
   const refreshSummaries = useCallback(() => {
+    const asked = frameSeq.current;
     listSummaries()
       .then((list) => {
         setSummaries((prev) => keepIfSame(prev, list));
@@ -164,8 +178,16 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
         setSummaryPhaseByVideoId((prev) => {
           const next: Record<string, string> = {};
           for (const s of list) {
-            if (prev[s.video_id] !== undefined)
+            if (prev[s.video_id] === undefined) continue;
+            const newer = (phaseSeq.current[s.video_id] ?? 0) > asked;
+            if (s.state === "running" || newer)
               next[s.video_id] = prev[s.video_id];
+          }
+          // Bounded like the map, but a frame newer than the request keeps its
+          // count even when its entry has not landed in `prev` yet.
+          for (const [id, seq] of Object.entries(phaseSeq.current)) {
+            if (next[id] === undefined && seq <= asked)
+              delete phaseSeq.current[id];
           }
           return keepIfSame(prev, next);
         });
@@ -356,10 +378,14 @@ export function useLiveQueue(enabled: boolean): LiveQueue {
           lastSummaryStatus.current[s.video_id] = s.status ?? "";
           setInboxTick((n) => n + 1);
         }
+        // The run's final frame carries an EMPTY phase whatever the outcome
+        // (done, error, no_transcript), so `||` rather than `??`: the status is
+        // what tells a finished run from a failed one.
         if (s.video_id) {
+          phaseSeq.current[s.video_id] = ++frameSeq.current;
           setSummaryPhaseByVideoId((prev) => ({
             ...prev,
-            [s.video_id as string]: s.phase ?? s.status ?? "",
+            [s.video_id as string]: s.phase || s.status || "",
           }));
         }
         // Hand it on to the open video's page.

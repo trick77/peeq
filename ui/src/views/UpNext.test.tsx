@@ -400,6 +400,68 @@ describe("UpNext", () => {
     },
   );
 
+  // A run that ended in an error or without a transcript is still listed as
+  // running for a moment after its final frame. It used to read "Done" with
+  // the bar full.
+  it.each([
+    ["error", "Failed", "failed", true],
+    ["no_transcript", "No transcript", "no transcript", false],
+  ])(
+    "does not show a summary that ended %s as finished",
+    (phase, label, when, tinted) => {
+      render(
+        <UpNext
+          jobs={[]}
+          summaries={[summary({ id: 8, video_id: "s8", title: "Ended" })]}
+          summaryPhaseByVideoId={{ s8: phase }}
+          onCancel={noop}
+        />,
+      );
+      const row = screen.getByText("Ended").closest(".ag-row") as HTMLElement;
+      expect(within(row).queryByText("Done")).toBeNull();
+      expect(within(row).getByText(label)).toBeInTheDocument();
+      expect(
+        row.querySelectorAll(".un-step.done, .un-step.active"),
+      ).toHaveLength(0);
+      expect(row.querySelector(".ag-when")?.textContent).toBe(when);
+      // Only an error takes the gave-up row's tint: no transcript is a clean
+      // end, not a failure.
+      expect(row.classList.contains("fail")).toBe(tinted);
+      // Nothing is running on this row any more: no "now" in the clock and the
+      // gave-up row's kind word rather than "Summarising".
+      expect(row.querySelector(".ag-clock")?.textContent).toBe("");
+      expect(row.querySelector(".ag-kind")?.textContent).toBe("Summary");
+    },
+  );
+
+  // A requeued job whose re-list failed can still carry its last run's
+  // outcome. Queued, it is waiting for another attempt, not failed.
+  it.each(["error", "no_transcript", "done", "embedding"])(
+    "reads a non-running summary with phase %j as waiting",
+    (phase) => {
+      render(
+        <UpNext
+          jobs={[]}
+          summaries={[
+            summary({
+              id: 9,
+              video_id: "s9",
+              title: "Requeued",
+              state: "pending",
+            }),
+          ]}
+          summaryPhaseByVideoId={{ s9: phase }}
+          onCancel={noop}
+        />,
+      );
+      const row = screen
+        .getByText("Requeued")
+        .closest(".ag-row") as HTMLElement;
+      expect(row.querySelector(".ag-when")?.textContent).toBe("waiting");
+      expect(row.classList.contains("fail")).toBe(false);
+    },
+  );
+
   it("reads a non-running summary with an empty phase as waiting", () => {
     render(
       <UpNext
