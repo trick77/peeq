@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"github.com/trick77/peeq/internal/store"
 )
 
 // Transcript sources. A caption fetched to decide whether a video is worth
@@ -31,6 +33,12 @@ const MaxTranscriptBytes = 8 << 20 // 8 MiB
 // leaving source='caption' on it would strand a fully downloaded video on the
 // truncated inbox pipeline forever.
 func (s *Store) SetTranscript(id, source, vtt string) error {
+	return setTranscriptTx(context.Background(), s.db, id, source, vtt)
+}
+
+// setTranscriptTx is SetTranscript on x, so a caller can store the text in
+// the same transaction as the work that depends on it.
+func setTranscriptTx(ctx context.Context, x store.DBTX, id, source, vtt string) error {
 	if id == "" {
 		return fmt.Errorf("set transcript: empty video id")
 	}
@@ -43,7 +51,7 @@ func (s *Store) SetTranscript(id, source, vtt string) error {
 	if len(vtt) > MaxTranscriptBytes {
 		return fmt.Errorf("set transcript %s: %d bytes exceeds cap %d", id, len(vtt), MaxTranscriptBytes)
 	}
-	_, err := s.db.ExecContext(context.Background(), `
+	_, err := x.ExecContext(ctx, `
 INSERT INTO video_transcripts (video_id, source, vtt, updated_at)
 VALUES (?, ?, ?, datetime('now'))
 ON CONFLICT(video_id) DO UPDATE SET

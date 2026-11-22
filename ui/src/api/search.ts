@@ -62,6 +62,18 @@ export async function reprocess(id: string): Promise<void> {
   );
 }
 
+// fetchCaptions asks the server to fetch the captions of a library video that
+// has none. 202 with an EMPTY body once the fetch is queued (postNoContent, as
+// reprocess); how it ended shows in Activity, and a transcript that lands
+// re-runs the analysis, whose summary events refresh an open Player.
+export async function fetchCaptions(id: string): Promise<void> {
+  await api.postNoContent(
+    `/api/videos/${encodeURIComponent(id)}/fetch-captions`,
+    undefined,
+    "failed to fetch captions",
+  );
+}
+
 // subtitlesUrl is just a string builder (no request) — callers render it as
 // a <track src> / download link, mirroring streamUrl/thumbnailUrl in videos.ts.
 export function subtitlesUrl(id: string): string {

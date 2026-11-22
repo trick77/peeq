@@ -175,6 +175,10 @@ type Deps struct {
 	// SummaryJobs enqueues a summary job for a video. Optional: when nil,
 	// /api/videos/{id}/reprocess returns 503.
 	SummaryJobs SummaryEnqueuer
+	// Captions fetches the captions of a library video that has none, in the
+	// background, behind POST /api/videos/{id}/fetch-captions. Optional: when
+	// nil, that endpoint returns 503. *captionrefetch.Service satisfies it.
+	Captions CaptionRefetcher
 	// SummaryList reads the in-flight summary queue backing GET /api/summaries
 	// (the Queue page's "being summarized" lane). Optional: when nil, that
 	// endpoint reports an empty queue. Production wires the same
@@ -232,6 +236,13 @@ type SearchEmbedder interface {
 // enqueued job's id.
 type SummaryEnqueuer interface {
 	Enqueue(videoID string) (int64, error)
+}
+
+// CaptionRefetcher starts a background caption fetch for a video and reports
+// false, starting nothing, when one for that video is already in flight. It
+// never waits on YouTube: the handler answers before the fetch has its turn.
+type CaptionRefetcher interface {
+	Start(videoID, rawURL string) bool
 }
 
 // YTDLPVersioner is the subset of *ytdlp.Runner the settings API needs to
@@ -328,6 +339,7 @@ type server struct {
 	ask           StreamCompleter
 	understand    Completer
 	summaryJobs   SummaryEnqueuer
+	captions      CaptionRefetcher
 	summaryList   SummaryLister
 	activity      ActivityReader
 	activityWrite ActivityWriter
@@ -396,6 +408,7 @@ func New(d Deps) http.Handler {
 		ask:               d.Ask,
 		understand:        d.Understand,
 		summaryJobs:       d.SummaryJobs,
+		captions:          d.Captions,
 		summaryList:       d.SummaryList,
 		activity:          d.Activity,
 		activityWrite:     d.ActivityWrite,
@@ -528,6 +541,7 @@ func New(d Deps) http.Handler {
 	// shared streamSSE helper, which sends no body.
 	mux.Handle("GET /api/search/answer", s.requireAuth(http.HandlerFunc(s.handleAnswer)))
 	mux.Handle("POST /api/videos/{id}/reprocess", s.requireAuth(http.HandlerFunc(s.handleReprocess)))
+	mux.Handle("POST /api/videos/{id}/fetch-captions", s.requireAuth(http.HandlerFunc(s.handleFetchCaptions)))
 	// Bearer-gated like /api/machine but a separate secret: the MCP server, gated on its own
 	// static bearer secret (never the extension token) and an Origin check.
 	// Reads the library; its one write is add_videos, the Add view's enqueue.

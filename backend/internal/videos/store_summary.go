@@ -152,7 +152,7 @@ func (s *Store) ResetAndEnqueueSummary(id string) (jobID int64, err error) {
 		return 0, fmt.Errorf("reset video %s for reprocess: begin: %w", id, err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := resetForReprocessTx(ctx, tx, id); err != nil {
+	if err := resetForReprocessTx(ctx, tx, id, false); err != nil {
 		return 0, err
 	}
 	res, err := tx.ExecContext(ctx, summaryjobs.EnqueueSQL, id)
@@ -179,7 +179,7 @@ func (s *Store) ResetForReprocess(id string) error {
 		return fmt.Errorf("reset video %s for reprocess: begin: %w", id, err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := resetForReprocessTx(ctx, tx, id); err != nil {
+	if err := resetForReprocessTx(ctx, tx, id, false); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -188,15 +188,21 @@ func (s *Store) ResetForReprocess(id string) error {
 	return nil
 }
 
-func resetForReprocessTx(ctx context.Context, x store.DBTX, id string) error {
+// resetForReprocessTx wipes the analysis. keepManualCategory spares a
+// hand-picked category (category_manual = 1) and its flag: Reprocess passes
+// false, since a redo is how a user re-categorizes; a caption fetch passes
+// true, since the user asked for text, not for a new category.
+func resetForReprocessTx(ctx context.Context, x store.DBTX, id string, keepManualCategory bool) error {
+	keep := boolToInt(keepManualCategory)
 	res, err := x.ExecContext(ctx, `
 UPDATE videos
    SET summary_status = ?, summary_error = '',
        summary = '', chapters = '', key_points = '',
-       category = ?, category_manual = 0,
+       category = CASE WHEN ? = 1 AND category_manual = 1 THEN category ELSE ? END,
+       category_manual = CASE WHEN ? = 1 THEN category_manual ELSE 0 END,
        embed_rev = 0,
        sponsorblock_refreshed_at = ''
- WHERE id = ?`, SummaryPending, UncategorizedCategory, id)
+ WHERE id = ?`, SummaryPending, keep, UncategorizedCategory, keep, id)
 	if err != nil {
 		return fmt.Errorf("reset video %s for reprocess: %w", id, err)
 	}
