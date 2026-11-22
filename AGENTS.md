@@ -31,7 +31,7 @@
 
 ## MCP
 - OIDC bypasses: share/grant routes, `/api/machine` (extension token, cookie write), `/mcp` (`BACKEND_MCP_TOKEN`, reads + `add_videos`). One token never opens another's route.
-- Content retrieval = Search lanes (`mcp_library.go`), never a 2nd search. `list_videos` = metadata browse (title LIKE over the card index), never transcript text. Unnumbered items, `sources[i]` = i-th: loom contract.
+- Content retrieval = Search lanes (`mcp_library.go`), never a 2nd search; `list_videos` never becomes one. Unnumbered items, `sources[i]` = i-th: loom contract.
 - `add_videos` = Add view's enqueue, but a video with an active job (`ActiveIDsForVideos`) or downloaded is skipped, never re-queued: LLM clients retry calls. Status 'queued' alone lies (cancel leaves it, no job). Calls serialized (`mcpAddMu`): no unique active-job index. `items[i]` = i-th video: loom's confirm card.
 
 ## Database

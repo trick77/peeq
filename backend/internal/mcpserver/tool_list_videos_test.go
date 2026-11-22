@@ -154,6 +154,41 @@ func TestListVideos_failures(t *testing.T) {
 	}
 }
 
+// The tool deadline interrupting a running statement reaches the handler as
+// whatever the driver says ("sqlite3: interrupted"); the call's own context
+// tells it was the deadline.
+func TestListVideos_interruptedByTheDeadlineSaysTimedOut(t *testing.T) {
+	lib := listFixture()
+	lib.listErr = errors.New("browse videos: count: sqlite3: interrupted")
+	ctx, cancel := context.WithTimeout(context.Background(), -1)
+	defer cancel()
+	r := runListVideos(ctx, &handler{lib: lib, publicURL: "https://peeq.example.com"}, []byte(`{}`))
+	if !r.IsError || r.Text != "listing videos failed (timed out); try again" {
+		t.Errorf("got %v %q", r.IsError, r.Text)
+	}
+}
+
+// A total that disagrees with the page (a library read across a concurrent
+// write) never yields a range past the total, a continuation into nothing, or
+// the empty-library text over listed rows.
+func TestListVideos_totalBelowThePageIsRaised(t *testing.T) {
+	two := []ListedVideo{{ID: "a", Title: "A", Searchable: true}, {ID: "b", Title: "B", Searchable: true}}
+	for _, tc := range []struct {
+		total, offset int
+		want          string
+	}{
+		{0, 0, "Videos 1–2 of 2 "},
+		{1, 0, "Videos 1–2 of 2 "},
+		{3, 5, "Videos 6–7 of 7 "},
+	} {
+		lib := &fakeLibrary{list: VideoList{Total: tc.total, Videos: two}}
+		text := toolText(t, callTool(t, lib, "list_videos", map[string]any{"offset": tc.offset}))
+		if !strings.HasPrefix(text, tc.want) || strings.Contains(text, "offset=") || strings.Contains(text, "no videos") {
+			t.Errorf("total %d offset %d:\n%s", tc.total, tc.offset, text)
+		}
+	}
+}
+
 func TestListVideos_emptyAndPastTheEnd(t *testing.T) {
 	lib := &fakeLibrary{}
 	r := callTool(t, lib, "list_videos", map[string]any{})

@@ -604,7 +604,7 @@ Go types:
 
 Indexes:
 
-- `idx_videos_cards` (`status`, `id`, `title`, `channel_id`, `channel_name`, `duration_seconds`, `published_at`, `media_path`, `watched`, `watched_at`, `resume_position_seconds`, `favorite`, `downloaded_at`, `category`, `created_at`)
+- `idx_videos_cards` (`status`, `id`, `title`, `channel_id`, `channel_name`, `duration_seconds`, `published_at`, `media_path`, `watched`, `watched_at`, `resume_position_seconds`, `favorite`, `downloaded_at`, `category`, `created_at`, `summary_status`)
 - `idx_videos_channel_categories` (`channel_id`, `category`, `yt_categories`)
 - `idx_videos_channel_kept` (`channel_id`, `status`, `id`) where `status IN ('tombstoned', 'new')`
 - `idx_videos_channel_search` (`channel_id`, `channel_name`, `id`)

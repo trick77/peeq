@@ -83,7 +83,9 @@ func runListVideos(ctx context.Context, h *handler, raw json.RawMessage) mcp.Res
 	res, err := h.lib.Videos(ctx, q)
 	if err != nil {
 		slog.Warn("mcp: list videos failed", "err", err)
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		// The deadline interrupting a running statement comes back as the
+		// driver's "interrupted"; the call's own context says what it was.
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || ctx.Err() != nil {
 			return mcp.ErrorResult("listing videos failed (timed out); try again")
 		}
 		return mcp.ErrorResult("listing videos failed; try again")
@@ -96,6 +98,12 @@ func runListVideos(ctx context.Context, h *handler, raw json.RawMessage) mcp.Res
 // the range and the next offset depend on what survived the size cap.
 func (h *handler) renderVideoList(q VideoListQuery, res VideoList) mcp.Result {
 	filters := listFilters(q)
+	// A total below what the page holds (a library that changed between the
+	// count and the page) is raised to it: the range, the continuation and
+	// the empty texts below all read this one number.
+	if len(res.Videos) > 0 {
+		res.Total = max(res.Total, q.Offset+len(res.Videos))
+	}
 	if res.Total == 0 {
 		if len(filters) == 0 {
 			return mcp.Result{Text: "peeq holds no videos yet."}
