@@ -2,8 +2,9 @@ package videos
 
 import "testing"
 
-// Every row counts, whatever its status or channel. The span is search's and
-// list_videos' release date: a dateless row counts by the day it was recorded.
+// Every row counts, whatever its status or channel. The span is release dates
+// only: a row without published_at (a scan-seeded one) is left out of it, never
+// dated by the day peeq recorded it.
 func TestLibrarySpan(t *testing.T) {
 	db := openTestDB(t)
 	s := New(db)
@@ -12,6 +13,7 @@ func TestLibrarySpan(t *testing.T) {
 		{"b", "UCa", StatusNew, "2026-06-01", "2026-06-02 10:00:00"},
 		{"c", "", StatusTombstoned, "2025-01-10", "2025-02-01 10:00:00"},
 		{"d", "UCb", StatusQueued, "", "2019-05-04 08:00:00"},
+		{"e", "UCb", StatusNew, "", "2026-11-22 08:00:00"},
 	} {
 		mustExecBrowse(t, db, `INSERT INTO videos (id, url, channel_id, status, published_at, created_at) VALUES (?, 'u', ?, ?, NULLIF(?, ''), ?)`,
 			row.id, row.ch, row.status, row.published, row.created)
@@ -20,8 +22,18 @@ func TestLibrarySpan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (LibrarySpan{Videos: 4, Oldest: "2019-05-04", Newest: "2026-06-01"}); got != want {
+	if want := (LibrarySpan{Videos: 5, Oldest: "2024-03-03", Newest: "2026-06-01"}); got != want {
 		t.Errorf("span = %+v, want %+v", got, want)
+	}
+}
+
+// Rows but no release date at all: no span.
+func TestLibrarySpan_noReleaseDates(t *testing.T) {
+	db := openTestDB(t)
+	mustExecBrowse(t, db, `INSERT INTO videos (id, url, channel_id) VALUES ('a', 'u', 'UCa')`)
+	got, err := New(db).LibrarySpan(t.Context())
+	if err != nil || got != (LibrarySpan{Videos: 1}) {
+		t.Errorf("span = %+v, %v; want 1 video, no dates", got, err)
 	}
 }
 
@@ -37,20 +49,4 @@ func TestLibrarySpan_staysOnTheIndex(t *testing.T) {
 	db := openTestDB(t)
 	assertPlanOnly(t, "library span", queryPlan(t, db, librarySpanSQL),
 		"SCAN v USING COVERING INDEX idx_videos_cards")
-}
-
-// The other half of list_youtube_channels' totals line is rag.CountVideos
-// over the whole library (rag.Filter{}), verbatim here. It pins no index;
-// idx_videos_cards is the one index holding every column it reads, and the
-// planner must keep picking it.
-func TestLibraryCount_unfilteredStaysOnTheIndexes(t *testing.T) {
-	db := openTestDB(t)
-	const countVideosUnfiltered = `SELECT COUNT(*), COALESCE(SUM(COALESCE(v.duration_seconds, 0)), 0),
-	             COUNT(DISTINCT COALESCE(NULLIF(v.channel_id, ''), v.channel_name))
-	      FROM videos v WHERE EXISTS(SELECT 1 FROM transcript_chunks tc WHERE tc.video_id = v.id)`
-	assertPlanOnly(t, "library count", queryPlan(t, db, countVideosUnfiltered),
-		"SCAN v USING COVERING INDEX idx_videos_cards",
-		"USE TEMP B-TREE FOR count(DISTINCT)",
-		"CORRELATED SCALAR SUBQUERY *",
-		"SEARCH tc USING COVERING INDEX idx_transcript_chunks_video (video_id=?)")
 }

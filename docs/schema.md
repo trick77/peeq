@@ -686,7 +686,7 @@ In `internal/videos`. ChannelRef is one channel as it appears in the library, fo
 
 ### videos.LibrarySpan
 
-In `internal/videos`. LibrarySpan is how many videos peeq holds, whatever their status, and the release dates they span ('YYYY-MM-DD', "" for an empty library).
+In `internal/videos`. LibrarySpan is how many videos peeq holds, whatever their status, and the release dates they span ('YYYY-MM-DD'; "" when none has one).
 
 | Field | Type | Doc |
 | --- | --- | --- |

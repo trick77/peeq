@@ -45,10 +45,23 @@ type fakeLibrary struct {
 	// totals answers Totals, totalsErr fails it.
 	totals    LibraryTotals
 	totalsErr error
+	// searchable answers SearchableCounts, searchableErr fails it;
+	// searchableN counts the calls.
+	searchable    map[string]int
+	searchableErr error
+	searchableN   int
 }
 
 func (f *fakeLibrary) Totals(context.Context) (LibraryTotals, error) {
 	return f.totals, f.totalsErr
+}
+
+func (f *fakeLibrary) SearchableCounts(context.Context) (map[string]int, error) {
+	f.searchableN++
+	if f.searchableErr != nil {
+		return nil, f.searchableErr
+	}
+	return f.searchable, nil
 }
 
 func (f *fakeLibrary) Videos(_ context.Context, q VideoListQuery) (VideoList, error) {

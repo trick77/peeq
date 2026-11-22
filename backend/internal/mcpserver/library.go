@@ -28,6 +28,11 @@ type Library interface {
 	Channels(ctx context.Context) ([]Channel, error)
 	// Totals sizes the whole library for list_youtube_channels' first line.
 	Totals(ctx context.Context) (LibraryTotals, error)
+	// SearchableCounts is, per channel id, how many of its videos search can
+	// reach; a channel absent from the map has none. It reads the whole
+	// library, so only list_youtube_channels asks: never the hint or a
+	// channel-scoped search.
+	SearchableCounts(ctx context.Context) (map[string]int, error)
 	// ResolveChannel maps a name, @handle or id onto the library's channels.
 	// A miss is not an error: Scope.Resolved() is false and Suggestions holds
 	// the closest names.
@@ -80,11 +85,6 @@ type Channel struct {
 	KeepReads   bool
 	// Videos counts every video of the channel, whatever its status.
 	Videos int
-	// Searchable is how many of them search can reach (they have search
-	// chunks). It means something only when SearchableKnown: a failed count
-	// leaves both zero.
-	Searchable      int
-	SearchableKnown bool
 	// TopCategories is the channel's peeq category histogram, largest first;
 	// TopYouTubeCategories the same over YouTube's own labels.
 	TopCategories        []CategoryCount
@@ -99,11 +99,11 @@ type LibraryTotals struct {
 	// Videos is every video peeq holds, whatever its status.
 	Videos int
 	// Searchable counts the videos search can reach; SearchableSeconds is
-	// their runtime, SearchableChannels the channels they come from.
-	Searchable         int
-	SearchableSeconds  int64
-	SearchableChannels int
-	// Oldest and Newest span the release dates of all Videos ('YYYY-MM-DD').
+	// their runtime.
+	Searchable        int
+	SearchableSeconds int64
+	// Oldest and Newest span the release dates of the videos that have one
+	// ('YYYY-MM-DD'), "" when none has.
 	Oldest, Newest string
 }
 

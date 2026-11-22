@@ -178,7 +178,7 @@ type ChannelRef struct {
 }
 
 // LibrarySpan is how many videos peeq holds, whatever their status, and the
-// release dates they span ('YYYY-MM-DD', "" for an empty library).
+// release dates they span ('YYYY-MM-DD'; "" when none has one).
 //
 // Table: -
 type LibrarySpan struct {

@@ -28,6 +28,13 @@ const mcpTestToken = "mcp-integration-token"
 // read, a legacy row without a channel id).
 func mcpFixture(t *testing.T, embedder SearchEmbedder, mutate ...func(*Deps)) http.Handler {
 	t.Helper()
+	h, _ := mcpFixtureDB(t, embedder, mutate...)
+	return h
+}
+
+// mcpFixtureDB is mcpFixture plus its database, for a test that breaks it.
+func mcpFixtureDB(t *testing.T, embedder SearchEmbedder, mutate ...func(*Deps)) (http.Handler, *sql.DB) {
+	t.Helper()
 	deps, db, ragStore := searchTestDepsWithStores(t)
 	deps.Channels = channels.New(db)
 	deps.Embedder = embedder
@@ -119,7 +126,7 @@ func mcpFixture(t *testing.T, embedder SearchEmbedder, mutate ...func(*Deps)) ht
 	for _, m := range mutate {
 		m(&deps)
 	}
-	return New(deps)
+	return New(deps), db
 }
 
 func mustExec(t *testing.T, db *sql.DB, q string, args ...any) {
@@ -580,13 +587,15 @@ func TestMCP_searchInAChannelWithoutVideos(t *testing.T) {
 	}
 }
 
-// Over the real stores: the totals line counts all five videos (the inbox
-// read and the legacy row too), the three with chunks as searchable with
-// their runtime (the inbox read's is not), and the release dates of all five.
+// Over the real stores: the totals line counts all six videos (the inbox
+// read, the legacy row and a scan-seeded row too), the three with chunks as
+// searchable with their runtime (the inbox read's is not), and the release
+// dates of those that have one (the scan-seeded row has none: not today's).
 // A channel shows its searchable number only when some of it is out of reach.
 func TestMCP_listYouTubeChannelsSaysWhatSearchCanReach(t *testing.T) {
 	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, func(d *Deps) {
 		for _, v := range []videos.Video{
+			{ID: "bikeSeeded1", URL: "u7", Title: "Seeded by a scan", ChannelID: "UCbikes"},
 			{ID: "bikeVideo01", URL: "u1", Title: "Why bikes stay upright", ChannelID: "UCbikes",
 				ChannelName: "Bike Physics", PublishedAt: "2026-05-02", DurationSeconds: 5400},
 			{ID: "cookVideo01", URL: "u3", Title: "Perfect rice", ChannelID: "UCcook",
@@ -601,11 +610,11 @@ func TestMCP_listYouTubeChannelsSaysWhatSearchCanReach(t *testing.T) {
 	})
 	text := mcpToolText(t, callMCPTool(t, h, "list_youtube_channels", map[string]any{}))
 	lines := strings.Split(text, "\n")
-	if want := "Library: 5 videos, 3 searchable (2 h from 2 channels), released 2024-03-03 to 2026-06-01."; lines[0] != want {
+	if want := "Library: 6 videos, 3 searchable (2 h), released 2024-03-03 to 2026-06-01."; lines[0] != want {
 		t.Errorf("first line = %q, want %q", lines[0], want)
 	}
 	for _, want := range []string{
-		"- Bike Physics (@bikephysics) · id UCbikes · videos: 3 (2 searchable) · caption-only reads kept",
+		"- Bike Physics (@bikephysics) · id UCbikes · videos: 4 (2 searchable) · caption-only reads kept",
 		"- Kitchen Lab · id UCcook · videos: 1",
 		"- Fresh Start · id UCfresh · videos: 0",
 	} {
@@ -635,6 +644,9 @@ func TestMCP_listYouTubeChannelsWithoutTotals(t *testing.T) {
 
 // Each half of Totals failing fails it; a missing store too.
 func TestMCPLibrary_totalsFailLoudly(t *testing.T) {
+	if _, err := (mcpLibrary{s: &server{}}).SearchableCounts(t.Context()); !errors.Is(err, errMCPNotConfigured) {
+		t.Errorf("searchable counts without a store: err = %v", err)
+	}
 	deps, db, ragStore := searchTestDepsWithStores(t)
 	if _, err := (mcpLibrary{s: &server{videos: deps.Videos}}).Totals(t.Context()); !errors.Is(err, errMCPNotConfigured) {
 		t.Errorf("no rag store: err = %v", err)
@@ -648,38 +660,42 @@ func TestMCPLibrary_totalsFailLoudly(t *testing.T) {
 	}
 }
 
-// The searchable count is an extra on the list: a failed read leaves every
-// channel's number unknown (the plain count shows), logged once.
-func TestMCPLibrary_channelsWithoutSearchableCounts(t *testing.T) {
-	deps, db, _ := searchTestDepsWithStores(t)
-	cs := channels.New(db)
-	if err := cs.Upsert(channels.Channel{ID: "UCbikes", Name: "Bike Physics"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := cs.Subscribe("UCbikes", "2099-01-01 00:00:00"); err != nil {
-		t.Fatal(err)
-	}
-	if err := cs.MarkAdded("UCbikes", "2026-01-01 00:00:00"); err != nil {
-		t.Fatal(err)
-	}
-	if err := deps.Videos.Upsert(videos.Video{ID: "bikeVideo01", URL: "u1", ChannelID: "UCbikes"}); err != nil {
-		t.Fatal(err)
-	}
-	lib := mcpLibrary{s: &server{videos: deps.Videos, channels: cs}}
-
-	got, err := lib.Channels(t.Context())
-	if err != nil || len(got) != 1 || got[0].Videos != 1 || got[0].Searchable != 0 || !got[0].SearchableKnown {
-		t.Fatalf("channels = %+v, %v; want 1 video, known 0 searchable", got, err)
-	}
-
-	logs := captureLogs(t)
+// The searchable count scans the whole library: a channel-scoped search or
+// list_videos (ResolveChannel) never runs it, only list_youtube_channels does.
+// With its index gone the count fails: the other tools neither notice nor
+// log it; the list says once that the numbers are missing and shows totals.
+func TestMCP_searchableCountsOnlyForTheChannelList(t *testing.T) {
+	h, db := mcpFixtureDB(t, &fakeEmbedder{vec: dim1536(1.0)})
 	mustExec(t, db, `DROP INDEX idx_videos_channel_search`)
-	got, err = lib.Channels(t.Context())
-	if err != nil || len(got) != 1 || got[0].Videos != 1 || got[0].SearchableKnown {
-		t.Fatalf("channels = %+v, %v; want the list with the searchable count unknown", got, err)
+	logs := captureLogs(t)
+
+	r := callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail", "channel": "Bike Physics"})
+	if text := mcpToolText(t, r); r.Result["isError"] == true || !strings.Contains(text, "Why bikes stay upright") {
+		t.Errorf("search in a channel: isError=%v text:\n%s", r.Result["isError"], text)
 	}
-	if !strings.Contains(logs.String(), `level=WARN msg="mcp: channel searchable counts unavailable"`) {
-		t.Errorf("log = %q", logs.String())
+	r = callMCPTool(t, h, "list_videos", map[string]any{"channel": "Bike Physics"})
+	if text := mcpToolText(t, r); r.Result["isError"] == true || !strings.Contains(text, "id: bikeInbox01") {
+		t.Errorf("list_videos in a channel: isError=%v text:\n%s", r.Result["isError"], text)
+	}
+	if strings.Contains(logs.String(), "searchable counts") {
+		t.Fatalf("a channel-scoped call ran the searchable count:\n%s", logs.String())
+	}
+
+	text := mcpToolText(t, callMCPTool(t, h, "list_youtube_channels", map[string]any{}))
+	lines := strings.Split(text, "\n")
+	for _, want := range []string{
+		"Searchable counts are unavailable right now; a channel's video count may include videos search cannot find.",
+		"- Bike Physics (@bikephysics) · id UCbikes · videos: 3 · caption-only reads kept",
+	} {
+		if !slices.Contains(lines, want) {
+			t.Errorf("list lacks the line %q\n---\n%s", want, text)
+		}
+	}
+	if !strings.HasPrefix(text, "Library: 5 videos, 3 searchable") {
+		t.Errorf("totals missing:\n%s", text)
+	}
+	if n := strings.Count(logs.String(), `level=WARN msg="mcp: channel searchable counts unavailable"`); n != 1 {
+		t.Errorf("warned %d times, want 1:\n%s", n, logs.String())
 	}
 }
 

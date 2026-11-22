@@ -170,18 +170,24 @@ func (f Filter) chunkSubquery() (string, []any) {
 // table would report videos the answer beneath it cannot cite, which reads as
 // the answer having missed something.
 func (s *Store) CountVideos(ctx context.Context, f Filter) (LibraryCount, error) {
-	conds := []string{"EXISTS(SELECT 1 FROM transcript_chunks tc WHERE tc.video_id = v.id)"}
-	fconds, args := f.predicates("v")
-	conds = append(conds, fconds...)
-	q := `SELECT COUNT(*), COALESCE(SUM(COALESCE(v.duration_seconds, 0)), 0),
-	             COUNT(DISTINCT COALESCE(NULLIF(v.channel_id, ''), v.channel_name))
-	      FROM videos v WHERE ` + strings.Join(conds, " AND ")
+	q, args := countVideosQuery(f)
 	var out LibraryCount
 	if err := s.db.QueryRowContext(ctx, q, args...).
 		Scan(&out.Videos, &out.DurationSeconds, &out.Channels); err != nil {
 		return LibraryCount{}, fmt.Errorf("count videos: %w", err)
 	}
 	return out, nil
+}
+
+// countVideosQuery is CountVideos' statement, built apart so its plan test
+// reads the one that runs.
+func countVideosQuery(f Filter) (string, []any) {
+	conds := []string{"EXISTS(SELECT 1 FROM transcript_chunks tc WHERE tc.video_id = v.id)"}
+	fconds, args := f.predicates("v")
+	conds = append(conds, fconds...)
+	return `SELECT COUNT(*), COALESCE(SUM(COALESCE(v.duration_seconds, 0)), 0),
+	             COUNT(DISTINCT COALESCE(NULLIF(v.channel_id, ''), v.channel_name))
+	      FROM videos v WHERE ` + strings.Join(conds, " AND "), args
 }
 
 func toAny(ss []string) []any {
