@@ -70,7 +70,7 @@ func TestModern_toolsListIsCacheableForAQuarterHour(t *testing.T) {
 	if r.body.Result["ttlMs"] != float64(900000) {
 		t.Errorf("ttlMs = %v", r.body.Result["ttlMs"])
 	}
-	if got := toolNames(r); strings.Join(got, ",") != "search,get_video,get_transcript,list_youtube_channels,add_videos" {
+	if got := toolNames(r); strings.Join(got, ",") != "search,get_video,get_transcript,list_youtube_channels,list_videos,add_videos" {
 		t.Errorf("tools = %v", got)
 	}
 }
@@ -112,6 +112,7 @@ func TestToolsListCarriesDisplayTitles(t *testing.T) {
 		"get_video":             "Get a video's details and summaries",
 		"get_transcript":        "Read a video's transcript",
 		"list_youtube_channels": "List YouTube channels in your library",
+		"list_videos":           "List videos in your library",
 		"add_videos":            "Add videos to your library",
 	}
 	// add_videos is the one tool that writes, and what it adds comes from

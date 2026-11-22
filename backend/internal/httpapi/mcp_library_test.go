@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/trick77/peeq/internal/channels"
+	peeqmcp "github.com/trick77/peeq/internal/mcpserver"
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/videos"
 	"github.com/trick77/toolkit/mcpserver"
@@ -20,8 +21,10 @@ import (
 
 const mcpTestToken = "mcp-integration-token"
 
-// mcpFixture stands up the real handler over a seeded library: two subscribed
-// channels, three analysed videos, one transcript.
+// mcpFixture stands up the real handler over a seeded library: three
+// subscribed channels (one without videos), three analysed videos, two
+// transcripts, and two Bike Physics videos search cannot reach (an inbox
+// read, a legacy row without a channel id).
 func mcpFixture(t *testing.T, embedder SearchEmbedder, mutate ...func(*Deps)) http.Handler {
 	t.Helper()
 	deps, db, ragStore := searchTestDepsWithStores(t)
@@ -95,6 +98,21 @@ func mcpFixture(t *testing.T, embedder SearchEmbedder, mutate ...func(*Deps)) ht
 	}
 	vtt := "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nhello riders\n\n00:01:05.000 --> 00:01:08.000\ntrail matters\n"
 	if err := deps.Videos.SetTranscript("bikeVideo01", videos.TranscriptSourceDownload, vtt); err != nil {
+		t.Fatal(err)
+	}
+	// Out of search's reach: an inbox read without captions (status new, no
+	// transcript, no chunks), and a row recorded before channel ids were
+	// (channel_id '', matched by its exact name), transcript stored but not
+	// analysed yet.
+	if err := deps.Videos.Upsert(videos.Video{ID: "bikeInbox01", URL: "u5", Title: "Inbox read on wheel trueing",
+		ChannelID: "UCbikes", PublishedAt: "2026-06-01"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "bikeLegacy1", URL: "u6", Title: "Legacy upload on spokes",
+		ChannelName: "Bike Physics", PublishedAt: "2024-03-03"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Videos.SetTranscript("bikeLegacy1", videos.TranscriptSourceDownload, "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nspokes\n"); err != nil {
 		t.Fatal(err)
 	}
 	for _, m := range mutate {
@@ -232,7 +250,7 @@ func TestMCP_endToEnd(t *testing.T) {
 	}
 	_, r = mcpPost(t, h, true, "tools/list", nil)
 	tools, _ := r.Result["tools"].([]any)
-	if len(tools) != 5 {
+	if len(tools) != 6 {
 		t.Fatalf("tools = %v", r.Result)
 	}
 	if desc, _ := tools[0].(map[string]any)["description"].(string); !strings.Contains(desc, "Bike Physics") {
@@ -329,7 +347,8 @@ func TestMCP_endToEnd(t *testing.T) {
 	}
 
 	text = mcpToolText(t, callMCPTool(t, h, "list_youtube_channels", map[string]any{}))
-	for _, want := range []string{"Bike Physics (@bikephysics) · id UCbikes · videos: 2 · caption-only reads kept",
+	// 3: the inbox read counts; the legacy row has no channel id to count under.
+	for _, want := range []string{"Bike Physics (@bikephysics) · id UCbikes · videos: 3 · caption-only reads kept",
 		"categories: engineering (1), science (1)", "youtube: Education (1), Science & Technology (1)", "Kitchen Lab"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("list_youtube_channels lacks %q\n---\n%s", want, text)
@@ -556,5 +575,64 @@ func TestMCP_searchInAChannelWithoutVideos(t *testing.T) {
 		if r.Result["isError"] == true || !strings.Contains(text, "No videos yet in Fresh Start") {
 			t.Errorf("%s: isError=%v text=%q", name, r.Result["isError"], text)
 		}
+	}
+}
+
+// A library without a store, or a read that fails, is an error, never an
+// empty list.
+func TestMCPLibrary_videosFailsLoudly(t *testing.T) {
+	if _, err := (mcpLibrary{s: &server{}}).Videos(t.Context(), peeqmcp.VideoListQuery{}); !errors.Is(err, errMCPNotConfigured) {
+		t.Errorf("no store: err = %v", err)
+	}
+	deps, _, _ := searchTestDepsWithStores(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := (mcpLibrary{s: &server{videos: deps.Videos}}).Videos(ctx, peeqmcp.VideoListQuery{Limit: 5}); err == nil {
+		t.Error("a cancelled read came back without an error")
+	}
+}
+
+// list_videos reaches every video of a channel, the inbox read and the legacy
+// row included, where search in the same channel reaches the indexed ones only.
+func TestMCP_listVideosReachesWhatSearchCannot(t *testing.T) {
+	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)})
+
+	r := callMCPTool(t, h, "list_videos", map[string]any{"channel": "Bike Physics"})
+	text := mcpToolText(t, r)
+	if r.Result["isError"] == true {
+		t.Fatalf("list_videos: %s", text)
+	}
+	want := "Videos 1–4 of 4 · channel: Bike Physics · sorted by release date, newest first\n" +
+		"- Inbox read on wheel trueing — Bike Physics, 2026-06-01\n   id: bikeInbox01\n" +
+		"   peeq: https://peeq.example.com/video/bikeInbox01\n   not searchable: no transcript stored\n" +
+		"- Why bikes stay upright — Bike Physics, 2026-05-02\n   id: bikeVideo01\n" +
+		"   peeq: https://peeq.example.com/video/bikeVideo01\n   searchable\n" +
+		"- Bicycle trail explained — Bike Physics, 2025-01-10\n   id: bikeVideo02\n" +
+		"   peeq: https://peeq.example.com/video/bikeVideo02\n   searchable\n" +
+		"- Legacy upload on spokes — Bike Physics, 2024-03-03\n   id: bikeLegacy1\n" +
+		"   peeq: https://peeq.example.com/video/bikeLegacy1\n   not searchable: not analysed yet"
+	if text != want {
+		t.Errorf("list_videos:\n%s\n--- want ---\n%s", text, want)
+	}
+	if r.Result["structuredContent"] != nil {
+		t.Errorf("list_videos carries structuredContent: %v", r.Result["structuredContent"])
+	}
+
+	text = mcpToolText(t, callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail wheel spokes", "channel": "Bike Physics"}))
+	if !strings.Contains(text, "id: bikeVideo01") || !strings.Contains(text, "id: bikeVideo02") ||
+		strings.Contains(text, "bikeInbox01") || strings.Contains(text, "bikeLegacy1") {
+		t.Errorf("search in the channel:\n%s", text)
+	}
+
+	// The whole library, a title, and a page that continues.
+	text = mcpToolText(t, callMCPTool(t, h, "list_videos", map[string]any{"title": "SPOKES"}))
+	if !strings.HasPrefix(text, `Videos 1–1 of 1 · title contains "SPOKES"`) || !strings.Contains(text, "id: bikeLegacy1") {
+		t.Errorf("title filter:\n%s", text)
+	}
+	text = mcpToolText(t, callMCPTool(t, h, "list_videos", map[string]any{"sort": "title", "limit": 2, "offset": 2}))
+	if !strings.HasPrefix(text, "Videos 3–4 of 5 · sorted by title\n") ||
+		!strings.Contains(text, "id: bikeLegacy1") || !strings.Contains(text, "id: cookVideo01") ||
+		!strings.HasSuffix(text, "call list_videos again with offset=4 to continue]") {
+		t.Errorf("paged by title:\n%s", text)
 	}
 }

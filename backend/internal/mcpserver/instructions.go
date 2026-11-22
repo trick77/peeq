@@ -31,6 +31,10 @@ const instructionsIntro = "peeq is the user's own YouTube library: transcripts, 
 
 const instructionsSubcategoryLine = "search filters by subcategory or channel_subcategory (keys as listed below, e.g. sports/cycling)."
 
+// instructionsListLine names the browse. Here only, like the add line: the
+// channel hint stays channels.
+const instructionsListLine = "list_videos lists every video, searchable or not, by channel, title or date added."
+
 // instructionsAddLine names the one write. Here only, never in the channel
 // hint: the search description repeats that.
 const instructionsAddLine = "add_videos queues YouTube video links the user asks to add or download, at most 10 per call."
@@ -48,7 +52,7 @@ const (
 // description already appends. Short, because it comes out of the same budget
 // as the channel list.
 func (h *handler) instructions(ctx context.Context) string {
-	intro := instructionsIntro + " " + instructionsSubcategoryLine + " " + instructionsAddLine
+	intro := instructionsIntro + " " + instructionsSubcategoryLine + " " + instructionsListLine + " " + instructionsAddLine
 	hint := h.channelHint(ctx)
 	if hint == "" {
 		return intro
@@ -93,7 +97,7 @@ func buildChannelHint(chans []Channel) string {
 	})
 
 	budget := instructionsBudget - len(instructionsIntro) - 1 - len(instructionsSubcategoryLine) - 1 -
-		len(instructionsAddLine) - 2 -
+		len(instructionsListLine) - 1 - len(instructionsAddLine) - 2 -
 		len(autoSearchHeader) - 1 - len(explicitLine) - 1
 	bases := make([]string, 0, hintMaxChannels)
 	used := 0

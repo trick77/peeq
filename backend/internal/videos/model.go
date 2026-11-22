@@ -142,6 +142,31 @@ func (u ChatUsage) Empty() bool {
 	return u.PromptTokens == 0 && u.CachedTokens == 0 && u.CompletionTokens == 0
 }
 
+// BrowsePage is one page of Store.Browse and the total for the same filter.
+//
+// Table: -
+type BrowsePage struct {
+	Videos []BrowseVideo
+	Total  int
+}
+
+// BrowseVideo is one video Store.Browse lists: its card fields, plus what
+// decides whether search can reach it.
+//
+// Table: videos
+type BrowseVideo struct {
+	ID              string
+	Title           string
+	ChannelName     string
+	DurationSeconds int64
+	PublishedAt     string
+	Status          string
+	SummaryStatus   string
+	HasTranscript   bool
+	// Indexed is any transcript_chunks row: what every search lane reads.
+	Indexed bool
+}
+
 // ChannelRef is one channel as it appears in the library, for resolving a name
 // a reader typed back to the id searches filter on.
 //

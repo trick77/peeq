@@ -34,6 +34,9 @@ type Library interface {
 	Search(ctx context.Context, q SearchQuery) (SearchResult, error)
 	// Video returns one video with its analysis, or nil when there is none.
 	Video(ctx context.Context, id string) (*Video, error)
+	// Videos lists one page of every video peeq holds, whatever its status
+	// and whether search can reach it, with the total for the same filter.
+	Videos(ctx context.Context, q VideoListQuery) (VideoList, error)
 	// Transcript returns one video's parsed transcript. A video without a
 	// usable transcript (none stored, or one that does not parse) comes back
 	// with its Title, Status and HasSummary and no Cues; ErrVideoNotFound
@@ -168,6 +171,41 @@ type Video struct {
 	Chapters          []Moment
 	InDepth           string
 	Tags              []string
+}
+
+// VideoListQuery is a validated list_videos call.
+type VideoListQuery struct {
+	Channel ChannelScope
+	// Title is a case-insensitive title substring or "".
+	Title string
+	// After and Before are inclusive 'YYYY-MM-DD' release-date bounds or "".
+	After, Before string
+	// Sort is one of videos.BrowseSorts.
+	Sort          string
+	Limit, Offset int
+}
+
+// VideoList is one page of list_videos and the total for its filter.
+type VideoList struct {
+	Videos []ListedVideo
+	Total  int
+}
+
+// ListedVideo is one list_videos item.
+type ListedVideo struct {
+	ID              string
+	Title           string
+	Channel         string
+	PublishedAt     string
+	DurationSeconds int64
+	// Status (videos.status) and SummaryStatus pick the not-searchable
+	// reason; never shown raw: "queued" or "new" alone mean nothing to a
+	// client.
+	Status        string
+	SummaryStatus string
+	HasTranscript bool
+	// Searchable is whether the search index holds anything of the video.
+	Searchable bool
 }
 
 // Moment is a timestamped line: a chapter title or a key point.

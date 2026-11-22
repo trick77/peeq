@@ -36,6 +36,17 @@ type fakeLibrary struct {
 	// addShort drops the last outcome: a library breaking the one-per-url
 	// contract.
 	addShort bool
+	// resolveErr fails ResolveChannel.
+	resolveErr error
+	// list answers Videos, listErr fails it; lastList is the last query.
+	list     VideoList
+	listErr  error
+	lastList *VideoListQuery
+}
+
+func (f *fakeLibrary) Videos(_ context.Context, q VideoListQuery) (VideoList, error) {
+	f.lastList = &q
+	return f.list, f.listErr
 }
 
 func (f *fakeLibrary) AddVideos(_ context.Context, urls []string) []AddedVideo {
@@ -62,6 +73,9 @@ func (f *fakeLibrary) Channels(context.Context) ([]Channel, error) {
 }
 
 func (f *fakeLibrary) ResolveChannel(_ context.Context, name string) (ChannelScope, error) {
+	if f.resolveErr != nil {
+		return ChannelScope{}, f.resolveErr
+	}
 	if s, ok := f.scopes[strings.ToLower(name)]; ok {
 		return s, nil
 	}

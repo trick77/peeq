@@ -544,6 +544,7 @@ Checks:
 Go types:
 
 - `channels.VideoRef` (internal/channels): VideoRef identifies one of a channel's downloaded videos and the video file that belongs to it. It is read BEFORE a cascade delete so the HTTP handler can unlink the file after the rows are gone.
+- `videos.BrowseVideo` (internal/videos): BrowseVideo is one video Store.Browse lists: its card fields, plus what decides whether search can reach it.
 - `videos.ChatUsage` (internal/videos): ChatUsage is what the chat model has spent on one video, in tokens.
 - `videos.MediaRef` (internal/videos): MediaRef is what the media range handler needs from a video: where the file is and what to call it on a save-to-disk.
 - `videos.ProbeCandidate` (internal/videos): ProbeCandidate is one video whose media file has never been probed.
@@ -663,6 +664,15 @@ In `internal/rag`. VecCompaction is what one CompactVectors call found and did. 
 | `Rows` | `int64` |  |
 | `ChunksBefore` | `int64` |  |
 | `ChunksAfter` | `int64` |  |
+
+### videos.BrowsePage
+
+In `internal/videos`. BrowsePage is one page of Store.Browse and the total for the same filter.
+
+| Field | Type | Doc |
+| --- | --- | --- |
+| `Videos` | `[]BrowseVideo` |  |
+| `Total` | `int` |  |
 
 ### videos.ChannelRef
 

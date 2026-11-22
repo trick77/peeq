@@ -130,3 +130,55 @@ func TestMigrate0036_listNeverOpensTheVideosTable(t *testing.T) {
 		}
 	}
 }
+
+// list_videos' page and a filtered total are answered from idx_videos_cards
+// alone, for every sort, with and without the channel (legacy name arm
+// included), title and date filters. The channels side is a primary-key
+// lookup. The page sorts in a temp b-tree (the index leads with status):
+// over index entries, never table rows.
+func TestBrowse_pageAndCountNeverOpenTheVideosTable(t *testing.T) {
+	db := openTestDB(t)
+	filters := []BrowseOptions{
+		{},
+		{ChannelIDs: []string{"UCx"}},
+		{ChannelIDs: []string{"UCx", "UCy"}, ChannelNames: []string{"Old Name"}},
+		{Title: "needle"},
+		{ChannelIDs: []string{"UCx"}, Title: "needle", After: "2025-01-01", Before: "2026-01-01"},
+	}
+	for _, sort := range BrowseSorts {
+		for _, f := range filters {
+			f.Sort, f.Limit, f.Offset = sort, 25, 50
+			q := browseQueries(f)
+			plan := queryPlan(t, db, q.page, q.pageArgs...)
+			if !strings.Contains(plan, "v USING COVERING INDEX idx_videos_cards") {
+				t.Errorf("%+v: page is not covered by idx_videos_cards; plan = %s", f, plan)
+			}
+			if strings.Contains(plan, "SCAN ch") {
+				t.Errorf("%+v: page scans channels; plan = %s", f, plan)
+			}
+			// An unfiltered COUNT(*) takes SQLite's count shortcut onto the
+			// narrowest covering index (idx_videos_status), INDEXED BY or not:
+			// still no table read. A filtered one stays on idx_videos_cards.
+			want := "v USING COVERING INDEX idx_videos_cards"
+			if len(q.countArgs) == 0 {
+				want = "USING COVERING INDEX"
+			}
+			plan = queryPlan(t, db, q.count, q.countArgs...)
+			if !strings.Contains(plan, want) {
+				t.Errorf("%+v: count is not covered (%s); plan = %s", f, want, plan)
+			}
+		}
+	}
+}
+
+// Step two reads at most a page of ids, each by key: never a scan.
+func TestBrowse_flagsSeekByKey(t *testing.T) {
+	db := openTestDB(t)
+	plan := queryPlan(t, db, browseFlagsQuery(3), "a", "b", "c")
+	if strings.Contains(plan, "SCAN") {
+		t.Errorf("flags scan; plan = %s", plan)
+	}
+	if !strings.Contains(plan, "idx_transcript_chunks_video") {
+		t.Errorf("chunk check not on idx_transcript_chunks_video; plan = %s", plan)
+	}
+}

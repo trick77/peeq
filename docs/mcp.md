@@ -2,8 +2,8 @@
 
 peeq serves its library to MCP clients (loom, or any other MCP-capable tool) at
 `POST /mcp`: search over transcripts, summaries, chapters and in-depth analyses,
-plus reading one video or its transcript, and adding YouTube videos to the download
-queue (`add_videos`, the only tool that writes).
+plus listing every video, reading one video or its transcript, and adding YouTube
+videos to the download queue (`add_videos`, the only tool that writes).
 
 ## Protocol
 
@@ -121,6 +121,13 @@ Each tool carries a display title, sent both as `title` and `annotations.title`
 - `list_youtube_channels` ("List YouTube channels in your library") — subscribed channels plus channels whose caption-only reads are
   kept: id, handle, description, video count, top peeq and YouTube categories, the
   channel's subcategories, and a header line naming every channel subcategory in use.
+- `list_videos` ("List videos in your library") — no query: every video peeq holds, whatever its
+  download status (inbox reads and queued ones too), searchable or not. `channel` (resolved and answered
+  like search's), `title` (case-insensitive substring, the Library search box's), `after`/`before`
+  (`YYYY-MM-DD`, inclusive, search's release date), `sort` (`newest` default and `oldest` by release
+  date, `added_newest` by download time or, never downloaded, when peeq recorded it, `title`), `limit`
+  (default 25, max 50), `offset` (default 0). For enumerating a channel, finding a video by title or the
+  newest additions: search reaches only indexed videos and never matches a title or channel name.
 - `add_videos` ("Add videos to your library") — `videos` (required, 1 to 10): `{url, title?}`, `url` a
   full YouTube video link, `title` display-only for the client's confirmation. Each is queued as the Add
   view's paste would be; bare ids, playlists, channels and live streams are refused per video. A video
@@ -171,8 +178,8 @@ The user can always ask explicitly ("search peeq for …", "in channel X …").
   model only saw the id inside URLs and passed those (both links work too, see above).
 - `image` is YouTube's public thumbnail (peeq's own thumbnail route needs a session),
   present only when the id has YouTube's 11-character shape.
-- `get_video` returns one source for the video; `get_transcript` and
-  `list_youtube_channels` return text only.
+- `get_video` returns one source for the video; `get_transcript`, `list_youtube_channels` and
+  `list_videos` return text only.
 - Unknown id → `isError: true` "No video with id "…" in peeq. Use the id from a search result.",
   the same from `get_video` and `get_transcript`. A known video without a transcript (none stored, one
   that does not parse, or none that yields a cue) is a different `isError: true` text naming its title,
@@ -188,6 +195,35 @@ The user can always ask explicitly ("search peeq for …", "in channel X …").
 - A failed search (deadline, or keyword and semantic lanes both down) is `isError: true`
   "search failed (…)", never an empty result.
 - `/video/<id>?t=<seconds>` is the SPA's player deep link; it opens at that moment.
+
+`tools/call list_videos` result: text only, no `structuredContent`.
+
+```text
+Videos 1–25 of 312 · channel: Bike Physics · title contains "trail" · sorted by release date, newest first
+- <title> — <channel>, 2026-05-02, 12:34
+   id: ID
+   peeq: https://peeq…/video/ID
+   searchable
+- <title> — <channel>, 2026-04-01, 1:02:05
+   id: ID2
+   peeq: https://peeq…/video/ID2
+   not searchable: no transcript stored
+[287 more videos; keep the other arguments and call list_videos again with offset=25 to continue]
+```
+
+- The range counts the items shown. Past the 24 KB cap trailing items are dropped whole and the
+  continuation starts right after the last one shown; a page cut by `limit` ends the same way. The last
+  page has no continuation line.
+- Searchable = the video has search-index chunks (what every search lane reads). Otherwise the reason,
+  never a raw status: `no transcript stored` (`download failed, no transcript stored` for a failed
+  download), `no captions available` (the caption fetcher gave up), `not analysed yet`, `analysis
+  failed`, `no speech in the transcript` (music or ambience), `not indexed yet` (analysed, chunks not
+  written).
+- Nothing matches → a plain sentence (with filters: "Try again without some of the filters."); an
+  `offset` past the end says so with the total. Neither is `isError`.
+- Store side (`videos.Store.Browse`): page and `COUNT(*)` never open a video row (plan test):
+  `idx_videos_cards`, except an unfiltered count, which SQLite answers from the narrowest covering
+  index. Then summary status, transcript and chunk existence by key for the page's ids (≤ 50).
 
 `tools/call add_videos` result: one text line per video, in argument order, and the
 structured items loom's confirmation card reads (`items[i]` ↔ the i-th video):

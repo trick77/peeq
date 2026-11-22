@@ -327,6 +327,43 @@ func (l mcpLibrary) Video(ctx context.Context, id string) (*mcpserver.Video, err
 	return &out, nil
 }
 
+// Videos is list_videos: a metadata browse over the card index (title LIKE,
+// never transcript text), every row whatever its status. Searchable means
+// the video has chunks, which is what every search lane reads.
+func (l mcpLibrary) Videos(ctx context.Context, q mcpserver.VideoListQuery) (mcpserver.VideoList, error) {
+	if l.s.videos == nil {
+		return mcpserver.VideoList{}, errMCPNotConfigured
+	}
+	page, err := l.s.videos.Browse(ctx, videos.BrowseOptions{
+		ChannelIDs:   q.Channel.IDs,
+		ChannelNames: q.Channel.Names,
+		Title:        q.Title,
+		After:        q.After,
+		Before:       q.Before,
+		Sort:         q.Sort,
+		Limit:        q.Limit,
+		Offset:       q.Offset,
+	})
+	if err != nil {
+		return mcpserver.VideoList{}, err
+	}
+	out := mcpserver.VideoList{Total: page.Total, Videos: make([]mcpserver.ListedVideo, len(page.Videos))}
+	for i, v := range page.Videos {
+		out.Videos[i] = mcpserver.ListedVideo{
+			ID:              v.ID,
+			Title:           v.Title,
+			Channel:         v.ChannelName,
+			PublishedAt:     v.PublishedAt,
+			DurationSeconds: v.DurationSeconds,
+			Status:          v.Status,
+			SummaryStatus:   v.SummaryStatus,
+			HasTranscript:   v.HasTranscript,
+			Searchable:      v.Indexed,
+		}
+	}
+	return out, nil
+}
+
 func (l mcpLibrary) Transcript(ctx context.Context, id string) (*mcpserver.Transcript, error) {
 	if l.s.videos == nil {
 		return nil, errMCPNotConfigured
