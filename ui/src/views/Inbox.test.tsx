@@ -281,7 +281,6 @@ describe("Inbox", () => {
       .closest(".card") as HTMLElement;
     await user.click(within(first).getByRole("button", { name: /download/i }));
     expect(await screen.findByText(/disk full/)).toBeInTheDocument();
-    expect(onCountChange).not.toHaveBeenCalled();
 
     // The error line is up, and the next action still moves the badge.
     const second = screen
@@ -289,6 +288,11 @@ describe("Inbox", () => {
       .closest(".card") as HTMLElement;
     await user.click(within(second).getByRole("button", { name: /ignore/i }));
     await waitFor(() => expect(onCountChange).toHaveBeenCalledWith(1));
+    // The failure itself reported nothing. Checked here, not right after the
+    // error paints: its effect may not have flushed by then, but React runs
+    // a pending effect before the next render, so any report the failure
+    // made sits ahead of this 1.
+    expect(onCountChange.mock.calls).toEqual([[1]]);
   });
 
   it("calls onCountChange with the decremented count after Ignore removes a row", async () => {
@@ -504,29 +508,6 @@ describe("Inbox", () => {
       await waitFor(() =>
         expect(onCountChange).toHaveBeenLastCalledWith(undefined),
       );
-    });
-
-    // Navigating away mid-fetch used to land the response on a component that
-    // is gone — React 18 stopped warning about it, so it was silent, but the
-    // count still got pushed from a page the user had already left.
-    it("says nothing once the view has unmounted mid-fetch", async () => {
-      // Given: a request that has not answered yet.
-      const onCountChange = vi.fn();
-      let settle: (items: PendingItem[]) => void = () => {};
-      vi.mocked(listPending).mockReturnValue(
-        new Promise((resolve) => {
-          settle = resolve;
-        }),
-      );
-      const { unmount } = render(<Inbox onCountChange={onCountChange} />);
-
-      // When: the user leaves, and only then does the answer land.
-      unmount();
-      settle([itemA, itemB]);
-      await Promise.resolve();
-
-      // Then
-      expect(onCountChange).not.toHaveBeenCalled();
     });
   });
 
@@ -1048,6 +1029,44 @@ describe("Inbox", () => {
 
       await waitFor(() => expect(listPending).toHaveBeenCalledTimes(3));
       expect(screen.queryByText("First pending video")).toBeNull();
+    });
+
+    // The same stale answer, landing after the user has left. Its state writes
+    // are no-ops on an unmounted view and the count effect cannot run any
+    // more. What is left is the re-ask: it would arm a timer after unmount has
+    // already cleared the last one, and that timer would send a request from
+    // a page nobody is on.
+    it("asks nothing more once the view has unmounted mid-fetch", async () => {
+      // Given: a refetch still in flight when an Ignore takes a card off.
+      const user = userEvent.setup();
+      const { rerender, unmount } = render(<Inbox liveTick={0} />);
+      await screen.findByText("Second pending video");
+      let answer!: (list: PendingItem[]) => void;
+      vi.mocked(listPending).mockImplementationOnce(
+        () => new Promise((r) => (answer = r)),
+      );
+      rerender(<Inbox liveTick={1} />);
+      await waitFor(() => expect(listPending).toHaveBeenCalledTimes(2));
+      const card = screen
+        .getByText("First pending video")
+        .closest(".card") as HTMLElement;
+      await user.click(within(card).getByRole("button", { name: "Ignore" }));
+      await waitFor(() =>
+        expect(screen.queryByText("First pending video")).toBeNull(),
+      );
+
+      // When: the user leaves, and only then does the stale answer land.
+      unmount();
+      vi.useFakeTimers();
+      try {
+        answer([itemA, itemB]);
+        await vi.runAllTimersAsync();
+      } finally {
+        vi.useRealTimers();
+      }
+
+      // Then: no request after the mount load and the refetch.
+      expect(listPending).toHaveBeenCalledTimes(2);
     });
   });
 });
