@@ -22,17 +22,24 @@ func runGetVideo(ctx context.Context, h *handler, raw json.RawMessage) mcp.Resul
 	if err := mcp.DecodeArgs(raw, &a); err != nil {
 		return mcp.ErrorResult("invalid arguments: " + err.Error())
 	}
-	id := videoIDArg(a.ID)
-	if id == "" {
+	arg := h.parseVideoArg(a.ID)
+	if arg.raw == "" {
 		return mcp.ErrorResult("id is required")
 	}
-	v, err := h.lib.Video(ctx, id)
+	// No id, no read: the store names the id it is asked in its errors, and
+	// a non-id can be a URL that must not reach a log.
+	if arg.id == "" {
+		slog.Info("mcp: video miss", "video_id", logVideoID(arg.id))
+		return mcp.ErrorResult(unknownVideoText(arg.raw))
+	}
+	v, err := h.lib.Video(ctx, arg.id)
 	if err != nil {
-		slog.Warn("mcp: get video failed", "video_id", logVideoID(id), "err", err)
+		slog.Warn("mcp: get video failed", "video_id", arg.id, "err", err)
 		return mcp.ErrorResult("reading the video failed; try again")
 	}
 	if v == nil {
-		return mcp.ErrorResult(unknownVideoText(id))
+		slog.Info("mcp: video miss", "video_id", arg.id)
+		return mcp.ErrorResult(unknownVideoText(arg.id))
 	}
 
 	var b strings.Builder

@@ -322,6 +322,11 @@ func TestMCP_endToEnd(t *testing.T) {
 	if !strings.Contains(text, "Why bikes stay upright") {
 		t.Errorf("get_video by URL:\n%s", text)
 	}
+	// The link a search source carries, timestamp included.
+	text = mcpToolText(t, callMCPTool(t, h, "get_transcript", map[string]any{"id": "https://peeq.example.com/video/bikeVideo01?t=60"}))
+	if !strings.Contains(text, "[01:05] trail matters") || strings.Contains(text, "hello riders") {
+		t.Errorf("get_transcript by peeq link:\n%s", text)
+	}
 
 	text = mcpToolText(t, callMCPTool(t, h, "list_youtube_channels", map[string]any{}))
 	for _, want := range []string{"Bike Physics (@bikephysics) · id UCbikes · videos: 2 · caption-only reads kept",
@@ -333,11 +338,20 @@ func TestMCP_endToEnd(t *testing.T) {
 }
 
 // Over the real stores, an unknown id and a video without a transcript row
-// (the fixture stores one for bikeVideo01 only) answer differently, and a
-// stored transcript without a single cue counts as none.
+// (the fixture stores one for bikeVideo01 only) answer differently. A stored
+// transcript without a single cue, or one that never parses (a retry cannot
+// help), counts as none. Only a video with a summary is pointed at get_video.
 func TestMCP_transcriptMissEndToEnd(t *testing.T) {
 	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, func(d *Deps) {
-		if err := d.Videos.SetTranscript("bikeVideo02", videos.TranscriptSourceDownload, "WEBVTT\n\n"); err != nil {
+		// One line past the parser's 4 MB line limit.
+		unparseable := "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n" + strings.Repeat("a", 5<<20) + "\n"
+		if err := d.Videos.SetTranscript("bikeVideo02", videos.TranscriptSourceDownload, unparseable); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Videos.Upsert(videos.Video{ID: "bareVideo01", URL: "u4", Title: "Not summarized", ChannelID: "UCcook"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Videos.SetTranscript("bareVideo01", videos.TranscriptSourceDownload, "WEBVTT\n\n"); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -348,17 +362,22 @@ func TestMCP_transcriptMissEndToEnd(t *testing.T) {
 		t.Errorf("unknown video: %v %q", r.Result["isError"], text)
 	}
 
-	for id, title := range map[string]string{"cookVideo01": "Perfect rice", "bikeVideo02": "Bicycle trail explained"} {
+	logs := captureLogs(t)
+	for id, want := range map[string]string{
+		"cookVideo01": `peeq has no transcript for "Perfect rice" (video cookVideo01). Call get_video with this id for its summary and analysis.`,
+		"bikeVideo02": `peeq has no transcript for "Bicycle trail explained" (video bikeVideo02). Call get_video with this id for its summary and analysis.`,
+		"bareVideo01": `peeq has no transcript for "Not summarized" (video bareVideo01).`,
+	} {
 		r = callMCPTool(t, h, "get_transcript", map[string]any{"id": id})
-		text := mcpToolText(t, r)
-		if r.Result["isError"] != true || strings.Contains(text, "No video with id") {
+		if text := mcpToolText(t, r); r.Result["isError"] != true || text != want {
 			t.Errorf("%s: %v %q", id, r.Result["isError"], text)
 		}
-		for _, want := range []string{`no transcript for "` + title + `"`, id, "status new", "get_video"} {
-			if !strings.Contains(text, want) {
-				t.Errorf("%s: text lacks %q: %q", id, want, text)
-			}
-		}
+	}
+	if !strings.Contains(logs.String(), `msg="mcp: transcript unparseable" video_id=bikeVideo02`) {
+		t.Errorf("unparseable transcript not logged:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "video_id=cookVideo01 reason=no_transcript status=new") {
+		t.Errorf("miss not logged with its status:\n%s", logs.String())
 	}
 }
 

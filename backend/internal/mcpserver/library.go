@@ -35,8 +35,9 @@ type Library interface {
 	// Video returns one video with its analysis, or nil when there is none.
 	Video(ctx context.Context, id string) (*Video, error)
 	// Transcript returns one video's parsed transcript. A video without a
-	// stored transcript comes back with its Title and Status and no Cues;
-	// ErrVideoNotFound when there is no such video.
+	// usable transcript (none stored, or one that does not parse) comes back
+	// with its Title, Status and HasSummary and no Cues; ErrVideoNotFound
+	// when there is no such video.
 	Transcript(ctx context.Context, id string) (*Transcript, error)
 }
 
@@ -180,7 +181,10 @@ type Moment struct {
 type Transcript struct {
 	VideoID string
 	Title   string
-	// Status is the video's download status (videos.status).
+	// Status is the video's download status (videos.status), for logs only:
+	// "queued" or "new" alone mean nothing to a client.
 	Status string
-	Cues   []subtitles.Cue
+	// HasSummary is whether get_video has a summary to offer instead.
+	HasSummary bool
+	Cues       []subtitles.Cue
 }

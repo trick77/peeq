@@ -109,9 +109,15 @@ Each tool carries a display title, sent both as `title` and `annotations.title`
   key points, chapters, in-depth summary, links.
 - `get_transcript` ("Read a video's transcript") — `id`, optional `start_seconds`, `end_seconds` (exclusive):
   `[mm:ss] text` lines. A cut transcript ends with the `start_seconds` to request next.
-- `id` of both: the bare id (a search item's `id:` line) or a YouTube video URL (watch, youtu.be,
-  shorts, live), reduced to its id with `ytdlp.Canonicalize`. A channel or playlist URL is not an id
-  and misses.
+- `id` of both: the bare id (a search item's `id:` line), peeq's own video link
+  (`<PUBLIC_FQDN>/video/<id>`, what `sources[].url` carries) or a YouTube video link: watch, youtu.be,
+  shorts, live, embed, `/v/`, `m.`/`music.`/`youtube-nocookie` hosts, scheme optional, wrapping `<>`,
+  brackets, quotes and trailing punctuation dropped. The MCP helper maps these onto
+  `ytdlp.Canonicalize` without loosening it (the download path relies on its strictness). A channel or
+  playlist link is no id. An argument that reduces to no id (`[A-Za-z0-9_-]`, at most 32) is answered
+  unknown without a store read: store errors carry the id they were asked, so a URL never reaches a log.
+- `get_transcript` only: a link's `t=` (`754`, `754s`, `12m34s`, `1h2m3s`; embed `start=`, `#t=`) is
+  the start when `start_seconds` is absent; an explicit `start_seconds` wins.
 - `list_youtube_channels` ("List YouTube channels in your library") — subscribed channels plus channels whose caption-only reads are
   kept: id, handle, description, video count, top peeq and YouTube categories, the
   channel's subcategories, and a header line naming every channel subcategory in use.
@@ -162,17 +168,20 @@ The user can always ask explicitly ("search peeq for …", "in channel X …").
   i-th item. The citing client numbers them (loom prints its own `Source [n]` list). One source per video, linking the best match's
   timestamp (no `?t=` when only the summary matched). Other moments are in the text.
 - Each item's second line is `   id: <id>`, the id `get_video` / `get_transcript` take: before it, a
-  model only saw the id inside URLs and passed those.
+  model only saw the id inside URLs and passed those (both links work too, see above).
 - `image` is YouTube's public thumbnail (peeq's own thumbnail route needs a session),
   present only when the id has YouTube's 11-character shape.
 - `get_video` returns one source for the video; `get_transcript` and
   `list_youtube_channels` return text only.
 - Unknown id → `isError: true` "No video with id "…" in peeq. Use the id from a search result.",
-  the same from `get_video` and `get_transcript`. A known video without a transcript (none stored, or
-  none that parses to a cue) is a different `isError: true` text naming its title and download status
-  and pointing at `get_video` for the summary. Both log `mcp: transcript miss` with `video_id` (or
-  `invalid` when the argument did not reduce to an id: it can be a full URL) and `reason`
-  `unknown_video` / `no_transcript`.
+  the same from `get_video` and `get_transcript`. A known video without a transcript (none stored, one
+  that does not parse, or none that yields a cue) is a different `isError: true` text naming its title,
+  pointing at `get_video` only when the video has a summary. Never the raw download status: `queued`,
+  `new` alone mean nothing to a client.
+- Logs (Info), `video_id` = the id, or `invalid` when the argument did not reduce to one:
+  `get_video` → `mcp: video miss`; `get_transcript` → `mcp: transcript miss` with `reason`
+  `unknown_video` / `no_transcript` (+ `status`, the video's download status). A stored transcript
+  that does not parse logs `mcp: transcript unparseable` (Warn) once per call.
 - No results → a plain sentence and `"sources": []`.
 - Past the 24 KB cap, trailing items are dropped whole together with their sources and
   the text ends "(N more results omitted; narrow the query)".
