@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -21,8 +22,9 @@ func TestSearchSchemaListsTheScopeArguments(t *testing.T) {
 			t.Errorf("%s has no description", k)
 		}
 	}
+	// No lower bound: clients send [] for an optional list.
 	ch, _ := props["channels"].(map[string]any)
-	if ch["minItems"] != 1 || ch["maxItems"] != maxSearchChannels || maxSearchChannels != 4 {
+	if _, ok := ch["minItems"]; ok || ch["maxItems"] != maxSearchChannels || maxSearchChannels != 4 {
 		t.Errorf("channels bounds = %v..%v", ch["minItems"], ch["maxItems"])
 	}
 	if items, _ := ch["items"].(map[string]any); items["type"] != "string" {
@@ -39,14 +41,12 @@ func TestSearchSchemaListsTheScopeArguments(t *testing.T) {
 
 func TestSearch_scopeArgumentErrorsAreToolErrors(t *testing.T) {
 	cases := map[string]map[string]any{
-		"playlist video_id":    {"query": "x", "video_id": "https://www.youtube.com/playlist?list=PL1"},
-		"channel link":         {"query": "x", "video_id": "https://www.youtube.com/@veritasium"},
-		"no channels":          {"query": "x", "channels": []string{}},
-		"five channels":        {"query": "x", "channels": []string{"a", "b", "c", "d", "e"}},
-		"blank channels entry": {"query": "x", "channels": []string{"veritasium", " "}},
-		"channels as string":   {"query": "x", "channels": "veritasium"},
-		"watched as string":    {"query": "x", "watched": "yes"},
-		"favorite as number":   {"query": "x", "favorite": 1},
+		"playlist video_id":  {"query": "x", "video_id": "https://www.youtube.com/playlist?list=PL1"},
+		"channel link":       {"query": "x", "video_id": "https://www.youtube.com/@veritasium"},
+		"five channels":      {"query": "x", "channels": []string{"a", "b", "c", "d", "e"}},
+		"channels as string": {"query": "x", "channels": "veritasium"},
+		"watched as string":  {"query": "x", "watched": "yes"},
+		"favorite as number": {"query": "x", "favorite": 1},
 	}
 	for name, args := range cases {
 		lib := searchFixture()
@@ -54,9 +54,31 @@ func TestSearch_scopeArgumentErrorsAreToolErrors(t *testing.T) {
 		if r.body.Error != nil || !isError(r) {
 			t.Errorf("%s: want a tool error result, got %s", name, r.raw)
 		}
-		if lib.lastQuery != nil || len(lib.readIDs) > 0 {
+		if lib.lastQuery != nil || len(lib.readIDs) > 0 || len(lib.gateIDs) > 0 || lib.resolveN > 0 {
 			t.Errorf("%s: the library was read despite invalid arguments", name)
 		}
+	}
+	r := callTool(t, searchFixture(), "search", map[string]any{"query": "x", "channels": []string{"a", "b", "c", "d", "e"}})
+	if want := "channels takes at most 4 channels, got 5"; toolText(t, r) != want {
+		t.Errorf("five channels = %q", toolText(t, r))
+	}
+}
+
+// An empty list and blank entries are what clients send for an optional
+// argument: absent, like a blank channel or video_id.
+func TestSearch_emptyChannelsAreAbsent(t *testing.T) {
+	for _, chans := range [][]string{{}, {" ", ""}} {
+		lib := searchFixture()
+		r := callTool(t, lib, "search", map[string]any{"query": "x", "channels": chans, "channel": " ", "video_id": ""})
+		if isError(r) || lib.lastQuery == nil || lib.lastQuery.Channel.Resolved() || lib.resolveN != 0 || len(lib.gateIDs) != 0 {
+			t.Errorf("%q: %v %q", chans, isError(r), toolText(t, r))
+		}
+	}
+	// Blanks do not count toward the bound.
+	lib := multiChannelFixture()
+	r := callTool(t, lib, "search", map[string]any{"query": "x", "channels": []string{"vsauce", "", "legacy", " ", "veritasium", "fresh"}})
+	if isError(r) || lib.lastQuery == nil {
+		t.Errorf("four entries among blanks: %q", toolText(t, r))
 	}
 }
 
@@ -82,31 +104,35 @@ func TestSearch_videoIDTakesTheGetVideoForms(t *testing.T) {
 		if isError(r) {
 			t.Fatalf("%q: %s", arg, toolText(t, r))
 		}
-		if lib.lastQuery.VideoID != "dQw4w9WgXcQ" {
-			t.Errorf("%q: VideoID = %q", arg, lib.lastQuery.VideoID)
+		if lib.lastQuery.VideoID != "dQw4w9WgXcQ" || !slices.Equal(lib.gateIDs, []string{"dQw4w9WgXcQ"}) {
+			t.Errorf("%q: VideoID = %q, gate asked %q", arg, lib.lastQuery.VideoID, lib.gateIDs)
 		}
 	}
 	lib := searchFixture()
 	callTool(t, lib, "search", map[string]any{"query": "x", "video_id": "  "})
-	if lib.lastQuery == nil || lib.lastQuery.VideoID != "" {
+	if lib.lastQuery == nil || lib.lastQuery.VideoID != "" || len(lib.gateIDs) != 0 {
 		t.Errorf("a blank video_id is no filter: %+v", lib.lastQuery)
 	}
 }
 
-// Unknown and not searchable are two different answers, both naming the id.
+// Unknown and not searchable are two different answers, both naming the id,
+// and neither runs a search.
 func TestSearch_videoMissTexts(t *testing.T) {
 	logs := captureLog(t)
 	lib := searchFixture()
-	lib.searchErr = ErrVideoNotFound
+	lib.gateErr = ErrVideoNotFound
 	r := callTool(t, lib, "search", map[string]any{"query": "x", "video_id": "nope123"})
 	if want := `No video with id "nope123" in peeq. Use the id from a search result.`; !isError(r) || toolText(t, r) != want {
 		t.Errorf("unknown = %v %q", isError(r), toolText(t, r))
 	}
-	lib.searchErr = ErrVideoNotSearchable
+	lib.gateErr = ErrVideoNotSearchable
 	r = callTool(t, lib, "search", map[string]any{"query": "x", "video_id": "inbox12"})
 	if want := `Video "inbox12" is in peeq but not searchable: nothing of it is indexed yet. ` +
 		`Call get_video for its details or get_transcript for its transcript.`; !isError(r) || toolText(t, r) != want {
 		t.Errorf("not searchable = %v %q", isError(r), toolText(t, r))
+	}
+	if lib.lastQuery != nil {
+		t.Error("searched a video the gate refused")
 	}
 	for _, want := range []string{`msg="mcp: search video miss" video_id=nope123 reason=unknown_video`,
 		`msg="mcp: search video miss" video_id=inbox12 reason=not_indexed`} {
@@ -116,6 +142,22 @@ func TestSearch_videoMissTexts(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "search failed") {
 		t.Errorf("a miss logged as a failure:\n%s", logs.String())
+	}
+	lib.gateErr = errors.New("disk on fire")
+	r = callTool(t, lib, "search", map[string]any{"query": "x", "video_id": "inbox12"})
+	if text := toolText(t, r); !isError(r) || !strings.HasPrefix(text, "search failed (") || strings.Contains(text, "disk") {
+		t.Errorf("gate failure = %v %q", isError(r), text)
+	}
+}
+
+// The video is checked before any channel: a channel without videos must not
+// hide an unknown video_id.
+func TestSearch_videoGateRunsBeforeChannels(t *testing.T) {
+	lib := multiChannelFixture()
+	lib.gateErr = ErrVideoNotFound
+	r := callTool(t, lib, "search", map[string]any{"query": "x", "video_id": "nope123", "channel": "fresh"})
+	if !isError(r) || !strings.HasPrefix(toolText(t, r), `No video with id "nope123"`) || lib.resolveN != 0 {
+		t.Errorf("%v %q, resolves %d", isError(r), toolText(t, r), lib.resolveN)
 	}
 }
 
@@ -145,6 +187,7 @@ func multiChannelFixture() *fakeLibrary {
 	return lib
 }
 
+// Every name resolves against one directory read.
 func TestSearch_channelsAndChannelAreUnioned(t *testing.T) {
 	lib := multiChannelFixture()
 	r := callTool(t, lib, "search", map[string]any{"query": "x", "channel": "Veritasium",
@@ -156,6 +199,9 @@ func TestSearch_channelsAndChannelAreUnioned(t *testing.T) {
 	if !slices.Equal(q.Channel.IDs, []string{"UCV", "UCS"}) || !slices.Equal(q.Channel.Names, []string{"Old Name"}) ||
 		!slices.Equal(q.Channel.Matched, []string{"Veritasium", "Vsauce", "Old Name"}) {
 		t.Errorf("scope = %+v", q.Channel)
+	}
+	if lib.resolveN != 1 {
+		t.Errorf("%d directory reads for one call", lib.resolveN)
 	}
 	lib = multiChannelFixture()
 	callTool(t, lib, "search", map[string]any{"query": "x", "channels": []string{"vsauce"}})
@@ -177,17 +223,26 @@ func TestSearch_channelsEntryMissNamesIt(t *testing.T) {
 	}
 }
 
-// A channel without videos among others narrows nothing away; only when every
-// channel is empty is the answer the no-videos sentence.
+// A channel without videos among others is searched past but said, results or
+// not; only when every channel is empty is the answer the no-videos sentence.
 func TestSearch_channelsWithoutVideos(t *testing.T) {
 	lib := multiChannelFixture()
 	r := callTool(t, lib, "search", map[string]any{"query": "x", "channels": []string{"fresh", "vsauce"}})
 	if isError(r) || lib.lastQuery == nil || !slices.Contains(lib.lastQuery.Channel.IDs, "UCS") {
 		t.Fatalf("one empty channel among others: %v %q", isError(r), toolText(t, r))
 	}
+	if text := toolText(t, r); !strings.HasPrefix(text, "No videos yet in Fresh.\n\n- Why bikes stay upright") {
+		t.Errorf("results:\n%s", text)
+	}
+	lib.result = SearchResult{}
+	r = callTool(t, lib, "search", map[string]any{"query": "x", "channels": []string{"fresh", "vsauce"}})
+	if text := toolText(t, r); !strings.HasPrefix(text, "No videos yet in Fresh.\n\nNo videos in peeq match this search.") {
+		t.Errorf("empty result:\n%s", text)
+	}
+
 	lib = multiChannelFixture()
 	r = callTool(t, lib, "search", map[string]any{"query": "x", "channel": "fresh", "channels": []string{"fresher"}})
-	if isError(r) || toolText(t, r) != "No videos yet in Fresh, Fresher: peeq follows the channel but holds none of its videos so far." {
+	if isError(r) || toolText(t, r) != "No videos yet in Fresh, Fresher: peeq follows these channels but holds none of their videos so far." {
 		t.Errorf("all empty = %v %q", isError(r), toolText(t, r))
 	}
 	if lib.lastQuery != nil {
@@ -195,6 +250,11 @@ func TestSearch_channelsWithoutVideos(t *testing.T) {
 	}
 	if src, ok := r.body.Result["structuredContent"].(map[string]any)["sources"].([]any); !ok || len(src) != 0 {
 		t.Errorf("structuredContent = %v, want sources: []", r.body.Result["structuredContent"])
+	}
+	// One channel keeps its text byte for byte.
+	r = callTool(t, multiChannelFixture(), "search", map[string]any{"query": "x", "channels": []string{"fresh"}})
+	if toolText(t, r) != "No videos yet in Fresh: peeq follows the channel but holds none of its videos so far." {
+		t.Errorf("one empty = %q", toolText(t, r))
 	}
 }
 
@@ -205,8 +265,8 @@ func TestSearch_headerShowsWatchedAndFavorite(t *testing.T) {
 	lib.result.Videos[1].Video.Favorite = true
 	text := toolText(t, callTool(t, lib, "search", map[string]any{"query": "x"}))
 	for _, want := range []string{
-		"- Why bikes stay upright — Veritasium, 2026-05-02, category science · youtube: Science & Technology, Education, watched, favorite\n",
-		"- Summary only — Vsauce, category education, favorite\n",
+		"- Why bikes stay upright — Veritasium, 2026-05-02, category science · youtube: Science & Technology, Education · watched · favorite\n",
+		"- Summary only — Vsauce, category education · favorite\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("text lacks %q\n---\n%s", want, text)
@@ -228,7 +288,6 @@ func TestGetVideo_showsWatchedAndFavorite(t *testing.T) {
 
 func TestSearch_noResultsHintCoversTheScopeArguments(t *testing.T) {
 	for name, args := range map[string]map[string]any{
-		"video_id": {"video_id": "abc123"},
 		"watched":  {"watched": false},
 		"favorite": {"favorite": true},
 		"channels": {"channels": []string{"vsauce"}},
@@ -239,5 +298,21 @@ func TestSearch_noResultsHintCoversTheScopeArguments(t *testing.T) {
 		if text := toolText(t, callTool(t, lib, "search", args)); !strings.Contains(text, "Try again without some of the filters.") {
 			t.Errorf("%s: %q", name, text)
 		}
+	}
+}
+
+// Nothing matching inside one video is said of that video, and never tells
+// the model to drop video_id.
+func TestSearch_noMatchInOneVideo(t *testing.T) {
+	lib := multiChannelFixture()
+	lib.result = SearchResult{}
+	r := callTool(t, lib, "search", map[string]any{"query": "x", "video_id": "abc123"})
+	if want := `Nothing in video "abc123" matches this search. Call get_transcript to read it, or get_video for its summary.`; isError(r) || toolText(t, r) != want {
+		t.Errorf("alone = %v %q", isError(r), toolText(t, r))
+	}
+	r = callTool(t, lib, "search", map[string]any{"query": "x", "video_id": "abc123", "watched": true})
+	if want := `Nothing in video "abc123" matches this search. Call get_transcript to read it, or get_video for its summary. ` +
+		`Or keep video_id and try again without the other filters.`; toolText(t, r) != want {
+		t.Errorf("with a filter = %q", toolText(t, r))
 	}
 }

@@ -33,13 +33,16 @@ type Library interface {
 	// library, so only list_youtube_channels asks: never the hint or a
 	// channel-scoped search.
 	SearchableCounts(ctx context.Context) (map[string]int, error)
-	// ResolveChannel maps a name, @handle or id onto the library's channels.
-	// A miss is not an error: Scope.Resolved() is false and Suggestions holds
-	// the closest names.
-	ResolveChannel(ctx context.Context, name string) (ChannelScope, error)
-	// Search runs retrieval and groups the hits per video, best first. With
-	// VideoID set it answers ErrVideoNotFound for an id peeq has no video for
-	// and ErrVideoNotSearchable for one with nothing indexed.
+	// ResolveChannels maps each name, @handle or id onto the library's
+	// channels, one scope per name in order, against one read of the channel
+	// directory. A miss is not an error: that scope's Resolved() is false and
+	// its Suggestions hold the closest names.
+	ResolveChannels(ctx context.Context, names []string) ([]ChannelScope, error)
+	// SearchableVideo is nil when search can reach the video (it has index
+	// chunks), ErrVideoNotFound when peeq has no such video and
+	// ErrVideoNotSearchable when it has nothing of it indexed.
+	SearchableVideo(ctx context.Context, id string) error
+	// Search runs retrieval and groups the hits per video, best first.
 	Search(ctx context.Context, q SearchQuery) (SearchResult, error)
 	// Video returns one video with its analysis, or nil when there is none.
 	Video(ctx context.Context, id string) (*Video, error)
@@ -53,12 +56,12 @@ type Library interface {
 	Transcript(ctx context.Context, id string) (*Transcript, error)
 }
 
-// ErrVideoNotFound is Transcript's answer for an id peeq has no video for,
-// and Search's for such a VideoID.
+// ErrVideoNotFound is Transcript's and SearchableVideo's answer for an id peeq
+// has no video for.
 var ErrVideoNotFound = errors.New("mcp: video not found")
 
-// ErrVideoNotSearchable is Search's answer for a VideoID peeq holds but has
-// no search-index chunks for: no lane can reach it.
+// ErrVideoNotSearchable is SearchableVideo's answer for a video peeq holds but
+// has no search-index chunks for: no lane can reach it.
 var ErrVideoNotSearchable = errors.New("mcp: video not searchable")
 
 // AddOutcome is what AddVideos did with one URL.
@@ -131,6 +134,9 @@ type ChannelScope struct {
 	// NoVideos is set when everything that resolved is a channel peeq lists
 	// but holds no videos of yet (just subscribed, nothing scanned).
 	NoVideos bool
+	// Empty names the channels of a several-channel scope that hold no
+	// videos yet while the others do: searched past, but said.
+	Empty []string
 }
 
 // Resolved reports whether the scope narrows anything.

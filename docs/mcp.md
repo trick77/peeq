@@ -95,10 +95,13 @@ Each tool carries a display title, sent both as `title` and `annotations.title`
 
 - `search` ("Search your video library") — `query` (required), `channel` (name, @handle or id; case-insensitive,
   typo-tolerant, resolved against the channels list_youtube_channels shows plus any with videos; an unknown one is an error listing the closest names, a listed one with no videos yet says so),
-  `channels` (1 to 4 of the same, each resolved like `channel`, unioned with `channel` when both are
-  given; one entry that resolves to nothing fails the call with that entry's miss, never a search over
-  fewer channels; a channel without videos among others is no error, all of them empty is the no-videos
-  answer; `channel` stays a string: the decoder is strict and clients cache `tools/list`), `video_id`
+  `channels` (up to 4 of the same, each resolved like `channel`, unioned with `channel` when both are
+  given, all in one channel-directory read; `[]` and blank entries are absent, as a blank `channel` is:
+  clients send them for optional arguments; one entry that resolves to nothing fails the call with that
+  entry's miss, never a search over fewer channels; a channel without videos among others is searched
+  past and the result starts `No videos yet in X.`, all of them empty is the no-videos answer (plural
+  wording for several); `channel` stays a string: the decoder is strict and clients cache
+  `tools/list`), `video_id`
   (search inside one video: the forms `get_video`'s `id` takes, below; up to 12 moments of it instead of
   4, `k` ignored), `watched` / `favorite` (booleans; absent = either, `false` = only videos not watched /
   not favourites; `watched` is the plain flag, a half-watched video counts as not watched), `category`
@@ -112,9 +115,15 @@ Each tool carries a display title, sent both as `title` and `annotations.title`
   the Search page, no query-understanding model call; `keyword`: literal full-text
   match), `k` (videos, default 6, max 10). If the query cannot be embedded, hybrid
   falls back to keyword-only and says so. Every filter narrows every lane, keyword mode included.
-  A result header ends in `watched` / `favorite` when the user marked the video so; `get_video`'s
+  A result header ends in ` · watched` / ` · favorite` when the user marked the video so; `get_video`'s
   metadata line too.
-- `video_id` before any lane runs: one EXISTS on the video's index chunks, a row read only without any.
+- `video_id` is checked before any channel is resolved or lane runs (an empty channel's answer never
+  hides an unknown id): one EXISTS on the video's index chunks, a row read only without any. In the
+  lanes, the keyword ladder stops at the first rung with hits (its video target is the scoped videos,
+  not Ask's 8), so a precise match never runs the OR floor, which under a one-video filter walks every
+  match and adds one-word moments. Nothing matching in a searchable video → `Nothing in video "ID"
+  matches this search. Call get_transcript to read it, or get_video for its summary.` (other filters
+  set: `Or keep video_id and try again without the other filters.`); not `isError`.
   An argument that reduces to no id → `isError` `video_id "…" is not a video id or video link. Use the
   id from a search result.` (no store read). Unknown id → `isError`, the `get_video` text below. A known
   video with nothing indexed (an inbox read, not analysed yet; `list_videos` says why) → `isError`
@@ -216,8 +225,8 @@ The user can always ask explicitly ("search peeq for …", "in channel X …").
   `unknown_video` / `no_transcript` (+ `status`, the video's download status); `search` with
   `video_id` → `mcp: search video miss` with `reason` `unknown_video` / `not_indexed`. A stored transcript
   that does not parse logs `mcp: transcript unparseable` (Warn) once per call.
-- No results → a plain sentence and `"sources": []` (with any filter, `video_id`, `channels`,
-  `watched` and `favorite` included: "Try again without some of the filters.").
+- No results → a plain sentence and `"sources": []` (with any filter, `channels`, `watched` and
+  `favorite` included: "Try again without some of the filters."; with `video_id`, the sentence above).
 - Past the 24 KB cap, trailing items are dropped whole together with their sources and
   the text ends "(N more results omitted; narrow the query)".
 - A failed search (deadline, or keyword and semantic lanes both down) is `isError: true`
