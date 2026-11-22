@@ -69,7 +69,7 @@ func (l mcpLibrary) Channels(ctx context.Context) ([]mcpserver.Channel, error) {
 }
 
 // SearchableCounts is list_youtube_channels' alone: Channels also serves
-// ResolveChannel and the hint, which must not pay for a whole-library scan.
+// ResolveChannels and the hint, which must not pay for a whole-library scan.
 func (l mcpLibrary) SearchableCounts(ctx context.Context) (map[string]int, error) {
 	if l.s.videos == nil {
 		return nil, errMCPNotConfigured
@@ -111,21 +111,41 @@ func toMCPCounts(cs []videos.CategoryCount) []mcpserver.CategoryCount {
 	return out
 }
 
-// ResolveChannel resolves against what list_youtube_channels shows (subscribed and
-// keep_reads channels, videos or not) plus every channel that has videos
-// here. A channel id is taken as is; anything else runs the Ask resolver's
-// name/handle/typo ladder.
-func (l mcpLibrary) ResolveChannel(ctx context.Context, name string) (mcpserver.ChannelScope, error) {
+// mcpChannelDirectory is what a channel argument resolves against: what
+// list_youtube_channels shows (subscribed and keep_reads channels, videos or
+// not) plus every channel that has videos here.
+type mcpChannelDirectory struct {
+	dir        []videos.ChannelRef
+	videoCount map[string]int
+	listedName map[string]string
+}
+
+// ResolveChannels resolves every name against one read of the directory
+// (several store reads), however many names a call carries. A channel id is
+// taken as is; anything else runs the Ask resolver's name/handle/typo ladder.
+func (l mcpLibrary) ResolveChannels(ctx context.Context, names []string) ([]mcpserver.ChannelScope, error) {
+	d, err := l.channelDirectory(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]mcpserver.ChannelScope, len(names))
+	for i, name := range names {
+		out[i] = d.resolve(name)
+	}
+	return out, nil
+}
+
+func (l mcpLibrary) channelDirectory(ctx context.Context) (mcpChannelDirectory, error) {
 	if l.s.channels == nil || l.s.videos == nil {
-		return mcpserver.ChannelScope{}, errMCPNotConfigured
+		return mcpChannelDirectory{}, errMCPNotConfigured
 	}
 	listed, err := l.Channels(ctx)
 	if err != nil {
-		return mcpserver.ChannelScope{}, err
+		return mcpChannelDirectory{}, err
 	}
 	withVideos, err := l.s.videos.ChannelDirectoryCtx(ctx)
 	if err != nil {
-		return mcpserver.ChannelScope{}, err
+		return mcpChannelDirectory{}, err
 	}
 	videoCount := map[string]int{}
 	dir := make([]videos.ChannelRef, 0, len(listed)+len(withVideos))
@@ -148,7 +168,12 @@ func (l mcpLibrary) ResolveChannel(ctx context.Context, name string) (mcpserver.
 			videoCount[c.ID] = -1 // has videos, count not needed
 		}
 	}
+	return mcpChannelDirectory{dir: dir, videoCount: videoCount, listedName: listedName}, nil
+}
 
+// resolve maps one name onto the directory. A miss carries the closest names.
+func (d mcpChannelDirectory) resolve(name string) mcpserver.ChannelScope {
+	dir, videoCount, listedName := d.dir, d.videoCount, d.listedName
 	want := strings.TrimSpace(name)
 	var res channelResolution
 	for _, c := range dir {
@@ -176,7 +201,7 @@ func (l mcpLibrary) ResolveChannel(ctx context.Context, name string) (mcpserver.
 	}
 	if !scope.Resolved() {
 		scope.Suggestions = closestChannels(dir, want, mcpSuggestions)
-		return scope, nil
+		return scope
 	}
 	// Name-only matches are legacy rows, which exist only because they have
 	// videos; an id match may be a channel nothing has been scanned for yet.
@@ -186,7 +211,7 @@ func (l mcpLibrary) ResolveChannel(ctx context.Context, name string) (mcpserver.
 			scope.NoVideos = false
 		}
 	}
-	return scope, nil
+	return scope
 }
 
 // closestChannels ranks the directory by edit distance to name.
@@ -260,9 +285,7 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 	}
 	perVideo := maxMatchesPerVideo
 	if q.VideoID != "" {
-		if err := l.searchableVideo(ctx, q.VideoID); err != nil {
-			return mcpserver.SearchResult{}, err
-		}
+		// The tool checked it with SearchableVideo first.
 		filter.VideoIDs = []string{q.VideoID}
 		perVideo = singleVideoMatches
 	}
@@ -335,10 +358,13 @@ func (l mcpLibrary) Search(ctx context.Context, q mcpserver.SearchQuery) (mcpser
 	return res, nil
 }
 
-// searchableVideo gates a search scoped to one video, before any lane runs: an
+// SearchableVideo gates a search scoped to one video, before any lane runs: an
 // unknown id costs no embed call. One EXISTS on its chunks (what every lane
 // reads); only without any, one row read tells unknown from not indexed.
-func (l mcpLibrary) searchableVideo(ctx context.Context, id string) error {
+func (l mcpLibrary) SearchableVideo(ctx context.Context, id string) error {
+	if l.s.rag == nil || l.s.videos == nil {
+		return errMCPNotConfigured
+	}
 	indexed, err := l.s.rag.HasChunks(ctx, id)
 	if err != nil || indexed {
 		return err

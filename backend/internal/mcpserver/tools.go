@@ -137,7 +137,7 @@ func searchSchema() map[string]any {
 		"channel": map[string]any{"type": "string",
 			"description": "Limit to one channel: its name, @handle or id. Matched case-insensitively and tolerant of typos."},
 		"channels": map[string]any{"type": "array", "items": map[string]any{"type": "string"},
-			"minItems": 1, "maxItems": maxSearchChannels,
+			"maxItems":    maxSearchChannels,
 			"description": "Limit to several channels at once, each matched like channel; combined with channel if both are given."},
 		"video_id": map[string]any{"type": "string",
 			"description": "Search inside this one video only, returning more of its moments: " +

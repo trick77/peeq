@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/trick77/peeq/internal/rag"
@@ -15,9 +16,9 @@ import (
 // video is a long talk with a "trail" moment every minute (more than a
 // search's per-video cap), indexed near every query vector so only a filter
 // keeps it out; bikeVideo01 is watched and bikeVideo02 a favourite.
-func mcpScopeFixture(t *testing.T) http.Handler {
+func mcpScopeFixture(t *testing.T, extra ...func(*Deps)) http.Handler {
 	t.Helper()
-	return mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, func(d *Deps) {
+	return mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, append([]func(*Deps){func(d *Deps) {
 		if err := d.Videos.Upsert(videos.Video{ID: "wheelTalk01", URL: "u7", Title: "An hour on trail",
 			ChannelID: "UCwheels", ChannelName: "Wheel Works", PublishedAt: "2026-03-03"}); err != nil {
 			t.Fatal(err)
@@ -43,7 +44,54 @@ func mcpScopeFixture(t *testing.T) http.Handler {
 		if err := d.Videos.SetFavorite("bikeVideo02", true); err != nil {
 			t.Fatal(err)
 		}
-	})
+	}}, extra...)...)
+}
+
+// ftsRungs counts the keyword rungs a search runs.
+type ftsRungs struct {
+	RagStore
+	n atomic.Int32
+}
+
+func (f *ftsRungs) SearchFTSFiltered(ctx context.Context, match string, n int, flt rag.Filter) ([]rag.Hit, error) {
+	f.n.Add(1)
+	return f.RagStore.SearchFTSFiltered(ctx, match, n, flt)
+}
+
+// The keyword ladder stops at the first rung that covers the scoped videos: a
+// precise match inside one video never runs the relaxed rungs or the OR floor
+// (which, under a one-video filter, walks every match). A library-wide search
+// still descends while it has fewer than keywordVideoTarget videos.
+func TestMCP_oneVideoSearchStopsAtTheFirstRungWithHits(t *testing.T) {
+	rungs := &ftsRungs{}
+	h := mcpScopeFixture(t, func(d *Deps) { rungs.RagStore = d.Rag; d.Rag = rungs })
+	text := mcpToolText(t, callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail", "video_id": "wheelTalk01"}))
+	if n := rungs.n.Load(); n != 1 || momentLines(text) != singleVideoMatches {
+		t.Errorf("one-video search ran %d rungs, %d moments:\n%s", n, momentLines(text), text)
+	}
+	rungs.n.Store(0)
+	mcpToolText(t, callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail"}))
+	if n := rungs.n.Load(); n < 2 {
+		t.Errorf("library-wide search ran %d rungs, want the ladder to descend", n)
+	}
+}
+
+func TestLadderVideoTarget(t *testing.T) {
+	many := make([]string, keywordVideoTarget+3)
+	for _, tc := range []struct {
+		f    rag.Filter
+		want int
+	}{
+		{rag.Filter{}, keywordVideoTarget},
+		{rag.Filter{ChannelIDs: []string{"UC1"}}, keywordVideoTarget},
+		{rag.Filter{VideoIDs: []string{"v1"}}, 1},
+		{rag.Filter{VideoIDs: []string{"v1", "v2"}}, 2},
+		{rag.Filter{VideoIDs: many}, keywordVideoTarget},
+	} {
+		if got := ladderVideoTarget(tc.f); got != tc.want {
+			t.Errorf("%+v: %d, want %d", tc.f, got, tc.want)
+		}
+	}
 }
 
 // momentLines counts an item's timestamped match lines.
@@ -85,9 +133,6 @@ func TestMCP_searchOneVideo(t *testing.T) {
 		if n := momentLines(text); n != singleVideoMatches {
 			t.Errorf("%s: scoped search shows %d moments, want %d\n%s", mode, n, singleVideoMatches, text)
 		}
-		if mode == "hybrid" {
-			t.Logf("single-video result:\n%s", text)
-		}
 	}
 }
 
@@ -106,6 +151,17 @@ func TestMCP_searchOneVideoMisses(t *testing.T) {
 				`Call get_video for its details or get_transcript for its transcript.` {
 			t.Errorf("%s not indexed: %v %q", mode, r.Result["isError"], text)
 		}
+	}
+	// The video before the channel: an empty channel never hides an unknown id.
+	r := callMCPTool(t, h, "search", map[string]any{"query": "bicycle", "video_id": "zzzzzzzzzzz", "channel": "Fresh Start"})
+	if text := mcpToolText(t, r); r.Result["isError"] != true || !strings.HasPrefix(text, `No video with id "zzzzzzzzzzz"`) {
+		t.Errorf("unknown video in an empty channel: %v %q", r.Result["isError"], text)
+	}
+	// Searchable, nothing matches: said of the video, never "drop video_id".
+	r = callMCPTool(t, h, "search", map[string]any{"query": "rice", "mode": "keyword", "video_id": "wheelTalk01"})
+	if text := mcpToolText(t, r); r.Result["isError"] == true ||
+		text != `Nothing in video "wheelTalk01" matches this search. Call get_transcript to read it, or get_video for its summary.` {
+		t.Errorf("no match in the video: %v %q", r.Result["isError"], text)
 	}
 }
 
@@ -138,8 +194,8 @@ func TestMCP_searchByWatchedAndFavorite(t *testing.T) {
 			}
 		}
 		text := mcpToolText(t, callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail", "mode": mode}))
-		for _, want := range []string{"- Why bikes stay upright — Bike Physics, 2026-05-02, category science · youtube: Science & Technology, watched\n",
-			"- Bicycle trail explained — Bike Physics, 2025-01-10, category engineering · youtube: Education, favorite\n"} {
+		for _, want := range []string{"- Why bikes stay upright — Bike Physics, 2026-05-02, category science · youtube: Science & Technology · watched\n",
+			"- Bicycle trail explained — Bike Physics, 2025-01-10, category engineering · youtube: Education · favorite\n"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("%s header lacks %q:\n%s", mode, want, text)
 			}
@@ -179,7 +235,7 @@ func TestMCP_searchSeveralChannels(t *testing.T) {
 	// Fresh Start holds no videos: no error among others, the no-videos answer alone.
 	text := mcpToolText(t, callMCPTool(t, h, "search", map[string]any{"query": "rice", "mode": "keyword",
 		"channels": []string{"Fresh Start", "Kitchen Lab"}}))
-	if !strings.Contains(text, "id: cookVideo01") {
+	if !strings.HasPrefix(text, "No videos yet in Fresh Start.\n\n") || !strings.Contains(text, "id: cookVideo01") {
 		t.Errorf("empty channel among others:\n%s", text)
 	}
 	r := callMCPTool(t, h, "search", map[string]any{"query": "rice", "channels": []string{"Fresh Start", "Gardening World"}})

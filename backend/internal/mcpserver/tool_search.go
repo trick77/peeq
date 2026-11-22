@@ -4,9 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/trick77/peeq/internal/rag"
@@ -91,6 +89,9 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) mcp.Result 
 	if bad != nil {
 		return *bad
 	}
+	if miss := h.checkVideo(ctx, q.VideoID); miss != nil {
+		return *miss
+	}
 	if len(names) > 0 {
 		scope, stop := h.resolveChannelArgs(ctx, names, "search", "search without a channel")
 		if stop != nil {
@@ -105,15 +106,7 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) mcp.Result 
 
 	res, err := h.lib.Search(ctx, q)
 	if err != nil {
-		if miss, ok := searchVideoMiss(q.VideoID, err); ok {
-			return miss
-		}
-		slog.Warn("mcp: search failed", "err", err)
-		reason := "the search index could not be read"
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			reason = "timed out"
-		}
-		return mcp.ErrorResult("search failed (" + reason + "), try again, or narrow the query")
+		return searchFailed(err)
 	}
 	return h.renderSearch(q, res)
 }
@@ -121,6 +114,10 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) mcp.Result 
 func (h *handler) renderSearch(q SearchQuery, res SearchResult) mcp.Result {
 	sources := make([]mcp.Source, 0, len(res.Videos))
 	var b strings.Builder
+	if len(q.Channel.Empty) > 0 {
+		// Searched past; without this the result reads as covering them.
+		b.WriteString("No videos yet in " + strings.Join(q.Channel.Empty, ", ") + ".\n\n")
+	}
 	if res.SemanticDegraded && !q.Keyword {
 		b.WriteString("Note: semantic search was unavailable, so these are keyword-only results.\n\n")
 	}
@@ -131,10 +128,7 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) mcp.Result {
 		b.WriteString("Note: part of the keyword search failed; some matches may be missing.\n\n")
 	}
 	if len(res.Videos) == 0 {
-		b.WriteString("No videos in peeq match this search.")
-		if q.filtered() {
-			b.WriteString(" Try again without some of the filters.")
-		}
+		writeNoMatch(&b, q)
 		return mcp.Result{Text: b.String(), Sources: sources}
 	}
 	// Items are added whole while they fit, so the size cap never cuts one in
@@ -182,9 +176,27 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) mcp.Result {
 	return mcp.Result{Text: strings.TrimRight(b.String(), "\n"), Sources: sources}
 }
 
+// writeNoMatch is the empty result's sentence. Inside one video it is said of
+// that video, and the hint never suggests dropping video_id: the video was
+// checked searchable, the query found nothing in it.
+func writeNoMatch(b *strings.Builder, q SearchQuery) {
+	if q.VideoID == "" {
+		b.WriteString("No videos in peeq match this search.")
+		if q.filtered() {
+			b.WriteString(" Try again without some of the filters.")
+		}
+		return
+	}
+	fmt.Fprintf(b, "Nothing in video %q matches this search. Call get_transcript to read it, or get_video for its summary.", q.VideoID)
+	if q.filtered() {
+		b.WriteString(" Or keep video_id and try again without the other filters.")
+	}
+}
+
 // resultHeader is "<title> — <channel>, <date>, category <c> · youtube: <yt>,
-// subcategories: <s>, watched, favorite", each part omitted when unknown or
-// unset: a model reports the user's marks without another call.
+// subcategories: <s> · watched · favorite", each part omitted when unknown or
+// unset: a model reports the user's marks without another call. The marks
+// stand apart from the comma lists, as in get_video.
 func resultHeader(v Video) string {
 	var meta []string
 	if v.Channel != "" {
@@ -205,20 +217,20 @@ func resultHeader(v Video) string {
 	if len(v.Subcategories) > 0 {
 		meta = append(meta, "subcategories: "+strings.Join(v.Subcategories, ", "))
 	}
-	if v.Watched {
-		meta = append(meta, "watched")
-	}
-	if v.Favorite {
-		meta = append(meta, "favorite")
-	}
 	title := mcp.OneLine(v.Title, titleRunes)
 	if title == "" {
 		title = v.ID
 	}
-	if len(meta) == 0 {
-		return title
+	if len(meta) > 0 {
+		title += " — " + strings.Join(meta, ", ")
 	}
-	return title + " — " + strings.Join(meta, ", ")
+	if v.Watched {
+		title += " · watched"
+	}
+	if v.Favorite {
+		title += " · favorite"
+	}
+	return title
 }
 
 // bestMoment is the timestamp a result links to: its best-ranked match that

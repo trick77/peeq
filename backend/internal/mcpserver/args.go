@@ -20,27 +20,35 @@ func (h *handler) resolveChannelArg(ctx context.Context, name, tool, without str
 	return h.resolveChannelArgs(ctx, []string{name}, tool, without)
 }
 
-// resolveChannelArgs is resolveChannelArg over several names, unioned into
-// one scope. Any name that matches nothing stops the call with its own miss:
-// a search over fewer channels than asked would read as complete. A channel
-// without videos among others narrows nothing away; only when every one is
-// empty is that the answer.
+// resolveChannelArgs is resolveChannelArg over several names, resolved in one
+// directory read and unioned into one scope. Any name that matches nothing
+// stops the call with its own miss: a search over fewer channels than asked
+// would read as complete. A channel without videos among others narrows
+// nothing away and lands in Empty, for the result to say; only when every
+// one is empty is that the answer.
 func (h *handler) resolveChannelArgs(ctx context.Context, names []string, tool, without string) (ChannelScope, *mcp.Result) {
-	var union ChannelScope
-	empty := true
+	var unique []string
 	seen := map[string]bool{}
 	for _, name := range names {
-		key := strings.ToLower(name)
-		if seen[key] {
-			continue
+		if key := strings.ToLower(name); !seen[key] {
+			seen[key] = true
+			unique = append(unique, name)
 		}
-		seen[key] = true
-		scope, err := h.lib.ResolveChannel(ctx, name)
-		if err != nil {
-			slog.Warn("mcp: channel resolve failed", "err", err)
-			r := mcp.ErrorResult(tool + " failed: the channel list could not be read")
-			return ChannelScope{}, &r
-		}
+	}
+	scopes, err := h.lib.ResolveChannels(ctx, unique)
+	if err == nil && len(scopes) != len(unique) {
+		err = fmt.Errorf("%d scopes for %d names", len(scopes), len(unique))
+	}
+	if err != nil {
+		slog.Warn("mcp: channel resolve failed", "err", err)
+		r := mcp.ErrorResult(tool + " failed: the channel list could not be read")
+		return ChannelScope{}, &r
+	}
+	var union ChannelScope
+	var empty []string
+	anyVideos := false
+	for i, scope := range scopes {
+		name := unique[i]
 		if !scope.Resolved() {
 			msg := fmt.Sprintf("No channel in peeq matches %q.", name)
 			if len(scope.Suggestions) > 0 {
@@ -52,13 +60,22 @@ func (h *handler) resolveChannelArgs(ctx context.Context, names []string, tool, 
 		union.IDs = appendNew(union.IDs, scope.IDs)
 		union.Names = appendNew(union.Names, scope.Names)
 		union.Matched = appendNew(union.Matched, scope.Matched)
-		empty = empty && scope.NoVideos
-	}
-	if empty {
-		return ChannelScope{}, &mcp.Result{
-			Text: fmt.Sprintf("No videos yet in %s: peeq follows the channel but holds none of its videos so far.", strings.Join(union.Matched, ", ")),
+		if scope.NoVideos {
+			empty = appendNew(empty, scope.Matched)
+		} else {
+			anyVideos = true
 		}
 	}
+	if !anyVideos {
+		follows := "the channel but holds none of its videos"
+		if len(union.Matched) > 1 {
+			follows = "these channels but holds none of their videos"
+		}
+		return ChannelScope{}, &mcp.Result{
+			Text: fmt.Sprintf("No videos yet in %s: peeq follows %s so far.", strings.Join(union.Matched, ", "), follows),
+		}
+	}
+	union.Empty = empty
 	return union, nil
 }
 

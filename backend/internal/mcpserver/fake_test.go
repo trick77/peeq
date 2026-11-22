@@ -36,8 +36,12 @@ type fakeLibrary struct {
 	// addShort drops the last outcome: a library breaking the one-per-url
 	// contract.
 	addShort bool
-	// resolveErr fails ResolveChannel.
+	// resolveErr fails ResolveChannels; resolveN counts its calls.
 	resolveErr error
+	resolveN   int
+	// gateErr answers SearchableVideo; gateIDs is every id it was asked.
+	gateErr error
+	gateIDs []string
 	// list answers Videos, listErr fails it; lastList is the last query.
 	list     VideoList
 	listErr  error
@@ -92,14 +96,27 @@ func (f *fakeLibrary) Channels(context.Context) ([]Channel, error) {
 	return f.channels, nil
 }
 
-func (f *fakeLibrary) ResolveChannel(_ context.Context, name string) (ChannelScope, error) {
+// ResolveChannels counts its calls in resolveN: one directory read each.
+func (f *fakeLibrary) ResolveChannels(_ context.Context, names []string) ([]ChannelScope, error) {
+	f.resolveN++
 	if f.resolveErr != nil {
-		return ChannelScope{}, f.resolveErr
+		return nil, f.resolveErr
 	}
-	if s, ok := f.scopes[strings.ToLower(name)]; ok {
-		return s, nil
+	out := make([]ChannelScope, len(names))
+	for i, name := range names {
+		s, ok := f.scopes[strings.ToLower(name)]
+		if !ok {
+			s = ChannelScope{Suggestions: []string{"Veritasium", "Vsauce"}}
+		}
+		out[i] = s
 	}
-	return ChannelScope{Suggestions: []string{"Veritasium", "Vsauce"}}, nil
+	return out, nil
+}
+
+// SearchableVideo answers gateErr; gateIDs is every id it was asked.
+func (f *fakeLibrary) SearchableVideo(_ context.Context, id string) error {
+	f.gateIDs = append(f.gateIDs, id)
+	return f.gateErr
 }
 
 func (f *fakeLibrary) Search(_ context.Context, q SearchQuery) (SearchResult, error) {

@@ -197,6 +197,20 @@ const (
 	keywordVideoTarget = answerBreadthSources
 )
 
+// ladderVideoTarget is how many distinct videos stop the keyword ladder:
+// keywordVideoTarget, or the number of videos a filter scopes to when that is
+// fewer. A search inside one video can never offer eight, so without this it
+// ran every rung down to the OR floor (which, the filter never filling its
+// LIMIT, walks every match) and padded the video's moments with one-word
+// floor hits. Only the MCP single-video search sets VideoIDs; Ask and the
+// Search page never do, so they keep keywordVideoTarget.
+func ladderVideoTarget(f rag.Filter) int {
+	if n := len(f.VideoIDs); n > 0 {
+		return min(n, keywordVideoTarget)
+	}
+	return keywordVideoTarget
+}
+
 // handleSearch answers GET /api/search?q=&k=&mode=: blank q short-circuits to
 // an empty result set without ever calling the embedder (cheap, and avoids
 // spending an embed call on a no-op query).
@@ -486,7 +500,7 @@ func (s *server) askLanes(ctx context.Context, q, topic string, filter rag.Filte
 		// cannot be told from one slow rung.
 		diag.rungs = append(diag.rungs,
 			fmt.Sprintf("w%.1f=%dh/%dv/%dms", tier.Weight, len(hits), distinctVideos(hits), rungMs))
-		if len(videosSeen) >= keywordVideoTarget {
+		if len(videosSeen) >= ladderVideoTarget(filter) {
 			break
 		}
 	}

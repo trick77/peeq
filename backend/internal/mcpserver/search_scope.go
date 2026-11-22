@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,7 +16,8 @@ const maxSearchChannels = 4
 // checkScopeArgs validates search's video_id and channels and copies
 // video_id, watched and favorite into q. It reads nothing, so a bad argument
 // costs no library call. It returns the channel names to resolve: channel
-// first, then the channels entries.
+// first, then the channels entries. Blanks and an empty list are absent, as
+// LLM clients send them for an optional argument.
 func (h *handler) checkScopeArgs(a searchArgs, q *SearchQuery) ([]string, *mcp.Result) {
 	if raw := strings.TrimSpace(a.VideoID); raw != "" {
 		arg := h.parseVideoArg(raw)
@@ -30,43 +32,62 @@ func (h *handler) checkScopeArgs(a searchArgs, q *SearchQuery) ([]string, *mcp.R
 	q.Watched, q.Favorite = a.Watched, a.Favorite
 
 	var names []string
-	if name := strings.TrimSpace(a.Channel); name != "" {
-		names = append(names, name)
+	for _, c := range a.Channels {
+		if c = strings.TrimSpace(c); c != "" {
+			names = append(names, c)
+		}
 	}
-	// Absent decodes to nil, [] to an empty list: only the latter is wrong.
-	if a.Channels != nil && (len(a.Channels) == 0 || len(a.Channels) > maxSearchChannels) {
-		r := mcp.ErrorResult(fmt.Sprintf("channels must list 1 to %d channels, got %d", maxSearchChannels, len(a.Channels)))
+	if len(names) > maxSearchChannels {
+		r := mcp.ErrorResult(fmt.Sprintf("channels takes at most %d channels, got %d", maxSearchChannels, len(names)))
 		return nil, &r
 	}
-	for i, c := range a.Channels {
-		c = strings.TrimSpace(c)
-		if c == "" {
-			r := mcp.ErrorResult(fmt.Sprintf("channels entry %d is blank", i+1))
-			return nil, &r
-		}
-		names = append(names, c)
+	if name := strings.TrimSpace(a.Channel); name != "" {
+		names = append([]string{name}, names...)
 	}
 	return names, nil
 }
 
-// searchVideoMiss is the answer for a video_id search cannot run in: no such
-// video, or one with nothing indexed. ok is false for any other error.
-func searchVideoMiss(id string, err error) (res mcp.Result, ok bool) {
+// checkVideo is the answer when search cannot run in video id: no such
+// video, nothing of it indexed, or the check failing; nil when it can, or
+// when no video_id was given. One cheap read, before any channel is resolved:
+// a channel's no-videos answer must not hide an unknown video.
+func (h *handler) checkVideo(ctx context.Context, id string) *mcp.Result {
+	if id == "" {
+		return nil
+	}
+	err := h.lib.SearchableVideo(ctx, id)
+	var r mcp.Result
 	switch {
+	case err == nil:
+		return nil
 	case errors.Is(err, ErrVideoNotFound):
 		slog.Info("mcp: search video miss", "video_id", logVideoID(id), "reason", "unknown_video")
-		return mcp.ErrorResult(unknownVideoText(id)), true
+		r = mcp.ErrorResult(unknownVideoText(id))
 	case errors.Is(err, ErrVideoNotSearchable):
 		slog.Info("mcp: search video miss", "video_id", logVideoID(id), "reason", "not_indexed")
-		return mcp.ErrorResult(fmt.Sprintf("Video %q is in peeq but not searchable: nothing of it is indexed yet. "+
-			"Call get_video for its details or get_transcript for its transcript.", id)), true
+		r = mcp.ErrorResult(fmt.Sprintf("Video %q is in peeq but not searchable: nothing of it is indexed yet. "+
+			"Call get_video for its details or get_transcript for its transcript.", id))
+	default:
+		r = searchFailed(err)
 	}
-	return mcp.Result{}, false
+	return &r
 }
 
-// filtered reports whether anything beyond the query text narrows the search.
+// searchFailed is the answer for a search that could not run, its cause only
+// in the log.
+func searchFailed(err error) mcp.Result {
+	slog.Warn("mcp: search failed", "err", err)
+	reason := "the search index could not be read"
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		reason = "timed out"
+	}
+	return mcp.ErrorResult("search failed (" + reason + "), try again, or narrow the query")
+}
+
+// filtered reports whether anything beyond the query text and video_id
+// narrows the search: what "try again without some of the filters" can drop.
 func (q SearchQuery) filtered() bool {
 	return len(q.Channel.Matched) > 0 || q.Category != "" || q.YouTubeCategory != "" || q.After != "" ||
-		q.Before != "" || q.Subcategory != "" || q.ChannelSubcategory != "" || q.VideoID != "" ||
+		q.Before != "" || q.Subcategory != "" || q.ChannelSubcategory != "" ||
 		q.Watched != nil || q.Favorite != nil
 }

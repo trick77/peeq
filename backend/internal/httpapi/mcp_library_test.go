@@ -661,7 +661,7 @@ func TestMCPLibrary_totalsFailLoudly(t *testing.T) {
 }
 
 // The searchable count scans the whole library: a channel-scoped search or
-// list_videos (ResolveChannel) never runs it, only list_youtube_channels does.
+// list_videos (ResolveChannels) never runs it, only list_youtube_channels does.
 // With its index gone the count fails: the other tools neither notice nor
 // log it; the list says once that the numbers are missing and shows totals.
 func TestMCP_searchableCountsOnlyForTheChannelList(t *testing.T) {
