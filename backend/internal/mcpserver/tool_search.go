@@ -150,6 +150,9 @@ func (h *handler) renderSearch(q SearchQuery, res SearchResult) mcp.Result {
 		best := bestMoment(vh.Matches)
 		var item strings.Builder
 		fmt.Fprintf(&item, "- %s\n", resultHeader(v))
+		// The bare id get_video and get_transcript take; inside item, so the
+		// size cap counts it.
+		item.WriteString("   id: " + v.ID + "\n")
 		if s := mcp.OneLine(v.Summary, summaryRunes); s != "" {
 			item.WriteString("   summary: " + s + "\n")
 		}

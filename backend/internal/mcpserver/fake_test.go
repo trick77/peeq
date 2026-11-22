@@ -24,6 +24,8 @@ type fakeLibrary struct {
 	lastQuery   *SearchQuery
 	videos      map[string]*Video
 	transcripts map[string]*Transcript
+	// readErr fails Video and Transcript.
+	readErr error
 	// added answers AddVideos per url; an unlisted url is queued. addedN
 	// counts the calls, addedURLs keeps the last call's urls.
 	added     map[string]AddedVideo
@@ -70,11 +72,23 @@ func (f *fakeLibrary) Search(_ context.Context, q SearchQuery) (SearchResult, er
 }
 
 func (f *fakeLibrary) Video(_ context.Context, id string) (*Video, error) {
+	if f.readErr != nil {
+		return nil, f.readErr
+	}
 	return f.videos[id], nil
 }
 
+// Transcript answers ErrVideoNotFound for an id not in transcripts; an entry
+// without cues is a known video without a transcript.
 func (f *fakeLibrary) Transcript(_ context.Context, id string) (*Transcript, error) {
-	return f.transcripts[id], nil
+	if f.readErr != nil {
+		return nil, f.readErr
+	}
+	t, ok := f.transcripts[id]
+	if !ok {
+		return nil, ErrVideoNotFound
+	}
+	return t, nil
 }
 
 func newTestHandler(lib Library) http.Handler {

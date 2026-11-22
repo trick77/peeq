@@ -332,18 +332,26 @@ func (l mcpLibrary) Transcript(ctx context.Context, id string) (*mcpserver.Trans
 		return nil, errMCPNotConfigured
 	}
 	v, err := l.s.videos.GetCtx(ctx, id)
-	if err != nil || v == nil {
+	if err != nil {
 		return nil, err
 	}
+	if v == nil {
+		return nil, mcpserver.ErrVideoNotFound
+	}
+	out := &mcpserver.Transcript{VideoID: v.ID, Title: v.Title, Status: v.Status}
 	t, err := l.s.videos.GetTranscriptCtx(ctx, id)
-	if err != nil || t == nil {
+	if err != nil {
 		return nil, err
+	}
+	if t == nil {
+		return out, nil
 	}
 	parsed, err := subtitles.ParseVTT(strings.NewReader(t.VTT))
 	if err != nil {
 		return nil, err
 	}
-	return &mcpserver.Transcript{VideoID: v.ID, Title: v.Title, Cues: parsed.Cues}, nil
+	out.Cues = parsed.Cues
+	return out, nil
 }
 
 // toMCPVideo copies the metadata and short summary a search result shows.

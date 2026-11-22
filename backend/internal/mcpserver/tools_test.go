@@ -3,7 +3,9 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -67,13 +69,15 @@ func TestSearch_textAndSourcesFollowTheContract(t *testing.T) {
 	text := toolText(t, r)
 
 	for _, want := range []string{
-		"- Why bikes stay upright — Veritasium, 2026-05-02, category science · youtube: Science & Technology, Education\n",
+		// The id line follows the header: the bare id get_video and
+		// get_transcript take.
+		"- Why bikes stay upright — Veritasium, 2026-05-02, category science · youtube: Science & Technology, Education\n   id: abc123\n",
 		"   summary: Gyroscopes are not the reason.",
 		"   [12:34] transcript: the **trail** steers it\n",
 		"   [03:10] chapter: Self-stability\n",
 		"   summary match: A bike steers into its fall.\n",
 		"   peeq: https://peeq.example.com/video/abc123?t=754  youtube: https://youtu.be/abc123?t=754\n",
-		"- Summary only — Vsauce, category education\n",
+		"- Summary only — Vsauce, category education\n   id: def456\n",
 		"   peeq: https://peeq.example.com/video/def456  youtube: https://youtu.be/def456",
 	} {
 		if !strings.Contains(text, want) {
@@ -127,6 +131,22 @@ func TestSearchSchemaListsEveryArgument(t *testing.T) {
 	}
 	if d := searchDescription; !strings.Contains(d, "subcategory") || !strings.Contains(d, "channel_subcategory") {
 		t.Errorf("search description does not say subcategory filters exist: %q", d)
+	}
+}
+
+// The id argument says where the id is and that a URL works too: models
+// passed links and got "not found".
+func TestVideoToolsDescribeTheIDArgument(t *testing.T) {
+	h := &handler{lib: &fakeLibrary{}}
+	for _, tool := range h.tools() {
+		if tool.Name != "get_video" && tool.Name != "get_transcript" {
+			continue
+		}
+		props, _ := tool.Schema["properties"].(map[string]any)
+		id, _ := props["id"].(map[string]any)
+		if id["description"] != "The video id (the `id:` line of a search result) or a YouTube URL of the video." {
+			t.Errorf("%s id description = %v", tool.Name, id["description"])
+		}
 	}
 }
 
@@ -522,9 +542,111 @@ func TestGetTranscript_oversizedSecondStillAdvances(t *testing.T) {
 	}
 }
 
-func TestGetTranscript_missing(t *testing.T) {
-	if r := callTool(t, &fakeLibrary{}, "get_transcript", map[string]any{"id": "x"}); !isError(r) {
-		t.Fatalf("want a tool error, got %s", r.raw)
+// An unknown video and a known one without a transcript answer differently:
+// the first is a wrong id, the second a video to read with get_video.
+func TestGetTranscript_unknownVideoIsNotAMissingTranscript(t *testing.T) {
+	lib := &fakeLibrary{transcripts: map[string]*Transcript{
+		"dQw4w9WgXcQ": {VideoID: "dQw4w9WgXcQ", Title: "Talk", Status: "downloaded"},
+		// Stored, but nothing parsed out of it: no transcript either.
+		"emptyCues01": {VideoID: "emptyCues01", Status: "new", Cues: []subtitles.Cue{}},
+	}}
+
+	r := callTool(t, lib, "get_transcript", map[string]any{"id": "x"})
+	unknown := toolText(t, r)
+	if !isError(r) || unknown != `No video with id "x" in peeq. Use the id from a search result.` {
+		t.Errorf("unknown video: isError=%v %q", isError(r), unknown)
+	}
+	if v := toolText(t, callTool(t, lib, "get_video", map[string]any{"id": "x"})); v != unknown {
+		t.Errorf("get_video says %q, get_transcript %q: want the same", v, unknown)
+	}
+
+	r = callTool(t, lib, "get_transcript", map[string]any{"id": "dQw4w9WgXcQ"})
+	missing := toolText(t, r)
+	if !isError(r) || missing == unknown {
+		t.Fatalf("no transcript: isError=%v %q", isError(r), missing)
+	}
+	for _, want := range []string{`"Talk"`, "dQw4w9WgXcQ", "status downloaded", "get_video"} {
+		if !strings.Contains(missing, want) {
+			t.Errorf("no-transcript text lacks %q: %q", want, missing)
+		}
+	}
+
+	r = callTool(t, lib, "get_transcript", map[string]any{"id": "emptyCues01"})
+	if text := toolText(t, r); !isError(r) || !strings.Contains(text, `no transcript for "emptyCues01"`) ||
+		!strings.Contains(text, "status new") {
+		t.Errorf("zero cues: isError=%v %q", isError(r), text)
+	}
+}
+
+// A library answering nil without an error is a video without a transcript.
+func TestGetTranscript_nilTranscriptIsMissing(t *testing.T) {
+	lib := &fakeLibrary{transcripts: map[string]*Transcript{"dQw4w9WgXcQ": nil}}
+	r := callTool(t, lib, "get_transcript", map[string]any{"id": "dQw4w9WgXcQ"})
+	if text := toolText(t, r); !isError(r) || !strings.Contains(text, `no transcript for "dQw4w9WgXcQ"`) ||
+		strings.Contains(text, "status") {
+		t.Errorf("got isError=%v %q", isError(r), text)
+	}
+}
+
+func TestGetVideoAndTranscript_acceptAYouTubeURL(t *testing.T) {
+	cues := []subtitles.Cue{{StartSeconds: 5, Text: "hello riders"}}
+	lib := &fakeLibrary{
+		videos:      map[string]*Video{"dQw4w9WgXcQ": {ID: "dQw4w9WgXcQ", Title: "Why bikes stay upright"}},
+		transcripts: map[string]*Transcript{"dQw4w9WgXcQ": {VideoID: "dQw4w9WgXcQ", Title: "Why bikes stay upright", Cues: cues}},
+	}
+	for _, u := range []string{"https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s", "https://youtu.be/dQw4w9WgXcQ"} {
+		r := callTool(t, lib, "get_video", map[string]any{"id": u})
+		if isError(r) || !strings.Contains(toolText(t, r), "Why bikes stay upright") {
+			t.Errorf("get_video %s: %q", u, toolText(t, r))
+		}
+		r = callTool(t, lib, "get_transcript", map[string]any{"id": u})
+		if isError(r) || !strings.Contains(toolText(t, r), "[00:05] hello riders") {
+			t.Errorf("get_transcript %s: %q", u, toolText(t, r))
+		}
+	}
+}
+
+func captureLog(t *testing.T) *strings.Builder {
+	t.Helper()
+	var b strings.Builder
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&b, nil)))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+	return &b
+}
+
+// A miss logs the video id and why, never the argument: it can be a URL.
+func TestGetTranscript_missLogsOnlyAnID(t *testing.T) {
+	lib := &fakeLibrary{transcripts: map[string]*Transcript{"dQw4w9WgXcQ": {VideoID: "dQw4w9WgXcQ", Title: "Talk"}}}
+	for _, tc := range []struct{ arg, want string }{
+		{"https://www.youtube.com/watch?v=aaaaaaaaaaa&t=1", "video_id=aaaaaaaaaaa reason=unknown_video"},
+		{"https://www.youtube.com/@veritasium?si=secret", "video_id=invalid reason=unknown_video"},
+		{"https://youtu.be/dQw4w9WgXcQ?si=secret", "video_id=dQw4w9WgXcQ reason=no_transcript"},
+	} {
+		out := captureLog(t)
+		callTool(t, lib, "get_transcript", map[string]any{"id": tc.arg})
+		if !strings.Contains(out.String(), `msg="mcp: transcript miss" `+tc.want) {
+			t.Errorf("%s: log = %q, want %q", tc.arg, out.String(), tc.want)
+		}
+		if strings.Contains(out.String(), "secret") || strings.Contains(out.String(), "youtube.com") ||
+			strings.Contains(out.String(), "youtu.be") {
+			t.Errorf("%s: log carries the argument: %q", tc.arg, out.String())
+		}
+	}
+}
+
+// A failed read logs the id only too.
+func TestGetVideoAndTranscript_failureLogsOnlyAnID(t *testing.T) {
+	lib := &fakeLibrary{readErr: errors.New("disk on fire")}
+	for _, tool := range []string{"get_video", "get_transcript"} {
+		out := captureLog(t)
+		r := callTool(t, lib, tool, map[string]any{"id": "https://www.youtube.com/@veritasium?si=secret"})
+		if !isError(r) || !strings.Contains(toolText(t, r), "failed; try again") {
+			t.Errorf("%s: %q", tool, toolText(t, r))
+		}
+		if !strings.Contains(out.String(), "video_id=invalid") || strings.Contains(out.String(), "secret") {
+			t.Errorf("%s: log = %q", tool, out.String())
+		}
 	}
 }
 

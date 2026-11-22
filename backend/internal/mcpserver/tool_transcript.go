@@ -1,8 +1,10 @@
 package mcpserver
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -39,7 +41,7 @@ func runGetTranscript(ctx context.Context, h *handler, raw json.RawMessage) mcp.
 	if err := mcp.DecodeArgs(raw, &a); err != nil {
 		return mcp.ErrorResult("invalid arguments: " + err.Error())
 	}
-	id := strings.TrimSpace(a.ID)
+	id := videoIDArg(a.ID)
 	if id == "" {
 		return mcp.ErrorResult("id is required")
 	}
@@ -54,12 +56,17 @@ func runGetTranscript(ctx context.Context, h *handler, raw json.RawMessage) mcp.
 		}
 	}
 	t, err := h.lib.Transcript(ctx, id)
+	if errors.Is(err, ErrVideoNotFound) {
+		slog.Info("mcp: transcript miss", "video_id", logVideoID(id), "reason", "unknown_video")
+		return mcp.ErrorResult(unknownVideoText(id))
+	}
 	if err != nil {
-		slog.Warn("mcp: get transcript failed", "video_id", id, "err", err)
+		slog.Warn("mcp: get transcript failed", "video_id", logVideoID(id), "err", err)
 		return mcp.ErrorResult("reading the transcript failed; try again")
 	}
 	if t == nil || len(t.Cues) == 0 {
-		return mcp.ErrorResult(fmt.Sprintf("peeq has no transcript for video %q.", id))
+		slog.Info("mcp: transcript miss", "video_id", logVideoID(id), "reason", "no_transcript")
+		return mcp.ErrorResult(noTranscriptText(id, t))
 	}
 
 	lines := mergeCues(t.Cues, start, end)
@@ -96,6 +103,20 @@ func runGetTranscript(ctx context.Context, h *handler, raw json.RawMessage) mcp.
 		b.WriteString(line)
 	}
 	return mcp.Result{Text: strings.TrimRight(b.String(), "\n")}
+}
+
+// noTranscriptText is the tool error for a known video without a transcript
+// (t may be nil): its title and status, and where its summary is.
+func noTranscriptText(id string, t *Transcript) string {
+	title, status := id, ""
+	if t != nil {
+		title, status = cmp.Or(t.Title, id), t.Status
+	}
+	where := "video " + id
+	if status != "" {
+		where += ", status " + status
+	}
+	return fmt.Sprintf("peeq has no transcript for %q (%s). Call get_video with this id for its summary and analysis.", title, where)
 }
 
 // mergeCues keeps the cues starting inside [start, end) (end < 0: no end) and

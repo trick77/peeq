@@ -242,7 +242,7 @@ func TestMCP_endToEnd(t *testing.T) {
 	r = callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail"})
 	text := mcpToolText(t, r)
 	for _, want := range []string{
-		"Why bikes stay upright — Bike Physics, 2026-05-02, category science · youtube: Science & Technology",
+		"Why bikes stay upright — Bike Physics, 2026-05-02, category science · youtube: Science & Technology\n   id: bikeVideo01\n",
 		"[12:34] transcript:",
 		"peeq: https://peeq.example.com/video/bikeVideo01?t=754  youtube: https://youtu.be/bikeVideo01?t=754",
 		"summary: Gyroscopes are not why bikes stay up",
@@ -314,12 +314,50 @@ func TestMCP_endToEnd(t *testing.T) {
 	if !strings.Contains(text, "[01:05] trail matters") || strings.Contains(text, "hello riders") {
 		t.Errorf("get_transcript:\n%s", text)
 	}
+	text = mcpToolText(t, callMCPTool(t, h, "get_transcript", map[string]any{"id": "https://www.youtube.com/watch?v=bikeVideo01&t=60s"}))
+	if !strings.Contains(text, "[01:05] trail matters") {
+		t.Errorf("get_transcript by URL:\n%s", text)
+	}
+	text = mcpToolText(t, callMCPTool(t, h, "get_video", map[string]any{"id": "https://youtu.be/bikeVideo01"}))
+	if !strings.Contains(text, "Why bikes stay upright") {
+		t.Errorf("get_video by URL:\n%s", text)
+	}
 
 	text = mcpToolText(t, callMCPTool(t, h, "list_youtube_channels", map[string]any{}))
 	for _, want := range []string{"Bike Physics (@bikephysics) · id UCbikes · videos: 2 · caption-only reads kept",
 		"categories: engineering (1), science (1)", "youtube: Education (1), Science & Technology (1)", "Kitchen Lab"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("list_youtube_channels lacks %q\n---\n%s", want, text)
+		}
+	}
+}
+
+// Over the real stores, an unknown id and a video without a transcript row
+// (the fixture stores one for bikeVideo01 only) answer differently, and a
+// stored transcript without a single cue counts as none.
+func TestMCP_transcriptMissEndToEnd(t *testing.T) {
+	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, func(d *Deps) {
+		if err := d.Videos.SetTranscript("bikeVideo02", videos.TranscriptSourceDownload, "WEBVTT\n\n"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	r := callMCPTool(t, h, "get_transcript", map[string]any{"id": "zzzzzzzzzzz"})
+	if text := mcpToolText(t, r); r.Result["isError"] != true ||
+		text != `No video with id "zzzzzzzzzzz" in peeq. Use the id from a search result.` {
+		t.Errorf("unknown video: %v %q", r.Result["isError"], text)
+	}
+
+	for id, title := range map[string]string{"cookVideo01": "Perfect rice", "bikeVideo02": "Bicycle trail explained"} {
+		r = callMCPTool(t, h, "get_transcript", map[string]any{"id": id})
+		text := mcpToolText(t, r)
+		if r.Result["isError"] != true || strings.Contains(text, "No video with id") {
+			t.Errorf("%s: %v %q", id, r.Result["isError"], text)
+		}
+		for _, want := range []string{`no transcript for "` + title + `"`, id, "status new", "get_video"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s: text lacks %q: %q", id, want, text)
+			}
 		}
 	}
 }

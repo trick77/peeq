@@ -109,6 +109,9 @@ Each tool carries a display title, sent both as `title` and `annotations.title`
   key points, chapters, in-depth summary, links.
 - `get_transcript` ("Read a video's transcript") — `id`, optional `start_seconds`, `end_seconds` (exclusive):
   `[mm:ss] text` lines. A cut transcript ends with the `start_seconds` to request next.
+- `id` of both: the bare id (a search item's `id:` line) or a YouTube video URL (watch, youtu.be,
+  shorts, live), reduced to its id with `ytdlp.Canonicalize`. A channel or playlist URL is not an id
+  and misses.
 - `list_youtube_channels` ("List YouTube channels in your library") — subscribed channels plus channels whose caption-only reads are
   kept: id, handle, description, video count, top peeq and YouTube categories, the
   channel's subcategories, and a header line naming every channel subcategory in use.
@@ -148,7 +151,7 @@ The user can always ask explicitly ("search peeq for …", "in channel X …").
 
 ```json
 {"resultType": "complete",
- "content": [{"type": "text", "text": "- <title> — <channel>, 2026-05-02, category science · youtube: Science & Technology\n   summary: …\n   [12:34] transcript: …the **matched** words…\n   [03:10] chapter: …\n   summary match: …\n   peeq: https://peeq…/video/ID?t=754  youtube: https://youtu.be/ID?t=754\n- …"}],
+ "content": [{"type": "text", "text": "- <title> — <channel>, 2026-05-02, category science · youtube: Science & Technology\n   id: ID\n   summary: …\n   [12:34] transcript: …the **matched** words…\n   [03:10] chapter: …\n   summary match: …\n   peeq: https://peeq…/video/ID?t=754  youtube: https://youtu.be/ID?t=754\n- …"}],
  "structuredContent": {"sources": [{"url": "https://peeq…/video/ID?t=754", "title": "<title>",
    "label": "peeq · <channel>", "snippet": "<best match, ≤240 chars>",
    "image": "https://i.ytimg.com/vi/ID/mqdefault.jpg"}]},
@@ -158,10 +161,18 @@ The user can always ask explicitly ("search peeq for …", "in channel X …").
 - Items are unnumbered (`- <title> — …`) and in `sources` order: `sources[i]` ↔ the
   i-th item. The citing client numbers them (loom prints its own `Source [n]` list). One source per video, linking the best match's
   timestamp (no `?t=` when only the summary matched). Other moments are in the text.
+- Each item's second line is `   id: <id>`, the id `get_video` / `get_transcript` take: before it, a
+  model only saw the id inside URLs and passed those.
 - `image` is YouTube's public thumbnail (peeq's own thumbnail route needs a session),
   present only when the id has YouTube's 11-character shape.
 - `get_video` returns one source for the video; `get_transcript` and
   `list_youtube_channels` return text only.
+- Unknown id → `isError: true` "No video with id "…" in peeq. Use the id from a search result.",
+  the same from `get_video` and `get_transcript`. A known video without a transcript (none stored, or
+  none that parses to a cue) is a different `isError: true` text naming its title and download status
+  and pointing at `get_video` for the summary. Both log `mcp: transcript miss` with `video_id` (or
+  `invalid` when the argument did not reduce to an id: it can be a full URL) and `reason`
+  `unknown_video` / `no_transcript`.
 - No results → a plain sentence and `"sources": []`.
 - Past the 24 KB cap, trailing items are dropped whole together with their sources and
   the text ends "(N more results omitted; narrow the query)".
