@@ -9,6 +9,7 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 
 	"github.com/trick77/peeq/internal/subtitles"
 )
@@ -33,10 +34,14 @@ type Library interface {
 	Search(ctx context.Context, q SearchQuery) (SearchResult, error)
 	// Video returns one video with its analysis, or nil when there is none.
 	Video(ctx context.Context, id string) (*Video, error)
-	// Transcript returns one video's parsed transcript, or nil when the video
-	// or its transcript does not exist.
+	// Transcript returns one video's parsed transcript. A video without a
+	// stored transcript comes back with its Title and Status and no Cues;
+	// ErrVideoNotFound when there is no such video.
 	Transcript(ctx context.Context, id string) (*Transcript, error)
 }
+
+// ErrVideoNotFound is Transcript's answer for an id peeq has no video for.
+var ErrVideoNotFound = errors.New("mcp: video not found")
 
 // AddOutcome is what AddVideos did with one URL.
 type AddOutcome string
@@ -170,9 +175,12 @@ type Moment struct {
 	Text    string
 }
 
-// Transcript is one video's parsed caption track.
+// Transcript is one video's parsed caption track. Cues is empty when the
+// video has none stored.
 type Transcript struct {
 	VideoID string
 	Title   string
-	Cues    []subtitles.Cue
+	// Status is the video's download status (videos.status).
+	Status string
+	Cues   []subtitles.Cue
 }

@@ -27,6 +27,10 @@ const subcategoryNote = "Videos and channels carry subcategories, category/subca
 	"or ai/building: filter with subcategory (the video's own) or channel_subcategory (videos from channels " +
 	"labelled with it); list_youtube_channels shows each channel's."
 
+// videoIDDescription describes get_video's and get_transcript's id: a client
+// that only kept a link still finds the video (videoIDArg).
+const videoIDDescription = "The video id (the `id:` line of a search result) or a YouTube URL of the video."
+
 // toolAliases maps retired tool names to their replacement. They answer calls
 // but are never listed: a client that cached the old tools/list (up to the ttl,
 // or a whole session for an initialize-era client) keeps working until it
@@ -58,7 +62,7 @@ func (h *handler) tools() []mcp.Tool {
 			Description: "Read one video from peeq by id: metadata, short summary, key points, chapters with " +
 				"timestamps and the in-depth summary. Use it after search to go deeper into one result.",
 			Schema: mcp.ObjectSchema(map[string]any{
-				"id": map[string]any{"type": "string", "description": "The video id, as shown in search results."},
+				"id": map[string]any{"type": "string", "description": videoIDDescription},
 			}, "id"),
 			ReadOnly: true,
 			Run:      run(runGetVideo),
@@ -69,7 +73,7 @@ func (h *handler) tools() []mcp.Tool {
 			Description: "Read a video's transcript as timestamped lines, optionally only a window of it. Long " +
 				"transcripts come back in parts; the reply says which start_seconds to request next.",
 			Schema: mcp.ObjectSchema(map[string]any{
-				"id": map[string]any{"type": "string", "description": "The video id."},
+				"id": map[string]any{"type": "string", "description": videoIDDescription},
 				"start_seconds": map[string]any{"type": "integer", "minimum": 0,
 					"description": "Start of the window, in seconds from the start of the video. Default 0."},
 				"end_seconds": map[string]any{"type": "integer", "minimum": 0,
