@@ -548,7 +548,7 @@ button.srow:not(:disabled):hover {
    remains is the two progress bars, which History has no use for, and the
    page's own empty line. */
 /* TWO BAR SHAPES, one slot and one height. A download's progress is continuous,
-   so it fills; a summary knows four discrete steps, so it segments. Same
+   so it fills; a summary knows discrete steps, so it segments. Same
    geometry either way, so the lanes read as siblings rather than as two
    unrelated widgets. */
 .un-bar,
@@ -579,10 +579,15 @@ button.srow:not(:disabled):hover {
 .un-bar.stub {
   background: var(--color-border);
 }
+/* One column per segment, however many phases a summary has: a fixed column
+   count wrapped the extra segment into a second row, and in a 4px-high box the
+   row gap left both rows 0px tall — every segment vanished but the active
+   one's glow. column-gap only, for the same reason. */
 .un-steps {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  column-gap: 4px;
 }
 .un-step {
   display: block;
