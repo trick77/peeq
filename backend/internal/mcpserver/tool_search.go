@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/trick77/peeq/internal/rag"
 	"github.com/trick77/peeq/internal/videos"
@@ -68,13 +67,8 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) mcp.Result 
 
 		}
 	}
-	for _, d := range []struct{ name, val string }{{"after", a.After}, {"before", a.Before}} {
-		if d.val == "" {
-			continue
-		}
-		if _, err := time.Parse("2006-01-02", d.val); err != nil {
-			return mcp.ErrorResult(fmt.Sprintf("%s must be a date as YYYY-MM-DD, got %q", d.name, d.val))
-		}
+	if msg := checkDateArgs(a.After, a.Before); msg != "" {
+		return mcp.ErrorResult(msg)
 	}
 	q.After, q.Before = a.After, a.Before
 	switch a.Mode {
@@ -88,23 +82,13 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) mcp.Result 
 		q.Videos = min(max(*a.K, 1), maxSearchVideos)
 	}
 	if name := strings.TrimSpace(a.Channel); name != "" {
-		scope, err := h.lib.ResolveChannel(ctx, name)
-		if err != nil {
-			slog.Warn("mcp: channel resolve failed", "err", err)
-			return mcp.ErrorResult("search failed: the channel list could not be read")
-		}
-		if !scope.Resolved() {
-			msg := fmt.Sprintf("No channel in peeq matches %q.", name)
-			if len(scope.Suggestions) > 0 {
-				msg += " Closest: " + strings.Join(scope.Suggestions, ", ") + "."
+		scope, stop := h.resolveChannelArg(ctx, name, "search", "search without a channel")
+		if stop != nil {
+			if !stop.IsError {
+				// No videos yet: the contract's empty result carries "sources": [].
+				stop.Sources = []mcp.Source{}
 			}
-			return mcp.ErrorResult(msg + " Call list_youtube_channels for every channel, or search without a channel.")
-		}
-		if scope.NoVideos {
-			return mcp.Result{
-				Text:    fmt.Sprintf("No videos yet in %s: peeq follows the channel but holds none of its videos so far.", strings.Join(scope.Matched, ", ")),
-				Sources: []mcp.Source{},
-			}
+			return *stop
 		}
 		q.Channel = scope
 	}

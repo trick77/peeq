@@ -108,6 +108,19 @@ func TestInstructions_nameAddVideos(t *testing.T) {
 	}
 }
 
+// list_videos is named in the instructions only: the channel hint the search
+// description repeats stays channels.
+func TestInstructions_nameListVideos(t *testing.T) {
+	lib := &fakeLibrary{channels: []Channel{{ID: "UC2", Name: "Big", Subscribed: true, Videos: 9}}}
+	h := &handler{lib: lib}
+	if got := h.instructions(context.Background()); !strings.Contains(got, "list_videos") {
+		t.Errorf("instructions lack list_videos:\n%s", got)
+	}
+	if got := h.searchDescription(context.Background()); strings.Contains(got, "list_videos") {
+		t.Errorf("search description carries list_videos:\n%s", got)
+	}
+}
+
 func TestInstructions_noChannels(t *testing.T) {
 	got := (&handler{lib: &fakeLibrary{}}).instructions(context.Background())
 	if !strings.Contains(got, "peeq") || strings.Contains(got, "automatically") {

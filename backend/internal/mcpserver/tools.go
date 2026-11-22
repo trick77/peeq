@@ -97,6 +97,14 @@ func (h *handler) tools() []mcp.Tool {
 			Run:      run(runListYouTubeChannels),
 		},
 		{
+			Name:        "list_videos",
+			Title:       "List videos in your library",
+			Description: listVideosDescription,
+			Schema:      listVideosSchema(),
+			ReadOnly:    true,
+			Run:         run(runListVideos),
+		},
+		{
 			Name:        "add_videos",
 			Title:       "Add videos to your library",
 			Description: addVideosDescription,

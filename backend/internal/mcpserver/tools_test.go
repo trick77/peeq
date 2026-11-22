@@ -368,6 +368,24 @@ func TestSearch_channelWithoutVideos(t *testing.T) {
 	if lib.lastQuery != nil {
 		t.Error("searched a channel known to hold no videos")
 	}
+	// The contract's empty result: a sentence and "sources": [].
+	if src, ok := r.body.Result["structuredContent"].(map[string]any)["sources"].([]any); !ok || len(src) != 0 {
+		t.Errorf("structuredContent = %v, want sources: []", r.body.Result["structuredContent"])
+	}
+}
+
+// search's channel texts, word for word: list_videos shares the resolve.
+func TestSearch_channelMissAndFailureTexts(t *testing.T) {
+	lib := searchFixture()
+	r := callTool(t, lib, "search", map[string]any{"query": "x", "channel": "nobody"})
+	if want := `No channel in peeq matches "nobody". Closest: Veritasium, Vsauce. Call list_youtube_channels for every channel, or search without a channel.`; !isError(r) || toolText(t, r) != want {
+		t.Errorf("miss = %v %q", isError(r), toolText(t, r))
+	}
+	lib.resolveErr = errors.New("db down")
+	r = callTool(t, lib, "search", map[string]any{"query": "x", "channel": "nobody"})
+	if want := "search failed: the channel list could not be read"; !isError(r) || toolText(t, r) != want {
+		t.Errorf("resolve failure = %v %q", isError(r), toolText(t, r))
+	}
 }
 
 func TestSearch_timeoutIsSaid(t *testing.T) {
