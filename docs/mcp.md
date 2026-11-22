@@ -121,6 +121,14 @@ Each tool carries a display title, sent both as `title` and `annotations.title`
 - `list_youtube_channels` ("List YouTube channels in your library") — subscribed channels plus channels whose caption-only reads are
   kept: id, handle, description, video count, top peeq and YouTube categories, the
   channel's subcategories, and a header line naming every channel subcategory in use.
+  The video count is every row of the channel, whatever its status; when search reaches fewer
+  (searchable = has search-index chunks, the channel page's indexed count) the line reads
+  `videos: 9 (5 searchable)`, otherwise, or when that count fails (Warn), plain `videos: 9`. The
+  first line sizes the library: `Library: 412 videos, 380 searchable (212 h from 37 channels),
+  released 2019-03-02 to 2026-11-20.` (all rows; runtime and channels of the searchable ones, Ask's
+  `rag.CountVideos`; release dates of all rows as search's `after`/`before` read them). A failed
+  totals read drops only that line (Warn). Every statement behind both is index-only (plan tests in
+  `videos`; CountVideos' unfiltered statement is held there verbatim, it pins no index).
 - `list_videos` ("List videos in your library") — no query: every video peeq holds, whatever its
   download status (inbox reads and queued ones too), searchable or not. `channel` (resolved and answered
   like search's), `title` (substring, Unicode case-folded: "über" finds "Über", "strasse" "Straße"),

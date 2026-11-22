@@ -42,6 +42,13 @@ type fakeLibrary struct {
 	list     VideoList
 	listErr  error
 	lastList *VideoListQuery
+	// totals answers Totals, totalsErr fails it.
+	totals    LibraryTotals
+	totalsErr error
+}
+
+func (f *fakeLibrary) Totals(context.Context) (LibraryTotals, error) {
+	return f.totals, f.totalsErr
 }
 
 func (f *fakeLibrary) Videos(_ context.Context, q VideoListQuery) (VideoList, error) {

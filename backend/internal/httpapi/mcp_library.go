@@ -47,6 +47,11 @@ func (l mcpLibrary) Channels(ctx context.Context) ([]mcpserver.Channel, error) {
 	if err != nil {
 		slog.WarnContext(ctx, "mcp: channel subcategories unavailable", "err", err)
 	}
+	// So are the searchable counts: without them a channel shows its total.
+	searchable, err := l.s.videos.ChannelSearchableCounts(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "mcp: channel searchable counts unavailable", "err", err)
+	}
 	out := make([]mcpserver.Channel, 0, len(chans))
 	for _, c := range chans {
 		mc := mcpserver.Channel{
@@ -57,6 +62,9 @@ func (l mcpLibrary) Channels(ctx context.Context) ([]mcpserver.Channel, error) {
 			Subscribed:    c.Subscribed,
 			KeepReads:     c.KeepReads,
 			Subcategories: subs[c.ID],
+			// A channel absent from the map has nothing indexed.
+			Searchable:      searchable[c.ID],
+			SearchableKnown: searchable != nil,
 		}
 		if st := stats[c.ID]; st != nil {
 			mc.Videos = st.Videos
@@ -66,6 +74,32 @@ func (l mcpLibrary) Channels(ctx context.Context) ([]mcpserver.Channel, error) {
 		out = append(out, mc)
 	}
 	return out, nil
+}
+
+// Totals sizes the library: Ask's CountVideos over the whole library (videos
+// with chunks, their runtime and channels: what search can reach) plus every
+// row and the release-date span. Two index-only statements; a failure of
+// either fails the whole.
+func (l mcpLibrary) Totals(ctx context.Context) (mcpserver.LibraryTotals, error) {
+	if l.s.videos == nil || l.s.rag == nil {
+		return mcpserver.LibraryTotals{}, errMCPNotConfigured
+	}
+	count, err := l.s.rag.CountVideos(ctx, rag.Filter{})
+	if err != nil {
+		return mcpserver.LibraryTotals{}, err
+	}
+	span, err := l.s.videos.LibrarySpan(ctx)
+	if err != nil {
+		return mcpserver.LibraryTotals{}, err
+	}
+	return mcpserver.LibraryTotals{
+		Videos:             span.Videos,
+		Searchable:         count.Videos,
+		SearchableSeconds:  int64(count.DurationSeconds),
+		SearchableChannels: count.Channels,
+		Oldest:             span.Oldest,
+		Newest:             span.Newest,
+	}, nil
 }
 
 func toMCPCounts(cs []videos.CategoryCount) []mcpserver.CategoryCount {

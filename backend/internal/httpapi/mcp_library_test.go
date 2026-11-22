@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -347,8 +348,9 @@ func TestMCP_endToEnd(t *testing.T) {
 	}
 
 	text = mcpToolText(t, callMCPTool(t, h, "list_youtube_channels", map[string]any{}))
-	// 3: the inbox read counts; the legacy row has no channel id to count under.
-	for _, want := range []string{"Bike Physics (@bikephysics) · id UCbikes · videos: 3 · caption-only reads kept",
+	// 3: the inbox read counts, but search cannot reach it; the legacy row has
+	// no channel id to count under.
+	for _, want := range []string{"Bike Physics (@bikephysics) · id UCbikes · videos: 3 (2 searchable) · caption-only reads kept",
 		"categories: engineering (1), science (1)", "youtube: Education (1), Science & Technology (1)", "Kitchen Lab"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("list_youtube_channels lacks %q\n---\n%s", want, text)
@@ -575,6 +577,109 @@ func TestMCP_searchInAChannelWithoutVideos(t *testing.T) {
 		if r.Result["isError"] == true || !strings.Contains(text, "No videos yet in Fresh Start") {
 			t.Errorf("%s: isError=%v text=%q", name, r.Result["isError"], text)
 		}
+	}
+}
+
+// Over the real stores: the totals line counts all five videos (the inbox
+// read and the legacy row too), the three with chunks as searchable with
+// their runtime (the inbox read's is not), and the release dates of all five.
+// A channel shows its searchable number only when some of it is out of reach.
+func TestMCP_listYouTubeChannelsSaysWhatSearchCanReach(t *testing.T) {
+	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, func(d *Deps) {
+		for _, v := range []videos.Video{
+			{ID: "bikeVideo01", URL: "u1", Title: "Why bikes stay upright", ChannelID: "UCbikes",
+				ChannelName: "Bike Physics", PublishedAt: "2026-05-02", DurationSeconds: 5400},
+			{ID: "cookVideo01", URL: "u3", Title: "Perfect rice", ChannelID: "UCcook",
+				ChannelName: "Kitchen Lab", PublishedAt: "2026-02-02", DurationSeconds: 1800},
+			{ID: "bikeInbox01", URL: "u5", Title: "Inbox read on wheel trueing", ChannelID: "UCbikes",
+				PublishedAt: "2026-06-01", DurationSeconds: 36000},
+		} {
+			if err := d.Videos.Upsert(v); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	text := mcpToolText(t, callMCPTool(t, h, "list_youtube_channels", map[string]any{}))
+	lines := strings.Split(text, "\n")
+	if want := "Library: 5 videos, 3 searchable (2 h from 2 channels), released 2024-03-03 to 2026-06-01."; lines[0] != want {
+		t.Errorf("first line = %q, want %q", lines[0], want)
+	}
+	for _, want := range []string{
+		"- Bike Physics (@bikephysics) · id UCbikes · videos: 3 (2 searchable) · caption-only reads kept",
+		"- Kitchen Lab · id UCcook · videos: 1",
+		"- Fresh Start · id UCfresh · videos: 0",
+	} {
+		if !slices.Contains(lines, want) {
+			t.Errorf("list lacks the line %q\n---\n%s", want, text)
+		}
+	}
+}
+
+// countFails is a RagStore whose library count fails.
+type countFails struct{ RagStore }
+
+func (countFails) CountVideos(context.Context, rag.Filter) (rag.LibraryCount, error) {
+	return rag.LibraryCount{}, errors.New("count videos: sqlite3: interrupted")
+}
+
+// A failed totals read drops the line, never the list.
+func TestMCP_listYouTubeChannelsWithoutTotals(t *testing.T) {
+	h := mcpFixture(t, &fakeEmbedder{vec: dim1536(1.0)}, func(d *Deps) { d.Rag = countFails{d.Rag} })
+	r := callMCPTool(t, h, "list_youtube_channels", map[string]any{})
+	text := mcpToolText(t, r)
+	if r.Result["isError"] == true || strings.Contains(text, "Library:") || !strings.HasPrefix(text, "3 channels.") ||
+		!strings.Contains(text, "id UCbikes · videos: 3 (2 searchable)") {
+		t.Errorf("isError=%v text:\n%s", r.Result["isError"], text)
+	}
+}
+
+// Each half of Totals failing fails it; a missing store too.
+func TestMCPLibrary_totalsFailLoudly(t *testing.T) {
+	deps, db, ragStore := searchTestDepsWithStores(t)
+	if _, err := (mcpLibrary{s: &server{videos: deps.Videos}}).Totals(t.Context()); !errors.Is(err, errMCPNotConfigured) {
+		t.Errorf("no rag store: err = %v", err)
+	}
+	if _, err := (mcpLibrary{s: &server{videos: deps.Videos, rag: countFails{ragStore}}}).Totals(t.Context()); err == nil {
+		t.Error("a failed count came back without an error")
+	}
+	mustExec(t, db, `DROP INDEX idx_videos_cards`)
+	if _, err := (mcpLibrary{s: &server{videos: deps.Videos, rag: ragStore}}).Totals(t.Context()); err == nil {
+		t.Error("a failed span came back without an error")
+	}
+}
+
+// The searchable count is an extra on the list: a failed read leaves every
+// channel's number unknown (the plain count shows), logged once.
+func TestMCPLibrary_channelsWithoutSearchableCounts(t *testing.T) {
+	deps, db, _ := searchTestDepsWithStores(t)
+	cs := channels.New(db)
+	if err := cs.Upsert(channels.Channel{ID: "UCbikes", Name: "Bike Physics"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.Subscribe("UCbikes", "2099-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.MarkAdded("UCbikes", "2026-01-01 00:00:00"); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Videos.Upsert(videos.Video{ID: "bikeVideo01", URL: "u1", ChannelID: "UCbikes"}); err != nil {
+		t.Fatal(err)
+	}
+	lib := mcpLibrary{s: &server{videos: deps.Videos, channels: cs}}
+
+	got, err := lib.Channels(t.Context())
+	if err != nil || len(got) != 1 || got[0].Videos != 1 || got[0].Searchable != 0 || !got[0].SearchableKnown {
+		t.Fatalf("channels = %+v, %v; want 1 video, known 0 searchable", got, err)
+	}
+
+	logs := captureLogs(t)
+	mustExec(t, db, `DROP INDEX idx_videos_channel_search`)
+	got, err = lib.Channels(t.Context())
+	if err != nil || len(got) != 1 || got[0].Videos != 1 || got[0].SearchableKnown {
+		t.Fatalf("channels = %+v, %v; want the list with the searchable count unknown", got, err)
+	}
+	if !strings.Contains(logs.String(), `level=WARN msg="mcp: channel searchable counts unavailable"`) {
+		t.Errorf("log = %q", logs.String())
 	}
 }
 

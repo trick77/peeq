@@ -177,6 +177,16 @@ type ChannelRef struct {
 	Handle string
 }
 
+// LibrarySpan is how many videos peeq holds, whatever their status, and the
+// release dates they span ('YYYY-MM-DD', "" for an empty library).
+//
+// Table: -
+type LibrarySpan struct {
+	Videos int
+	Oldest string
+	Newest string
+}
+
 // MediaRef is what the media range handler needs from a video: where the
 // file is and what to call it on a save-to-disk.
 //

@@ -90,7 +90,9 @@ func (h *handler) tools() []mcp.Tool {
 			Name:  "list_youtube_channels",
 			Title: "List YouTube channels in your library",
 			Description: "List the channels in peeq: subscriptions plus channels whose caption-only reads are kept, " +
-				"with description, video count, top peeq and YouTube categories and the channel's subcategories. " +
+				"with description, video count (and how many are searchable, when not all), top peeq and YouTube " +
+				"categories and the channel's subcategories, after a line sizing the whole library. " +
+				"Only searchable videos can be found by search; list_videos lists all of them. " +
 				"Use it to find the right channel name, or the channel_subcategory, for search.",
 			Schema:   mcp.ObjectSchema(map[string]any{}),
 			ReadOnly: true,
