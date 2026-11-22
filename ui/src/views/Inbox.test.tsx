@@ -1068,6 +1068,27 @@ describe("Inbox", () => {
       // Then: no request after the mount load and the refetch.
       expect(listPending).toHaveBeenCalledTimes(2);
     });
+
+    // The other half of the same promise: a refresh still waiting out its
+    // debounce when the user leaves is cancelled, not sent.
+    it("drops a debounced refresh when the view unmounts", async () => {
+      // Given: a loaded inbox and a tick whose refresh is still debounced.
+      const { rerender, unmount } = render(<Inbox liveTick={0} />);
+      await screen.findByText("Second pending video");
+      vi.useFakeTimers();
+      try {
+        rerender(<Inbox liveTick={1} />);
+
+        // When: the user leaves inside the debounce window.
+        unmount();
+        await vi.runAllTimersAsync();
+      } finally {
+        vi.useRealTimers();
+      }
+
+      // Then: only the mount load ever asked.
+      expect(listPending).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
