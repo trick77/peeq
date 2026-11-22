@@ -36,7 +36,7 @@ const goFile = (rel: string) => resolve(HERE, "../../backend/", rel);
 // literals — scraping the slice alone would compare TypeScript strings against
 // Go identifiers and pass on nothing. Going through the slice (rather than
 // scanning the const block directly) is what also pins the ORDER, which matters
-// for SUMMARY_PHASE_NAMES: the Player renders "step N of 4" off the index.
+// for SUMMARY_PHASE_NAMES: the Player renders "step N of M" off the index.
 function goSliceValues(file: string, sliceName: string): string[] {
   const source = readFileSync(goFile(file), "utf8");
 
@@ -70,7 +70,7 @@ function goSliceValues(file: string, sliceName: string): string[] {
 
 describe("wire enum sync", () => {
   // Order is compared, not just membership: several of these drive positional
-  // UI (the phase meter's "N/4"), and a reorder is exactly the kind of change
+  // UI (the phase meter's "N of M"), and a reorder is exactly the kind of change
   // that looks harmless in a diff.
   const cases: Array<{ name: string; ts: readonly string[]; go: string[] }> = [
     {

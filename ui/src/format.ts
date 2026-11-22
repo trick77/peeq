@@ -51,7 +51,9 @@ const SUMMARY_PHASES = SUMMARY_PHASE_NAMES.map((phase) => ({
   label: PHASE_LABELS[phase],
 }));
 
-// SUMMARY_PHASE_COUNT — the "/4" denominator and the number of progress dots.
+// SUMMARY_PHASE_COUNT — the "of N" denominator and the number of progress
+// segments. Never hard-code it: a fixed 4-column grid once collapsed the bar
+// when a fifth phase arrived.
 export const SUMMARY_PHASE_COUNT = SUMMARY_PHASES.length;
 
 // summaryPhaseInfo resolves a live phase to its label and 1-based step.

@@ -58,9 +58,9 @@ import { clockOf, kindOf, leadCap, plannedWhen, subjectNode } from "./agenda";
 
 // phaseState turns a summary job's live phase (or its stored state) into the
 // label + 1-based step its bar shows. A pending job that hasn't started reads
-// "Waiting" (step 0, empty bar); a running one shows its live phase —
-// summarizing → classifying → embedding → keypoints — from the "summary" SSE
-// event, advancing without a reload.
+// "Waiting" (step 0, empty bar); a running one shows its live phase, in
+// SUMMARY_PHASE_NAMES order, from the "summary" SSE event, advancing without a
+// reload.
 function phaseState(
   phase: string | undefined,
   state: string,
@@ -1097,7 +1097,7 @@ function SummaryRow({
         ) : null}
         {live ? (
           <>
-            {/* A summary knows four discrete steps rather than a percentage, so
+            {/* A summary knows discrete steps rather than a percentage, so
                 its bar is segmented — same slot and height as the download bar,
                 a different shape because it is a different kind of fact. */}
             <div className="un-steps" aria-hidden="true">
