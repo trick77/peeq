@@ -66,13 +66,14 @@ function phaseState(
   state: string,
 ): { label: string; step: number } {
   if (state !== "running" && !phase) return { label: "Waiting", step: 0 };
-  // The final "summary done" event carries an empty-string phase (and a stored
-  // status of "done"); treat that as the pipeline completing — show the last
-  // stage filled rather than snapping the bar back to step 1 for the frame
-  // before the finished job is pruned from the list. An *absent* phase
-  // (undefined, before the first event) is a fresh job and stays step 1.
+  // The final "summary done" event carries an empty phase while the listed job
+  // is still running; show the bar full rather than snapping back to step 1 for
+  // the frame before the finished job is pruned from the list. An *absent*
+  // phase (undefined, before the first event) is a fresh job and stays step 1.
+  // "Done", not the last stage's name: that names work in progress, and inbox
+  // reads with keep_reads off finish without any embedding.
   if (phase === "" || phase === "done") {
-    return { label: "Key points", step: SUMMARY_PHASE_COUNT };
+    return { label: "Done", step: SUMMARY_PHASE_COUNT };
   }
   return summaryPhaseInfo(phase);
 }
