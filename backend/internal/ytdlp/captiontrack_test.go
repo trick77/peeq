@@ -187,6 +187,126 @@ func TestPickCaptionTrack(t *testing.T) {
 	}
 }
 
+// dubbedInfo is a video YouTube dubbed into other languages: one audio track
+// per language, the uploader's marked original (language_preference 10, as
+// yt-dlp sets it), and speech recognition run on every track, so yt-dlp lists
+// an "-orig" key for each. Only the original track's is the speaker's words;
+// the others transcribe a machine dub.
+func dubbedInfo(original string, dubs ...string) captionInfo {
+	info := captionInfo{
+		Language:          original,
+		Formats:           []captionAudio{{Language: original, LanguagePreference: 10}},
+		AutomaticCaptions: map[string][]captionFormat{},
+	}
+	for _, l := range append([]string{original}, dubs...) {
+		info.AutomaticCaptions[l+"-orig"] = speech(l, "")
+		info.AutomaticCaptions[l] = speech(l, "")
+	}
+	for _, d := range dubs {
+		info.Formats = append(info.Formats, captionAudio{Language: d, LanguagePreference: -1})
+	}
+	return info
+}
+
+// A German talk with an English dub: "en-orig" exists and is untranslated,
+// but it transcribes the dub. The original track decides.
+func TestPickCaptionTrack_dubbedVideoTakesTheOriginalTrack(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		info captionInfo
+		want CaptionTrack
+	}{
+		{
+			name: "german original, english dub",
+			info: dubbedInfo("de", "en", "fr", "ja"),
+			want: CaptionTrack{Key: "de-orig", Lang: "de", Speech: "de"},
+		},
+		{
+			// The shape of a real one: the original audio is "en-US", its
+			// speech recognition is keyed "en-orig", the dubs carry regions.
+			name: "english original with regional keys",
+			info: func() captionInfo {
+				i := dubbedInfo("en", "de-DE", "fr-FR")
+				i.Formats[0].Language = "en-US"
+				return i
+			}(),
+			want: CaptionTrack{Key: "en-orig", Lang: "en", Speech: "en"},
+		},
+		{
+			name: "uploaded english beats a german original, speech stays german",
+			info: func() captionInfo {
+				i := dubbedInfo("de", "en")
+				i.Subtitles = map[string][]captionFormat{"en": uploaded("en", "")}
+				return i
+			}(),
+			want: CaptionTrack{Key: "en", Manual: true, Lang: "en", Speech: "de"},
+		},
+		{
+			// Recognition lags a fresh upload: the dub's may be listed before
+			// the original's. It is still a dub; nothing is taken yet.
+			name: "original's asr not listed yet",
+			info: func() captionInfo {
+				i := dubbedInfo("de", "en")
+				delete(i.AutomaticCaptions, "de-orig")
+				delete(i.AutomaticCaptions, "de")
+				return i
+			}(),
+			want: CaptionTrack{},
+		},
+		{
+			// The same, with an uploaded track: it is taken (rank 3 needs the
+			// original's ASR, so rank 1 here), and the speech is the original.
+			name: "dub asr only, uploaded english",
+			info: func() captionInfo {
+				i := dubbedInfo("ja", "en")
+				delete(i.AutomaticCaptions, "ja-orig")
+				delete(i.AutomaticCaptions, "ja")
+				i.Subtitles = map[string][]captionFormat{"en": uploaded("en", "")}
+				return i
+			}(),
+			want: CaptionTrack{Key: "en", Manual: true, Lang: "en", Speech: "ja"},
+		},
+		{
+			// No original marked, the uploader's default is: it stands in.
+			name: "default track stands in for an unmarked original",
+			info: func() captionInfo {
+				i := dubbedInfo("de", "en")
+				i.Formats[0].LanguagePreference = 5
+				return i
+			}(),
+			want: CaptionTrack{Key: "de-orig", Lang: "de", Speech: "de"},
+		},
+		{
+			// format_note says "original" too: a second sign, should the
+			// number ever move.
+			name: "original named in the format note",
+			info: func() captionInfo {
+				i := dubbedInfo("de", "en")
+				i.Formats[0].LanguagePreference = 0
+				i.Formats[0].FormatNote = "German original, medium"
+				return i
+			}(),
+			want: CaptionTrack{Key: "de-orig", Lang: "de", Speech: "de"},
+		},
+		{
+			// A single audio track: yt-dlp copies the recognition's language
+			// onto the formats. That is no dub, and nothing is dropped.
+			name: "single track video is not a dub",
+			info: captionInfo{
+				Formats:           []captionAudio{{Language: "de", LanguagePreference: -1}},
+				AutomaticCaptions: asrInfo("de", "en"),
+			},
+			want: CaptionTrack{Key: "de-orig", Lang: "de", Speech: "de"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PickCaptionTrack(tc.info, "en", false); got != tc.want {
+				t.Fatalf("PickCaptionTrack = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 // The preferred language is configurable (BACKEND_DEFAULT_SUB_LANG); English
 // is only the default. A regional preference is matched exactly before its
 // siblings.
@@ -239,6 +359,23 @@ func TestParseCaptionInfo(t *testing.T) {
 	}
 	if got, want := PickCaptionTrack(info, "en", false), (CaptionTrack{Key: "de-orig", Lang: "de", Speech: "de"}); got != want {
 		t.Fatalf("pick = %+v, want %+v", got, want)
+	}
+	// The audio formats -J lists, trimmed: the original track is the one
+	// yt-dlp gives language_preference 10.
+	dubbed := []byte(`{"language":"en-US","formats":[
+ {"format_id":"251-19","language":"en-US","language_preference":10,"format_note":"English (US) original (default), medium"},
+ {"format_id":"251-3","language":"de-DE","language_preference":-1,"format_note":"German (Germany), medium"},
+ {"format_id":"251-5","language":"fr-FR","language_preference":-1.0,"format_note":"French (France), medium"},
+ {"format_id":"399","language":null}],
+"automatic_captions":{
+ "en-orig":[{"url":"https://www.youtube.com/api/timedtext?v=x&lang=en&kind=asr&fmt=vtt"}],
+ "de-DE-orig":[{"url":"https://www.youtube.com/api/timedtext?v=x&lang=de-DE&kind=asr&fmt=vtt"}]}}`)
+	info, err = parseCaptionInfo(dubbed)
+	if err != nil {
+		t.Fatalf("parseCaptionInfo dubbed: %v", err)
+	}
+	if got, want := PickCaptionTrack(info, "de", false), (CaptionTrack{Key: "en-orig", Lang: "en", Speech: "en"}); got != want {
+		t.Fatalf("dubbed pick, preferring de = %+v, want the original %+v", got, want)
 	}
 	if _, err := parseCaptionInfo([]byte("not json")); err == nil {
 		t.Fatal("garbage decoded without an error")

@@ -19,10 +19,72 @@ import (
 // video therefore asks for a machine translation, and YouTube answered that
 // request with 429 on the same videos every time: they settled without a
 // transcript while their German one was there all along.
+//
+// A video YouTube dubbed has one audio track per language and speech
+// recognition on each, so yt-dlp lists an "-orig" key for every dub too. Only
+// the original track's is what the speaker said; the rest transcribe a
+// machine translation spoken by a machine. Formats names the original: yt-dlp
+// gives its audio formats language_preference 10.
 type captionInfo struct {
 	Language          string                     `json:"language"`
 	Subtitles         map[string][]captionFormat `json:"subtitles"`
 	AutomaticCaptions map[string][]captionFormat `json:"automatic_captions"`
+	Formats           []captionAudio             `json:"formats"`
+}
+
+// captionAudio is the part of one format that tells audio tracks apart.
+// LanguagePreference is a float so that one odd value from a future yt-dlp
+// cannot fail the whole caption list: before formats were read, nothing in
+// them could.
+type captionAudio struct {
+	Language           string  `json:"language"`
+	LanguagePreference float64 `json:"language_preference"`
+	FormatNote         string  `json:"format_note"`
+}
+
+// yt-dlp's language_preference for the original and for the uploader's default
+// audio track of a dubbed video (ORIGINAL_LANG_VALUE, DEFAULT_LANG_VALUE in its
+// YouTube extractor). format_note carries "original" too, the second sign in
+// case the number ever moves.
+const (
+	originalAudioPreference = 10
+	defaultAudioPreference  = 5
+)
+
+// originalAudio is the primary subtag of the original audio track's language:
+// the track marked original, else the uploader's default; "" when none is
+// marked, as on a video with a single audio track.
+func (info captionInfo) originalAudio() string {
+	var fallback string
+	for _, f := range info.Formats {
+		if f.Language == "" {
+			continue
+		}
+		if f.LanguagePreference == originalAudioPreference || strings.Contains(strings.ToLower(f.FormatNote), "original") {
+			return langBase(f.Language)
+		}
+		if f.LanguagePreference == defaultAudioPreference && fallback == "" {
+			fallback = langBase(f.Language)
+		}
+	}
+	return fallback
+}
+
+// dubAudio is the set of audio languages other than original: the dubs. Empty
+// without a known original, since a single-track video's formats carry a
+// language too (yt-dlp copies the speech recognition's onto them) and must not
+// read as a dub of anything.
+func (info captionInfo) dubAudio(original string) map[string]bool {
+	if original == "" {
+		return nil
+	}
+	dubs := map[string]bool{}
+	for _, f := range info.Formats {
+		if l := langBase(f.Language); l != "" && l != original {
+			dubs[l] = true
+		}
+	}
+	return dubs
 }
 
 type captionFormat struct {
@@ -117,9 +179,26 @@ func pickCaptionTrack(info captionInfo, prefer string, anyManual bool) (CaptionT
 	sort.Strings(asr)
 
 	asrLang := func(k string) string { return langBase(strings.TrimSuffix(k, "-orig")) }
+	// A dubbed video: a dub's recognition transcribes a machine translation,
+	// never the speaker. It is dropped even when the original's own is not
+	// listed yet (recognition lags a fresh upload): then there is no ASR
+	// original at all, and the uploaded-track ranks and the hold-back decide.
+	original := info.originalAudio()
+	if dubs := info.dubAudio(original); len(dubs) > 0 {
+		kept := asr[:0:0]
+		for _, k := range asr {
+			if !dubs[asrLang(k)] {
+				kept = append(kept, k)
+			}
+		}
+		asr = kept
+	}
 	// The spoken language, as far as the list tells (CaptionTrack.Speech).
 	speech := langBase(info.Language)
-	if len(asr) > 0 {
+	switch {
+	case original != "":
+		speech = original
+	case len(asr) > 0:
 		speech = asrLang(asr[0])
 	}
 	manualTrack := func(k string) CaptionTrack {
