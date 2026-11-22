@@ -18,7 +18,7 @@ import {
   createPlaybackGrant,
   getVideoEmbeddings,
 } from "../api/videos";
-import { reprocess, subtitlesUrl } from "../api/search";
+import { fetchCaptions, reprocess, subtitlesUrl } from "../api/search";
 import { updateSettings } from "../api/settings";
 import { patchSettings, publishSettings, useSettings } from "../settingsStore";
 import { setPlaybackState } from "../api/playback";
@@ -316,6 +316,13 @@ function PlayerImpl({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
+  const [fetchingCaptions, setFetchingCaptions] = useState(false);
+  // The video whose caption fetch the server accepted. Hides the menu item for
+  // it, since a second click would only earn a 409; a reload offers it again
+  // and the server's in-flight 409 covers that.
+  const [captionsQueuedFor, setCaptionsQueuedFor] = useState<string | null>(
+    null,
+  );
   const [redownloading, setRedownloading] = useState(false);
   // Share state: whether this video currently has a live public link, driving
   // the "Shared" chip beside the title. It loads alongside the video and is
@@ -1235,6 +1242,28 @@ function PlayerImpl({
     }
   }
 
+  async function handleFetchCaptions() {
+    // Same reopened-menu double-click guard as Reprocess. The server also
+    // refuses a second fetch for a video with one in flight.
+    if (!video || fetchingCaptions) return;
+    const id = video.id;
+    setFetchingCaptions(true);
+    try {
+      await fetchCaptions(id);
+      setCaptionsQueuedFor(id);
+      // No patch of the video: the fetch has not run yet. A transcript that
+      // lands queues the analysis, and its first summary event makes this
+      // page refetch (has_subtitles is false, see the summary-event effect).
+      if (openVideoIdRef.current === id) {
+        showToast("Fetching captions", "captions", "info");
+      }
+    } catch (e) {
+      failToast(id, refusalOr(e, "Couldn't fetch the captions."));
+    } finally {
+      setFetchingCaptions(false);
+    }
+  }
+
   async function handleRedownload() {
     // Guard on redownloading too: like Reprocess, the menu closes on click, so
     // a reopened-menu double click would otherwise queue a second re-download.
@@ -1309,6 +1338,28 @@ function PlayerImpl({
           (video.summary_status === "done" && !video.indexed)
             ? "failed"
             : undefined,
+      });
+    }
+    // Fetch captions is the fix for a download whose caption call failed or
+    // found nothing: no transcript means nothing to reprocess, and re-download
+    // is refused for a downloaded video. Only for a video that was downloaded
+    // (an Inbox video's captions are the Inbox fetcher's), not while a
+    // download runs, which fetches captions itself, and not while a summary is
+    // queued, which would get a twin. Same rules as the endpoint. Gone once
+    // this page queued a fetch for the video.
+    if (
+      !video.has_subtitles &&
+      video.downloaded_at &&
+      video.status !== "queued" &&
+      video.status !== "downloading" &&
+      video.summary_status !== "pending" &&
+      video.summary_status !== "running" &&
+      captionsQueuedFor !== video.id
+    ) {
+      actions.push({
+        label: "Fetch captions",
+        icon: "captions",
+        onClick: handleFetchCaptions,
       });
     }
     // Re-download re-fetches the media from YouTube — only meaningful when the

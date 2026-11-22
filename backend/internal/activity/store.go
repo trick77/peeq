@@ -13,6 +13,10 @@
 // downloads start behaving differently?" can be answered. It used to be
 // recorded because a timer performed it; moving the trigger to a button did
 // not make the event less worth keeping.
+//
+// The Player's "Fetch captions" is the second exception (KindDownload): the
+// click only queues a YouTube call that settles minutes later, and this log
+// is the one place its outcome ("no captions found") reaches the user.
 package activity
 
 import (

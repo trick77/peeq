@@ -18,6 +18,7 @@ import (
 
 	"github.com/trick77/peeq/internal/activity"
 	"github.com/trick77/peeq/internal/captionfetch"
+	"github.com/trick77/peeq/internal/captionrefetch"
 	"github.com/trick77/peeq/internal/channelmeta"
 	"github.com/trick77/peeq/internal/channels"
 	"github.com/trick77/peeq/internal/channelvideos"
@@ -338,6 +339,19 @@ func run() error {
 		OnChange: func(videoID string) { httpapi.PublishInboxChanged(sseHub, videoID) },
 	})
 
+	// captionRefetcher is the Player's "Fetch captions": one caption call for a
+	// library video that has no transcript, started by a request and run on the
+	// process ctx. Same caption language as the download worker, for the same
+	// reason as captionWorker's.
+	captionRefetcher := captionrefetch.New(captionrefetch.Deps{
+		Fetcher:        runner,
+		Videos:         videosStore,
+		MediaDir:       cfg.MediaDir,
+		DefaultSubLang: cfg.DefaultSubLang,
+		Activity:       activityStore,
+		Background:     ctx,
+	})
+
 	// metaRefresher is shared: the HTTP layer resolves a channel the first time
 	// someone opens its page, and metaWorker re-reads subscribed channels once
 	// a week. One instance, one implementation of fetch-and-store.
@@ -464,6 +478,7 @@ func run() error {
 		Understand: askClient,
 
 		SummaryJobs:   summaryJobsStore,
+		Captions:      captionRefetcher,
 		SummaryList:   summaryJobsStore,
 		Activity:      activityStore,
 		ActivityWrite: activityStore,
@@ -482,6 +497,7 @@ func run() error {
 	// workerWG.Wait() below is always bounded, not just on the signal path.
 	stop()
 	workerWG.Wait()
+	captionRefetcher.Wait()
 	return err
 }
 

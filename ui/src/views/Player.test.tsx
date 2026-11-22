@@ -76,6 +76,7 @@ vi.mock("../api/playback", () => ({
 vi.mock("../api/search", () => ({
   subtitlesUrl: (id: string) => `/api/videos/${id}/subtitles`,
   reprocess: vi.fn().mockResolvedValue(undefined),
+  fetchCaptions: vi.fn().mockResolvedValue(undefined),
 }));
 
 // The Player no longer subscribes to the SSE feed at all: App owns the one
@@ -111,7 +112,7 @@ import {
   createPlaybackGrant,
   getVideoEmbeddings,
 } from "../api/videos";
-import { reprocess } from "../api/search";
+import { fetchCaptions, reprocess } from "../api/search";
 import { setPlaybackState } from "../api/playback";
 import { getSettings, updateSettings } from "../api/settings";
 import type { Settings } from "../api/types";
@@ -189,6 +190,7 @@ describe("Player", () => {
       watched: false,
     });
     vi.mocked(reprocess).mockClear();
+    vi.mocked(fetchCaptions).mockClear();
     vi.mocked(setPlaybackState).mockClear();
     vi.mocked(redownload).mockClear();
     vi.mocked(deleteVideo).mockClear();
@@ -1894,6 +1896,106 @@ describe("Player", () => {
         await screen.findByText(/transcript is being replaced/),
       ).toBeInTheDocument();
       expect(document.querySelector("video")).not.toBeNull();
+    });
+  });
+
+  describe("Fetch captions menu item", () => {
+    const noCaptions = {
+      summary_status: "no_transcript" as const,
+      has_subtitles: false,
+      downloaded_at: "2026-11-01 10:00:00",
+    };
+
+    it("shows for a library video without a transcript and calls the API", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo(noCaptions));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: /Fetch captions/i }),
+      );
+      await waitFor(() => expect(fetchCaptions).toHaveBeenCalledWith("v1"));
+      expect(await screen.findByText("Fetching captions")).toBeInTheDocument();
+    });
+
+    it("is absent when the video has a transcript", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ ...noCaptions, has_subtitles: true }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      await screen.findByRole("menuitem", { name: /Reprocess video/i });
+      expect(
+        screen.queryByRole("menuitem", { name: /Fetch captions/i }),
+      ).toBeNull();
+    });
+
+    it("is absent while a download is in progress", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ ...noCaptions, status: "downloading" }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      await screen.findByRole("menuitem", { name: /Watch on YouTube/i });
+      expect(
+        screen.queryByRole("menuitem", { name: /Fetch captions/i }),
+      ).toBeNull();
+    });
+
+    // Never downloaded: the endpoint refuses, the Inbox reads its captions.
+    it("is absent for a video that was never downloaded", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ ...noCaptions, downloaded_at: undefined, status: "error" }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      await screen.findByRole("menuitem", { name: /Watch on YouTube/i });
+      expect(
+        screen.queryByRole("menuitem", { name: /Fetch captions/i }),
+      ).toBeNull();
+    });
+
+    // A queued analysis would get a twin; the endpoint 409s.
+    it("is absent while a summary is pending or running", async () => {
+      vi.mocked(getVideo).mockResolvedValue(
+        makeVideo({ ...noCaptions, summary_status: "pending" }),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      await screen.findByRole("menuitem", { name: /Watch on YouTube/i });
+      expect(
+        screen.queryByRole("menuitem", { name: /Fetch captions/i }),
+      ).toBeNull();
+    });
+
+    // Once queued, a second click would only earn a 409.
+    it("is gone after the fetch was queued", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo(noCaptions));
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: /Fetch captions/i }),
+      );
+      expect(await screen.findByText("Fetching captions")).toBeInTheDocument();
+      await openMenu();
+      await screen.findByRole("menuitem", { name: /Watch on YouTube/i });
+      expect(
+        screen.queryByRole("menuitem", { name: /Fetch captions/i }),
+      ).toBeNull();
+    });
+
+    it("shows the server's reason when the fetch is refused", async () => {
+      vi.mocked(getVideo).mockResolvedValue(makeVideo(noCaptions));
+      vi.mocked(fetchCaptions).mockRejectedValueOnce(
+        new ApiError(409, "captions are already being fetched"),
+      );
+      render(<Player videoId="v1" onDeleted={() => {}} />);
+      await openMenu();
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: /Fetch captions/i }),
+      );
+      expect(
+        await screen.findByText("captions are already being fetched"),
+      ).toBeInTheDocument();
     });
   });
 
