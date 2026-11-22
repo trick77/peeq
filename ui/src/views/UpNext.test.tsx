@@ -10,6 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { UpNext } from "./UpNext";
 import { publishProgress, resetProgressForTests } from "../shell/progressStore";
 import type { Job, SummaryJob } from "../api/types";
+import { SUMMARY_PHASE_COUNT } from "../format";
 
 vi.mock("../api", () => ({
   listUpcoming: vi.fn(),
@@ -374,6 +375,50 @@ describe("UpNext", () => {
     expect(row.querySelector(".ag-when")?.textContent).toBe("step 5 of 5");
     // The summarize lane offers no cancel — summaries run unattended.
     expect(within(row).queryByRole("button")).toBeNull();
+  });
+
+  it.each(["", "done"])(
+    "labels a finished summary (phase %j) Done with the bar full",
+    (phase) => {
+      render(
+        <UpNext
+          jobs={[]}
+          summaries={[summary({ id: 6, video_id: "s6", title: "All done" })]}
+          summaryPhaseByVideoId={{ s6: phase }}
+          onCancel={noop}
+        />,
+      );
+      const row = screen
+        .getByText("All done")
+        .closest(".ag-row") as HTMLElement;
+      // "Done", not the last stage's name: that names work in progress, and
+      // some summaries finish without ever running it.
+      expect(within(row).getByText("Done")).toBeInTheDocument();
+      expect(row.querySelector(".ag-when")?.textContent).toBe(
+        `step ${SUMMARY_PHASE_COUNT} of ${SUMMARY_PHASE_COUNT}`,
+      );
+    },
+  );
+
+  it("reads a non-running summary with an empty phase as waiting", () => {
+    render(
+      <UpNext
+        jobs={[]}
+        summaries={[
+          summary({
+            id: 7,
+            video_id: "s7",
+            title: "Not yet",
+            state: "pending",
+          }),
+        ]}
+        summaryPhaseByVideoId={{ s7: "" }}
+        onCancel={noop}
+      />,
+    );
+    const row = screen.getByText("Not yet").closest(".ag-row") as HTMLElement;
+    expect(row.querySelector(".ag-when")?.textContent).toBe("waiting");
+    expect(row.querySelector(".un-steps")).toBeNull();
   });
 
   it("falls back to a state-derived phase word without an SSE phase yet", () => {
