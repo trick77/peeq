@@ -58,7 +58,7 @@ const inDepthSectionPrompt = `You are given one part of a longer video's transcr
 
 Write 2 to 5 sections. Each starts on its own line with "### ", then the point as a plain statement of at most 8 words, then a space and the timestamp where the point is first made, in square brackets exactly as the input writes it. Then a blank line and one paragraph of at most 140 words giving the claim, the figures, names, examples, steps or measurements it rests on with their units, and any caveat the speaker attaches.
 
-Use only what the part says. Skip intros, outros, asides and requests to like or subscribe. Third person, present tense, plain prose. No preamble.`
+Use only what the part says. Skip intros, outros, asides and requests to like or subscribe. Third person, present tense, plain prose. No preamble. ` + outputEnglish
 
 // inDepthMergePrompt writes the reader's text from the map's notes.
 const inDepthMergePrompt = `You write the in-depth summary of one video for a reader who will not watch it and wants its substance: what it claims, why, and on what evidence.
@@ -66,7 +66,7 @@ const inDepthMergePrompt = `You write the in-depth summary of one video for a re
 INPUT
 The title, the length, a word target, and notes on the video's consecutive parts, each a set of "### " sections with the timestamp where its point is made. Choose from all parts; keep each point's timestamp as the notes write it.
 
-` + inDepthRules
+` + inDepthRules + "\n\n" + outputEnglish
 
 // InDepth writes the in-depth summary from the sponsor-stripped cues. One call
 // for all but multi-hour videos, opening with the same bytes as the short

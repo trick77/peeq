@@ -35,8 +35,9 @@ type DownloadReq struct {
 	// LimitRate is a yt-dlp --limit-rate value (e.g. "5M"). Left empty,
 	// --limit-rate is omitted entirely (no rate limiting).
 	LimitRate string
-	// SubLang is the --sub-langs value passed to yt-dlp. Left empty, "en"
-	// is used as the default.
+	// SubLang is the caption language preferred when the video has a track in
+	// it (PickCaptionTrack); otherwise the original language's track is taken.
+	// Left empty, "en".
 	SubLang string
 	// SkipSubtitles leaves out the caption step: the video's transcript is
 	// already stored, and asking YouTube for it again can only fail.
@@ -60,8 +61,10 @@ type Result struct {
 	// SubtitleRelPath is the MediaDir-relative path to the downloaded
 	// subtitle .vtt file, or "" if none was found.
 	SubtitleRelPath string
-	// AudioLanguage is yt-dlp's reported "language" for the video (from its
-	// own *.info.json), or "" if it didn't report one.
+	// AudioLanguage is the spoken language as the fetched caption list tells
+	// it (CaptionTrack.Speech). Without a caption it is yt-dlp's reported
+	// "language" (the uploader's declared one), and "" under SkipSubtitles,
+	// where the stored one stands.
 	AudioLanguage string
 	// ChaptersJSON is yt-dlp's own (non-SponsorBlock) chapters, encoded as
 	// `[{"ts":int,"title":string,"source":"yt-dlp"}]`, or "" if the video
@@ -227,11 +230,6 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		return nil, fmt.Errorf("ytdlp: create staging dir: %w", err)
 	}
 
-	subLang := req.SubLang
-	if subLang == "" {
-		subLang = "en"
-	}
-
 	args := []string{"-f", formatSelector}
 	if req.LimitRate != "" {
 		args = append(args, "--limit-rate", req.LimitRate)
@@ -300,6 +298,7 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 		return nil, execErr
 	}
 
+	var track CaptionTrack
 	if !req.SkipSubtitles {
 		// Spaced from the media call like any two YouTube calls, inside the
 		// held turn: at most one gap, which the watchdog easily absorbs.
@@ -307,7 +306,7 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 			_ = os.RemoveAll(stagingDir)
 			return nil, err
 		}
-		if err := r.downloadSubtitles(ctx, turn, req.VideoID, watchURL, subLang, stagingDir); err != nil {
+		if track, err = r.downloadSubtitles(ctx, turn, req.VideoID, watchURL, req.SubLang, stagingDir); err != nil {
 			_ = os.RemoveAll(stagingDir)
 			return nil, err
 		}
@@ -321,6 +320,17 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 	if err != nil {
 		_ = os.RemoveAll(stagingDir)
 		return nil, err
+	}
+	// AudioLanguage is the spoken language as the caption list tells it
+	// (CaptionTrack.Speech). yt-dlp's own "language" is the uploader's
+	// declared one (en-US on a German talk), so it only stands in when no
+	// caption was fetched.
+	switch {
+	case track.Speech != "" && result.SubtitleRelPath != "":
+		result.AudioLanguage = track.Speech
+	case req.SkipSubtitles:
+		// The stored transcript's language is already on the row.
+		result.AudioLanguage = ""
 	}
 	return result, nil
 }
@@ -339,19 +349,22 @@ func (r *Runner) Download(ctx context.Context, req DownloadReq, onProgress func(
 //     cookie, or the next job goes out with a cookie YouTube just rejected.
 //
 // A gate refusal (paused, no cookie) made no call and is swallowed with the rest.
-func (r *Runner) downloadSubtitles(ctx context.Context, turn *heldTurn, videoID, watchURL, subLang, dir string) error {
+//
+// A download gets one attempt, so any uploaded track counts (anyManual): there
+// is no later rung to wait for a better one.
+func (r *Runner) downloadSubtitles(ctx context.Context, turn *heldTurn, videoID, watchURL, prefer, dir string) (CaptionTrack, error) {
 	// Runs under the turn Download holds (holdTurn), so it never queues.
-	_, err := r.execCall(ctx, turn, nil, r.subtitleArgs(dir, subLang, watchURL)...)
+	track, err := r.fetchCaptions(ctx, turn, watchURL, dir, prefer, true)
 	switch {
 	case err == nil:
-		return nil
+		return track, nil
 	case ctx.Err() != nil:
-		return ctx.Err()
+		return CaptionTrack{}, ctx.Err()
 	case !IsRefused(err) && (errors.Is(err, ErrBlocked) || errors.Is(err, ErrCookieExpired)):
-		return err
+		return CaptionTrack{}, err
 	}
 	r.cfg.Logger.Warn("download subtitles failed, keeping media", "video_id", videoID, "err", err)
-	return nil
+	return CaptionTrack{}, nil
 }
 
 // isRetryable reports whether err is a *RetryableError, i.e. a transient

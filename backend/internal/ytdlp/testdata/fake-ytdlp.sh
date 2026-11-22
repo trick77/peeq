@@ -31,27 +31,51 @@ done
 # one there, and a fake that did is why peeq shipped a SponsorBlock pipeline
 # that parsed nothing for months while every test passed.
 outtmpl=""
+sublangs=""
 prev=""
 for arg in "$@"; do
   if [ "$prev" = "-o" ]; then outtmpl="$arg"; fi
+  if [ "$prev" = "--sub-langs" ]; then sublangs="$arg"; fi
   prev="$arg"
 done
+
+# Caption list call (-J with the caption flags, no -o): prints the video's
+# track list the way real yt-dlp's info dict carries it. The default is an
+# English video with automatic captions: the original under "en-orig" and "en".
+# FAKE_YTDLP_CAPTIONS replaces the whole dict; FAKE_YTDLP_CAPLIST_STDERR makes
+# the call fail.
+case " $* " in
+  *" -J "*" --write-auto-subs "*)
+    if [ -n "${FAKE_YTDLP_CAPLIST_STDERR:-}" ]; then
+      echo "$FAKE_YTDLP_CAPLIST_STDERR" 1>&2
+      exit 1
+    fi
+    if [ -n "${FAKE_YTDLP_CAPTIONS:-}" ]; then
+      echo "$FAKE_YTDLP_CAPTIONS"
+    else
+      echo '{"language":"en","subtitles":{},"automatic_captions":{"en-orig":[{"url":"https://www.youtube.com/api/timedtext?lang=en&fmt=vtt"}],"en":[{"url":"https://www.youtube.com/api/timedtext?lang=en&fmt=vtt"}]}}'
+    fi
+    exit 0
+    ;;
+esac
 
 if [ -n "$outtmpl" ]; then
   outdir=$(dirname "$outtmpl")
   mkdir -p "$outdir"
   id="${FAKE_YTDLP_ID:-testid}"
 
-  # Caption-only call (--skip-download, Download's caption step): writes the
-  # .vtt and nothing else, like real yt-dlp. FAKE_YTDLP_SUBS_STDERR makes it
-  # fail the way a refused caption request does.
+  # Caption fetch (--skip-download, from the list the call before printed):
+  # writes the one requested track as <id>.<key>.vtt and nothing else, like
+  # real yt-dlp. --sub-langs carries the key as an anchored regex.
+  # FAKE_YTDLP_SUBS_STDERR makes it fail the way a refused caption request does.
   case " $* " in
     *" --skip-download "*)
       if [ -n "${FAKE_YTDLP_SUBS_STDERR:-}" ]; then
         echo "$FAKE_YTDLP_SUBS_STDERR" 1>&2
         exit 1
       fi
-      printf 'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n' > "$outdir/$id.${FAKE_YTDLP_SUBLANG:-en}.vtt"
+      key=$(printf '%s' "$sublangs" | sed -e 's/^\^//' -e 's/\$$//' -e 's/\\//g')
+      printf 'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n' > "$outdir/$id.${key:-en}.vtt"
       exit 0
       ;;
   esac

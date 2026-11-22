@@ -14,7 +14,15 @@ import (
 //
 // It names no task and carries none of the phrases the step fakes in the tests
 // route on, so a fake answers by what the task asks for.
-const videoSystemPrompt = "You work with the transcript of one video, given as a cue index: one caption cue per line, starting with its timestamp in square brackets. Sponsor reads have been removed. Do the task that follows the cue index."
+const videoSystemPrompt = "You work with the transcript of one video, given as a cue index: one caption cue per line, starting with its timestamp in square brackets. Sponsor reads have been removed. Do the task that follows the cue index. " + outputEnglish
+
+// outputEnglish ends the system prompt of every call whose text a reader sees.
+// A video without an English caption track is read from its own language's
+// (ytdlp.PickCaptionTrack), and a model writes in the language it reads, so
+// without it the library would mix languages under English titles and the
+// Ask and MCP readers would quote German prose. Not on classification or
+// gates: those answer with labels.
+const outputEnglish = "Write in English, whatever the transcript's language."
 
 // videoChunks cuts the cue index at the summary's chunk budget. One chunk —
 // every video short of several hours — means both calls take the shared

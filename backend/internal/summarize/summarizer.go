@@ -194,20 +194,20 @@ const (
 // one cohesive summary out. It is the synthesis the reader sees.
 const wholeVideoSystemPrompt = "You are given the full transcript of one video. Write a single cohesive summary of at most 2 paragraphs and at most 190 words total. " +
 	"Lead with what the video is about, then its main claims or moments. Be concrete and drop tangents; do not list every topic mentioned. " +
-	"Output only the summary prose, with no preamble, headings, or labels."
+	"Output only the summary prose, with no preamble, headings, or labels. " + outputEnglish
 
 // coarseSectionSystemPrompt summarizes one large section of a long transcript in
 // the rare multi-chunk fallback. Unlike a 600-token map (which asked for 1-2
 // sentences), it produces a short paragraph or two scaled to a ~48k-token
 // section, so the reduce has real material to synthesize from.
 const coarseSectionSystemPrompt = "You are given one section of a longer video transcript. Summarize it in 1-2 short paragraphs (at most ~120 words): its main claims, findings, or moments and the specifics they turn on. " +
-	"Write plainly in the third person, present tense; use only what the section states. Output only the summary prose, with no preamble or labels."
+	"Write plainly in the third person, present tense; use only what the section states. Output only the summary prose, with no preamble or labels. " + outputEnglish
 
 // reduceSystemPrompt combines coarse-section summaries into the final summary
 // (multi-chunk fallback only).
 const reduceSystemPrompt = "Combine these section summaries of one video into a single cohesive summary of at most 2 paragraphs and at most 190 words total. " +
 	"Lead with what the video is about, then its main claims or moments. " +
-	"Be concrete and drop tangents; do not list every topic mentioned."
+	"Be concrete and drop tangents; do not list every topic mentioned. " + outputEnglish
 
 // SummarizeText produces the prose summary. The chunk budget fits a whole
 // transcript in a SINGLE call for all but multi-hour videos — so this is
@@ -390,7 +390,7 @@ const keyPointRules = " Each key point DESCRIBES what happens at one moment: one
 	"claimed, or shown — a short quoted phrase inside that sentence is fine, a quoted line on its own is not. " +
 	"The text is prose only: no speaker markers such as '>>', no reference, citation or footnote numbers, " +
 	"and no surrounding quotes, brackets, bullets or markdown. " +
-	"Use only timestamps that appear in the cue index. Output JSON only."
+	"Use only timestamps that appear in the cue index. Output JSON only. " + outputEnglish
 
 // ErrKeyPointsUnparsable is returned by KeyPoints when the model's reply was
 // not the JSON it was asked for. It is a degradation, not a failure: the

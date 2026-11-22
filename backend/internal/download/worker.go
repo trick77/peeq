@@ -120,9 +120,9 @@ type Deps struct {
 	// (the default in tests that don't care about summaries) skips the
 	// enqueue entirely; production always sets it.
 	SummaryJobs SummaryEnqueuer
-	// DefaultSubLang is the --sub-langs value used when a video's
-	// AudioLanguage is not yet known (e.g. its first download). Once a video
-	// has a resolved AudioLanguage, that takes precedence.
+	// DefaultSubLang is the caption language preferred when the video has a
+	// track in it; otherwise its original language's track is taken
+	// (ytdlp.PickCaptionTrack). Must match the caption fetcher's.
 	DefaultSubLang string
 
 	// Watchdog is the inactivity timeout: if a running download produces no
