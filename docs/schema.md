@@ -146,7 +146,7 @@ Go types:
 
 - `channels.Channel` (internal/channels): Channel mirrors one row of the channels table. A Channel may exist purely as a metadata cache entry: AddedAt is empty for a channel the user has visited but never added. Subscribers is 0 when YouTube did not report a count (it is hidden, or the channel has never been resolved) — callers must treat 0 as "unknown", not as a real zero. ResolveOk records whether the LAST resolve attempt actually succeeded; ResolvedAt is stamped either way, so ResolveOk is the only thing that distinguishes fresh metadata from a failed attempt that gave up.
 - `channels.ListItem` (internal/channels): ListItem is a channel joined with its (optional) subscription state, plus counts used by the channels list UI.
-- `channels.SearchableChannel` (internal/channels): SearchableChannel is a channel whose videos the MCP server offers: the narrow projection the channel hint and list_youtube_channels read.
+- `channels.SearchableChannel` (internal/channels): SearchableChannel is a channel whose videos the MCP server offers: the narrow projection the topic hint and list_youtube_channels read.
 - `channels.SubcategorizeCandidate` (internal/channels): SubcategorizeCandidate is a channel the subcategory sweep owes an answer, with what the classifier reads.
 
 | Column | Type | Null | Default | PK |

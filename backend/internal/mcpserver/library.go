@@ -24,8 +24,12 @@ type Library interface {
 	// retrying a call must not queue it twice. It never fails as a whole.
 	AddVideos(ctx context.Context, urls []string) []AddedVideo
 	// Channels lists the subscribed channels plus any channel whose reads are
-	// kept, in display order.
+	// kept, in display order. Subcategories are an extra: a failed read of
+	// them leaves every channel without.
 	Channels(ctx context.Context) ([]Channel, error)
+	// LabelledChannels is Channels for a caller that needs the subcategories:
+	// a failed read of them fails it.
+	LabelledChannels(ctx context.Context) ([]Channel, error)
 	// Totals sizes the whole library for list_youtube_channels' first line.
 	Totals(ctx context.Context) (LibraryTotals, error)
 	// SearchableCounts is, per channel id, how many of its videos search can

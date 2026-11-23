@@ -29,9 +29,8 @@ type handler struct {
 	lib       Library
 	publicURL string
 
-	// hint caches channelHint for hintTTL: discovery, initialize and
-	// tools/list all want it, and a burst of them must not each re-read
-	// the channel list.
+	// hint caches topicHint for hintTTL: discovery and initialize both want
+	// it, and a burst of them must not each re-read the channel list.
 	hintMu      sync.Mutex
 	hint        string
 	hintExpires time.Time

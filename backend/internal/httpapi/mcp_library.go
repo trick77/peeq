@@ -31,22 +31,40 @@ const mcpSuggestions = 5
 var errMCPNotConfigured = errors.New("mcp: library store not configured")
 
 func (l mcpLibrary) Channels(ctx context.Context) ([]mcpserver.Channel, error) {
-	if l.s.channels == nil || l.s.videos == nil {
-		return nil, errMCPNotConfigured
-	}
-	chans, err := l.s.channels.Searchable(ctx)
-	if err != nil {
-		return nil, err
-	}
-	stats, err := l.s.videos.ChannelCategoryStats(ctx)
+	chans, labelsErr, err := l.listChannels(ctx)
 	if err != nil {
 		return nil, err
 	}
 	// Labels are an extra on the list, not the list: a failed read drops them.
-	subs, err := l.s.channels.AllSubcategories(ctx)
-	if err != nil {
-		slog.WarnContext(ctx, "mcp: channel subcategories unavailable", "err", err)
+	if labelsErr != nil {
+		slog.WarnContext(ctx, "mcp: channel subcategories unavailable", "err", labelsErr)
 	}
+	return chans, nil
+}
+
+func (l mcpLibrary) LabelledChannels(ctx context.Context) ([]mcpserver.Channel, error) {
+	chans, labelsErr, err := l.listChannels(ctx)
+	if err = cmp.Or(err, labelsErr); err != nil {
+		return nil, err
+	}
+	return chans, nil
+}
+
+// listChannels lists the channels, without subcategories when reading those
+// failed (labelsErr).
+func (l mcpLibrary) listChannels(ctx context.Context) (_ []mcpserver.Channel, labelsErr, err error) {
+	if l.s.channels == nil || l.s.videos == nil {
+		return nil, nil, errMCPNotConfigured
+	}
+	chans, err := l.s.channels.Searchable(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	stats, err := l.s.videos.ChannelCategoryStats(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	subs, labelsErr := l.s.channels.AllSubcategories(ctx)
 	out := make([]mcpserver.Channel, 0, len(chans))
 	for _, c := range chans {
 		mc := mcpserver.Channel{
@@ -65,7 +83,7 @@ func (l mcpLibrary) Channels(ctx context.Context) ([]mcpserver.Channel, error) {
 		}
 		out = append(out, mc)
 	}
-	return out, nil
+	return out, labelsErr, nil
 }
 
 // SearchableCounts is list_youtube_channels' alone: Channels also serves

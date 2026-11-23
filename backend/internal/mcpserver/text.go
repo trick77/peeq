@@ -74,18 +74,14 @@ func sourceLabel(channel string) string {
 	return "peeq · " + channel
 }
 
-// joinCounts renders a histogram's first n buckets, with counts or without.
-func joinCounts(cs []CategoryCount, n int, withCounts bool) string {
+// joinCounts renders a histogram's first n buckets with their counts.
+func joinCounts(cs []CategoryCount, n int) string {
 	parts := make([]string, 0, n)
 	for i, c := range cs {
 		if i == n {
 			break
 		}
-		if withCounts {
-			parts = append(parts, fmt.Sprintf("%s (%d)", c.Category, c.Count))
-		} else {
-			parts = append(parts, c.Category)
-		}
+		parts = append(parts, fmt.Sprintf("%s (%d)", c.Category, c.Count))
 	}
 	return strings.Join(parts, ", ")
 }

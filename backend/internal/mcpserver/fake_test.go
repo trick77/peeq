@@ -25,6 +25,8 @@ type fakeLibrary struct {
 	lastQuery   *SearchQuery
 	videos      map[string]*Video
 	transcripts map[string]*Transcript
+	// labelsErr fails LabelledChannels.
+	labelsErr error
 	// readErr fails Video and Transcript; readIDs is every id they were asked.
 	readErr error
 	readIDs []string
@@ -94,6 +96,13 @@ func (f *fakeLibrary) AddVideos(_ context.Context, urls []string) []AddedVideo {
 func (f *fakeLibrary) Channels(context.Context) ([]Channel, error) {
 	f.channelsN++
 	return f.channels, nil
+}
+
+func (f *fakeLibrary) LabelledChannels(ctx context.Context) ([]Channel, error) {
+	if f.labelsErr != nil {
+		return nil, f.labelsErr
+	}
+	return f.Channels(ctx)
 }
 
 // ResolveChannels counts its calls in resolveN: one directory read each.

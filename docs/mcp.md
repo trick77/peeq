@@ -65,8 +65,8 @@ with `PEEQ_MCP_URL=https://peeq.example.com/mcp` in loom's `.env`, and
 `BACKEND_PEEQ_USERS` set to the loom accounts that may use this library (search it and add videos): their
 loom user id (the `id` loom's `GET /api/me` returns), comma separated.
 Usernames and OIDC subjects do not count, and an empty value means nobody.
-`trustInstructions` lets peeq's channel hint into loom's system prompt, which is
-what makes loom search peeq unprompted on those channels' topics. Keep `readOnly`
+`trustInstructions` lets peeq's topic hint into loom's system prompt, which is
+what makes loom search peeq unprompted on those topics. Keep `readOnly`
 and add `confirm`: for a trusted server loom lets an explicit `readOnlyHint: false` beat
 `readOnly`, so `add_videos` becomes a confirmation card, called only on the user's
 click, while the read tools stay plain reads.
@@ -110,7 +110,8 @@ Each tool carries a display title, sent both as `title` and `annotations.title`
   (a `category/subcategory` key, e.g. `ai/building`: videos labelled with it),
   `channel_subcategory` (same keys: videos from channels labelled with it, the
   only form that reaches caption-only reads; e.g. `sports/cycling` for "videos
-  from cycling channels"; both enums list the whole vocabulary), `after`/`before`
+  from cycling channels"; case-insensitive, neither is an enum, see the hint below: an unknown key
+  is an error listing the whole vocabulary), `after`/`before`
   (`YYYY-MM-DD`, inclusive), `mode` (`hybrid` default: keyword + semantic fused like
   the Search page, no query-understanding model call; `keyword`: literal full-text
   match), `k` (videos, default 6, max 10). If the query cannot be embedded, hybrid
@@ -180,17 +181,25 @@ page; the classifier never overwrites those.
 
 ### Auto-search hint
 
-The instructions (`server/discover` and `initialize`) and the `search` description
-are built per request (reused for a minute). They list every subscribed channel (at most 40, keep_reads
-channels first, then by video count) under "search peeq automatically when the
-user's question touches these channels' topics", each with its subcategories (or,
-unlabelled, its top categories) and, while the ~3 KB budget allows, a trimmed
-description. Both texts also say that the `subcategory` and `channel_subcategory`
-filters exist. Ask's understand step offers `channel_subcategory` too, listing only
-the keys some channel carries (a latency-bound gate; refreshed every minute). keep_reads channels are marked
-"(full catalogue indexed)": peeq keeps every downloaded video's transcript and
-analysis anyway; keep_reads additionally keeps videos it only read from captions.
-The user can always ask explicitly ("search peeq for …", "in channel X …").
+A client may send the instructions and every tool definition along in each turn,
+about peeq or not: the definitions are fixed, the instructions bounded by the
+vocabulary (under 2.8 KB with every topic in use, well under 1 KB in practice), and
+what a tool can answer stays out.
+
+The instructions (`server/discover` and `initialize`) are built per request (reused
+for a minute; a failed read keeps the last ones). They name the channels' topics
+under "search peeq automatically when the user's question touches these topics", as
+the keys the filters take (`ai/models, sports, sports/cycling`): each channel's
+primary subcategory, or, unlabelled or labelled `other`, its category. A channel
+without videos names none. Never side labels (one space channel's `gaming/playthroughs` would
+trigger a search on every gaming question), never channels: those are
+`list_youtube_channels`'. The `search` description is fixed. Both once carried the
+channel list (cut at 3 KB, so most channels never made it in), and both subcategory
+arguments the whole vocabulary as an enum (4.6 of the 11.4 KB tool listing).
+
+Ask's understand step offers `channel_subcategory` too, listing only the keys some
+channel carries (a latency-bound gate; refreshed every minute). The user can always
+ask explicitly ("search peeq for …", "in channel X …").
 
 ## Contract
 

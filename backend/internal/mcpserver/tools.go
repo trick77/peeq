@@ -10,19 +10,19 @@ import (
 )
 
 // toolsTTL is how long a client may cache tools/list (and discovery): long
-// enough to spare a round trip per turn, short enough that a newly subscribed
-// channel reaches the search description within the quarter hour.
+// enough to spare a round trip per turn, short enough that a new topic reaches
+// the instructions within the quarter hour.
 const toolsTTL = 15 * time.Minute
 
-// searchDescription is the search tool's fixed part; descriptions adds the
-// channel hint per request.
+// searchDescription rides in every turn of a client that offers the tool:
+// nothing per request, and no list, goes in here.
 const searchDescription = "Search the user's peeq library of YouTube videos: transcripts, summaries, chapters " +
 	"and peeq's in-depth analysis. Returns the best-matching videos, each with timestamped " +
 	"moments and links that open the video at that moment; cite them. Pass video_id to search inside " +
 	"one video. " + subcategoryNote
 
 // subcategoryNote tells a client the subcategory filters exist and how they
-// differ. It rides in the search description and the server instructions.
+// differ.
 const subcategoryNote = "Videos and channels carry subcategories, category/subcategory keys such as sports/cycling " +
 	"or ai/building: filter with subcategory (the video's own) or channel_subcategory (videos from channels " +
 	"labelled with it); list_youtube_channels shows each channel's."
@@ -52,13 +52,12 @@ func (h *handler) tools() []mcp.Tool {
 	}
 	return []mcp.Tool{
 		{
-			Name:            "search",
-			Title:           "Search your video library",
-			Description:     searchDescription,
-			DescriptionFunc: h.searchDescription,
-			Schema:          searchSchema(),
-			ReadOnly:        true,
-			Run:             run(runSearch),
+			Name:        "search",
+			Title:       "Search your video library",
+			Description: searchDescription,
+			Schema:      searchSchema(),
+			ReadOnly:    true,
+			Run:         run(runSearch),
 		},
 		{
 			Name:  "get_video",
@@ -117,15 +116,9 @@ func (h *handler) tools() []mcp.Tool {
 	}
 }
 
-// searchDescription is the search description with the per-request channel
-// hint.
-func (h *handler) searchDescription(ctx context.Context) string {
-	if hint := h.channelHint(ctx); hint != "" {
-		return searchDescription + "\n\n" + hint
-	}
-	return searchDescription
-}
-
+// searchSchema leaves the subcategory vocabulary out: as an enum on both
+// arguments it was 41 % of the whole tool listing. list_youtube_channels lists
+// the channel keys in use, and an unknown key's error lists all of them.
 func searchSchema() map[string]any {
 	date := func(what string) map[string]any {
 		return map[string]any{"type": "string", "pattern": `^\d{4}-\d{2}-\d{2}$`,
@@ -151,12 +144,12 @@ func searchSchema() map[string]any {
 		"youtube_category": map[string]any{"type": "string",
 			"description": "Limit to one of YouTube's own category labels, e.g. \"Science & Technology\" or " +
 				"\"Education\". Exact label, case-insensitive; independent of category."},
-		"subcategory": map[string]any{"type": "string", "enum": videos.SubcategoryKeys(),
+		"subcategory": map[string]any{"type": "string",
 			"description": "Limit to videos labelled with this subcategory (category/subcategory), e.g. " +
-				"sports/cycling for \"cycling videos\". Finer than category."},
-		"channel_subcategory": map[string]any{"type": "string", "enum": videos.SubcategoryKeys(),
+				"sports/cycling for \"cycling videos\". Finer than category; an unknown key's error lists all keys."},
+		"channel_subcategory": map[string]any{"type": "string",
 			"description": "Limit to videos from channels labelled with this subcategory, e.g. sports/cycling " +
-				"for \"videos from cycling channels\"."},
+				"for \"videos from cycling channels\". Same keys."},
 		"after":  date("on or after"),
 		"before": date("on or before"),
 		"mode": map[string]any{"type": "string", "enum": []string{"hybrid", "keyword"}, "default": "hybrid",
