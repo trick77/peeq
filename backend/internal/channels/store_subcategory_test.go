@@ -114,12 +114,13 @@ func TestAllSubcategories(t *testing.T) {
 	ctx := context.Background()
 	addedChannel(t, s, "UCa")
 	addedChannel(t, s, "UCb")
-	_, _ = s.SetSubcategoriesIfAuto(ctx, "UCa", []string{"ai/building", "ai/infra"}, 1)
+	_, _ = s.SetSubcategoriesIfAuto(ctx, "UCa", []string{"ai/infra", "ai/building"}, 1)
 	got, err := s.AllSubcategories(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(got["UCa"], []string{"ai/building", "ai/infra"}) || len(got["UCb"]) != 0 {
+	// Primary first, not by name: the MCP topic hint reads only the first.
+	if !slices.Equal(got["UCa"], []string{"ai/infra", "ai/building"}) || len(got["UCb"]) != 0 {
 		t.Fatalf("got %v", got)
 	}
 }

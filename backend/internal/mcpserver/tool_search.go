@@ -54,8 +54,8 @@ func runSearch(ctx context.Context, h *handler, raw json.RawMessage) mcp.Result 
 		Text:               strings.TrimSpace(a.Query),
 		Category:           strings.TrimSpace(a.Category),
 		YouTubeCategory:    strings.TrimSpace(a.YouTubeCategory),
-		Subcategory:        strings.TrimSpace(a.Subcategory),
-		ChannelSubcategory: strings.TrimSpace(a.ChannelSub),
+		Subcategory:        strings.ToLower(strings.TrimSpace(a.Subcategory)),
+		ChannelSubcategory: strings.ToLower(strings.TrimSpace(a.ChannelSub)),
 		Videos:             defaultSearchVideos,
 	}
 	if q.Text == "" {

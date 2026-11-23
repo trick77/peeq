@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -104,9 +103,9 @@ func TestSearch_textAndSourcesFollowTheContract(t *testing.T) {
 	}
 }
 
-// Looking a tool up must not build the channel hint: that is two queries per
-// call for a description nobody reads during a call.
-func TestToolCallDoesNotReadTheChannelHint(t *testing.T) {
+// A tool call must not build the topic hint: that is two queries per call for
+// a text nobody reads during a call.
+func TestToolCallDoesNotReadTheChannels(t *testing.T) {
 	lib := searchFixture()
 	callTool(t, lib, "search", map[string]any{"query": "x"})
 	if lib.channelsN != 0 {
@@ -122,12 +121,16 @@ func TestSearchSchemaListsEveryArgument(t *testing.T) {
 			t.Errorf("schema lacks %s", k)
 		}
 	}
-	// The enum is how a client learns which subcategories exist at all.
+	// No enum: the vocabulary twice was 41 % of every tool listing. An unknown
+	// key's error lists it instead.
 	for _, k := range []string{"subcategory", "channel_subcategory"} {
 		p, _ := props[k].(map[string]any)
-		enum, _ := p["enum"].([]string)
-		if !slices.Contains(enum, "sports/cycling") || !slices.Contains(enum, "ai/building") {
-			t.Errorf("%s enum does not list the vocabulary: %v", k, p["enum"])
+		if d, _ := p["description"].(string); p["enum"] != nil || !strings.Contains(d, "sports/cycling") {
+			t.Errorf("%s = %v, want no enum and an example key", k, p)
+		}
+		r := callTool(t, searchFixture(), "search", map[string]any{"query": "x", k: "sports/nope"})
+		if text := toolText(t, r); !isError(r) || !strings.Contains(text, "sports/cycling") || !strings.Contains(text, "ai/building") {
+			t.Errorf("an unknown %s does not list the keys: %s", k, text)
 		}
 	}
 	if d := searchDescription; !strings.Contains(d, "subcategory") || !strings.Contains(d, "channel_subcategory") {
@@ -159,7 +162,7 @@ func TestVideoToolsDescribeTheIDArgument(t *testing.T) {
 func TestSearch_passesSubcategoryFilters(t *testing.T) {
 	lib := searchFixture()
 	r := callTool(t, lib, "search", map[string]any{
-		"query": "x", "subcategory": "ai/building", "channel_subcategory": "sports/cycling",
+		"query": "x", "subcategory": "AI/Building", "channel_subcategory": " sports/cycling",
 	})
 	if isError(r) {
 		t.Fatalf("unexpected error: %s", toolText(t, r))

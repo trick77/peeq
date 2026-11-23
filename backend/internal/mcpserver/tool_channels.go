@@ -68,10 +68,10 @@ func runListYouTubeChannels(ctx context.Context, h *handler, raw json.RawMessage
 		if len(c.Subcategories) > 0 {
 			b.WriteString("\n  subcategories: " + strings.Join(c.Subcategories, ", "))
 		}
-		if cats := joinCounts(c.TopCategories, 5, true); cats != "" {
+		if cats := joinCounts(c.TopCategories, 5); cats != "" {
 			b.WriteString("\n  categories: " + cats)
 		}
-		if yt := joinCounts(c.TopYouTubeCategories, 3, true); yt != "" {
+		if yt := joinCounts(c.TopYouTubeCategories, 3); yt != "" {
 			b.WriteString("\n  youtube: " + yt)
 		}
 		if d := mcp.OneLine(c.Description, channelDescriptionRunes); d != "" {

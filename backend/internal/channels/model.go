@@ -175,7 +175,7 @@ type Image struct {
 }
 
 // SearchableChannel is a channel whose videos the MCP server offers: the
-// narrow projection the channel hint and list_youtube_channels read.
+// narrow projection the topic hint and list_youtube_channels read.
 //
 // Table: channels
 type SearchableChannel struct {

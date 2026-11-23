@@ -244,8 +244,7 @@ func TestMCP_endToEnd(t *testing.T) {
 		t.Fatalf("initialize: %d %v", code, r.Result)
 	}
 	instr, _ := r.Result["instructions"].(string)
-	if !strings.Contains(instr, "- Bike Physics (@bikephysics) (full catalogue indexed): engineering, science; youtube:") ||
-		!strings.Contains(instr, "- Kitchen Lab: food; youtube: Howto & Style") {
+	if !strings.Contains(instr, "\nengineering, food\n") || strings.Contains(instr, "Bike Physics") {
 		t.Errorf("instructions:\n%s", instr)
 	}
 	if code, _ := mcpPost(t, h, false, "notifications/initialized", nil); code != http.StatusAccepted {
@@ -261,8 +260,8 @@ func TestMCP_endToEnd(t *testing.T) {
 	if len(tools) != 6 {
 		t.Fatalf("tools = %v", r.Result)
 	}
-	if desc, _ := tools[0].(map[string]any)["description"].(string); !strings.Contains(desc, "Bike Physics") {
-		t.Errorf("search description lacks the channels: %s", desc)
+	if desc, _ := tools[0].(map[string]any)["description"].(string); strings.Contains(desc, "Bike Physics") {
+		t.Errorf("search description names channels: %s", desc)
 	}
 
 	r = callMCPTool(t, h, "search", map[string]any{"query": "bicycle trail"})
@@ -643,6 +642,26 @@ func TestMCP_listYouTubeChannelsWithoutTotals(t *testing.T) {
 }
 
 // Each half of Totals failing fails it; a missing store too.
+// The channel list does without its labels, the topic hint does not: a channel
+// without labels reads as its whole category there.
+func TestMCPLibrary_labelsFailLoudlyForTheHintOnly(t *testing.T) {
+	if _, err := (mcpLibrary{s: &server{}}).LabelledChannels(t.Context()); !errors.Is(err, errMCPNotConfigured) {
+		t.Errorf("without a store: err = %v", err)
+	}
+	deps, db, _ := searchTestDepsWithStores(t)
+	lib := mcpLibrary{s: &server{videos: deps.Videos, channels: channels.New(db)}}
+	if _, err := lib.LabelledChannels(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `DROP TABLE channel_subcategories`)
+	if _, err := lib.LabelledChannels(t.Context()); err == nil {
+		t.Error("failed labels came back without an error")
+	}
+	if _, err := lib.Channels(t.Context()); err != nil {
+		t.Errorf("the channel list failed with its labels: %v", err)
+	}
+}
+
 func TestMCPLibrary_totalsFailLoudly(t *testing.T) {
 	if _, err := (mcpLibrary{s: &server{}}).SearchableCounts(t.Context()); !errors.Is(err, errMCPNotConfigured) {
 		t.Errorf("searchable counts without a store: err = %v", err)
